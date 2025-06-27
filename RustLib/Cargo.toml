@@ -1,0 +1,71 @@
+# This is the manifest for the Rust core of the Phoenix library.
+# It defines metadata, dependencies, and build profiles.
+
+[package]
+name = "phoenix-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <you@example.com>"]
+description = "Core Rust library for the Phoenix high-performance compression protocol."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-repo/phoenix"
+
+#==================================================================================
+# Library Configuration
+#==================================================================================
+[lib]
+# This is the name of the final compiled file (e.g., `phoenix_cache.so`).
+# It must be a valid Python module name.
+name = "phoenix_cache"
+
+# `cdylib` is essential for creating a dynamic library that Python can import.
+crate-type = ["cdylib"]
+
+#==================================================================================
+# Dependencies
+#==================================================================================
+[dependencies]
+# --- FFI & Python Integration ---
+# The core toolkit for building Python native extensions in Rust.
+pyo3 = { version = "0.20", features = ["extension-module"] }
+
+# --- DataFrames & Arrow Integration ---
+# Used at the FFI boundary to handle Polars Series objects efficiently.
+polars = { version = "0.37", features = ["lazy", "dtype-full"] }
+# The underlying memory model for Polars; needed for direct bitmap/buffer manipulation.
+arrow = { version = "49.0", features = ["pyarrow"] }
+
+# --- Core Utilities ---
+# For robust, ergonomic error handling.
+thiserror = "1.0"
+# For safe, zero-copy casting of byte slices. Replaces `unsafe` blocks.
+bytemuck = { version = "1.14", features = ["derive"] }
+# For high-performance, bit-level manipulation (used in bitpacking).
+bitvec = "1.0"
+# For generic programming over primitive integer types.
+num-traits = "0.2"
+# For serializing the pipeline plan into a JSON string.
+serde_json = "1.0"
+
+# --- Compression Kernels ---
+# The backend for our Zstandard compression kernel.
+zstd = "0.13"
+
+#==================================================================================
+# Release Profile Configuration
+#==================================================================================
+# These settings are critical for building a fast and small binary for production.
+[profile.release]
+# Abort on panic instead of unwinding. This is safer for FFI and reduces binary size.
+# Our code should be panic-free anyway, so this is a safety net.
+panic = "abort"
+
+# Enable Link-Time Optimization for better cross-crate optimizations.
+lto = true
+
+# Reduce the number of codegen units to allow for more aggressive optimizations.
+# This increases compile time but results in a faster binary.
+codegen-units = 1
+
+# Maximize optimization level for speed.
+opt-level = 3

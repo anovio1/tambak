@@ -29,26 +29,24 @@ This Rust library compresses and decompresses typed columnar data by applying a 
 
 // COMPLETE scaffold for src/pipeline/planner.rs REMEMBER. (Core logicanalyzes the input data and metadata to decide the optimal sequence of compression kernels to apply, producing a pipeline plan for execution) EACH OF THESE SCAFFOLDS ARE MEANT TO BE HANDLED BY A SEPARATE TEAM. IT IS IMPORTANT THAT THEY ARE COMPLETE SCAFFOLDS
 
-
-```
-
 src/
 ├── lib.rs                   # Main library entry point, exposes public APIs
-├── [X] error.rs           # NEED: The implementation of our central PhoenixError enum.
-└── [X] utils.rs           # NEED: The implementation for shared helpers, especially safe casting.
+├── error.rs                
+└── utils.rs                # The implementation for shared helpers (safe casting, etc.).
 ├── null_handling/
-│   ├── [X] mod.rs         # NEED: The simple glue file for this module.
-│   └── [X] bitmap.rs      # NEED: The implementation for creating and applying null bitmaps.
+│   ├── mod.rs              # The simple glue file for this module.
+│   └── bitmap.rs           The implementation for creating and applying null bitmaps.
 ├── pipeline/
-│   ├── [X] mod.rs         # NEED: The simple glue file to declare the pipeline modules.
+│   ├──  mod.rs                 
 │   ├── orchestrator.rs     # The General Contractor: Manages the end-to-end compression/decompression workflow.
 │   ├── planner.rs          # The Strategist: Analyzes data and creates a compression plan.
 │   └── executor.rs         # The Foreman: Executes a given plan by calling the kernels.
 ├── ffi/
+│   └── [X] mod.rs      # NEED: The simple glue file for this module.
 │   └── [X] python.rs      # NEED: The FFI bridge to handle Python types, release the GIL, and translate errors.
 ├── kernels/                 # Compression kernel implementations (delta, rle, zstd, etc.)
-│   ├── [X] mod.rs         # NEED: The simple glue file to declare and export all kernels.
-│   ├── mod.rs               # Kernel module root, pub mod each kernel
+│   ├── mod.rs      # NEED: AFTER HARDENING
+                    # NEED HARDENING FOR EACH
 │   ├── delta.rs             # Delta encoding/decoding kernel
 │   ├── rle.rs               # Run-length encoding kernel
 │   ├── zigzag.rs            # Zigzag encoding kernel
@@ -58,9 +56,8 @@ src/
 │   ├── zstd.rs              # Zstd kernel wrapper
 │   └── validity_mask.rs     # Null bitmap compression (e.g., RLE + Zstd for validity)
 └── tests/                   # Integration and unit tests
-    ├── planner_tests.rs
-    ├── kernels_tests.rs
-    └── integration_tests.rs
+    └── [X] test_compression.py # NEED: Python integration tests to verify the end-to-end workflow.
+
 # How It Works Together
 
 * **kernels/**

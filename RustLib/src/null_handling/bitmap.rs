@@ -1,212 +1,135 @@
-//! This module contains the pure, stateless kernels for handling nullability
-//! via Arrow-compatible validity bitmaps.
-//!
-//! The core philosophy is to separate the data from its validity. This module
-//! provides tools to:
-//! 1.  Strip nulls from a data stream, producing a contiguous buffer of only
-//!     the valid data and a separate, compact boolean bitmap.
-//! 2.  Re-apply a validity bitmap to a stream of valid data to perfectly
-//!     reconstruct the original series with its nulls.
+//! This module contains pure, stateless, and high-performance kernels for handling
+//! nullability. Its primary responsibility is to efficiently separate and
+//! reconstruct data based on an Arrow-compatible validity bitmap.
+//! This module is completely decoupled from Polars and the FFI layer.
 
-use polars::prelude::*;
+use arrow::array::PrimitiveArray;
 use arrow::bitmap::Bitmap;
 use arrow::buffer::Buffer;
+use arrow::datatypes::ArrowNumericType;
+use num_traits::PrimInt;
 
 use crate::error::PhoenixError;
 
 //==================================================================================
-// 1. Core Logic
+// 1. Generic Core Logic (REVISED - Simplified & Performant)
 //==================================================================================
 
-/// Strips nulls from a Polars Series, returning the contiguous valid data
-/// and the validity bitmap as separate byte buffers.
+/// Extracts a contiguous vector of valid data from a slice, guided by a validity bitmap.
 ///
-/// This is the primary entry point for the compression workflow. It prepares the
-/// data for the compression pipeline by separating its two components.
+/// This function performs a single pass over the data, copying only the elements
+/// marked as valid by the bitmap into a new, tightly packed vector. This is the
+/// core kernel used by the orchestrator when nulls are present.
 ///
 /// # Args
-/// * `series`: A reference to a Polars Series that may contain nulls.
+/// * `data`: A slice of the full data, including values at null positions.
+/// * `validity`: An Arrow `Bitmap` describing the validity of `data`.
 ///
 /// # Returns
-/// A tuple containing:
-///   - `Vec<u8>`: A byte buffer of the contiguous, non-null data values.
-///   - `Option<Vec<u8>>`: A byte buffer of the Arrow-compatible validity bitmap.
-///     Returns `None` if the series contains no nulls.
-pub fn strip_validity(series: &Series) -> Result<(Vec<u8>, Option<Vec<u8>>), PhoenixError> {
-    let phys_series = series.to_physical_repr();
-    
-    if phys_series.null_count() == 0 {
-        // If there are no nulls, we don't need a validity mask.
-        // The data buffer is just the full series buffer.
-        let (data_bytes, _) = phys_series.to_byte_slices();
-        return Ok((data_bytes.to_vec(), None));
+/// A `Result` containing a `Vec<T>` of only the valid data values.
+pub fn strip_valid_data<T: PrimInt>(
+    data: &[T],
+    validity: &Bitmap,
+) -> Result<Vec<T>, PhoenixError> {
+    if data.len() != validity.len() {
+        return Err(PhoenixError::BufferMismatch(data.len(), validity.len()));
     }
 
-    // If there are nulls, we need to create a new, contiguous buffer of valid data.
-    let valid_data_series = series.drop_nulls();
-    let (valid_data_bytes, _) = valid_data_series.to_physical_repr().to_byte_slices();
+    let num_valid = validity.true_count();
+    let mut valid_data = Vec::with_capacity(num_valid);
 
-    // Extract the validity bitmap from the original series.
-    let validity_bitmap = series
-        .chunks()
-        .iter()
-        .map(|arr| arr.validity())
-        .next() // Assuming a single chunk for simplicity here. A robust impl would handle multiple chunks.
-        .flatten()
-        .map(|bitmap| bitmap.as_slice().to_vec());
-
-    Ok((valid_data_bytes.to_vec(), validity_bitmap))
+    // Single pass: iterate through the data and only copy if valid.
+    for (i, &val) in data.iter().enumerate() {
+        // SAFETY: We've already checked that lengths match.
+        if unsafe { validity.get_bit_unchecked(i) } {
+            valid_data.push(val);
+        }
+    }
+    Ok(valid_data)
 }
 
 /// Re-applies a validity bitmap to a stream of valid data to reconstruct
-/// the original Polars Series with its nulls.
+/// the original Arrow array with its nulls. This is a zero-copy operation.
 ///
-/// This is the final step in the decompression workflow, happening after the
-/// data pipeline has fully decompressed the valid data.
+/// This is the high-performance, "zero-copy" way to construct an array.
+/// It creates an `ArrayData` struct from the buffers directly, without iterating
+/// or using a builder.
 ///
 /// # Args
-/// * `valid_data_bytes`: A byte buffer containing only the valid data values.
-/// * `validity_bytes_opt`: An optional byte buffer of the Arrow validity bitmap.
-///   If `None`, the data is assumed to have no nulls.
-/// * `original_type`: The string representation of the target Polars dtype.
-/// * `total_len`: The total length of the final series, including nulls.
+/// * `valid_data_buffer`: An Arrow `Buffer` containing the contiguous valid data.
+/// * `validity_bitmap`: An Arrow `Bitmap` describing the full array's validity.
 ///
 /// # Returns
-/// A `Result` containing the fully reconstructed Polars Series.
-pub fn reapply_validity(
-    valid_data_bytes: &[u8],
-    validity_bytes_opt: Option<&[u8]>,
-    original_type: &str,
-    total_len: usize,
-) -> Result<Series, PhoenixError> {
-    let dtype = polars::datatypes::DataType::from_str(original_type)
-        .map_err(|_| PhoenixError::UnsupportedType(original_type.to_string()))?;
+/// A new Arrow `PrimitiveArray` with nulls correctly reinstated.
+pub fn reapply_bitmap<T: ArrowNumericType>(
+    valid_data_buffer: Buffer<T::Native>,
+    validity_bitmap: Bitmap,
+) -> Result<PrimitiveArray<T>, PhoenixError> {
+    let array_data = arrow::array::ArrayData::builder(T::DATA_TYPE)
+        .len(validity_bitmap.len())
+        .add_buffer(valid_data_buffer)
+        .nulls(Some(validity_bitmap))
+        .build()
+        .map_err(|e| PhoenixError::UnsupportedType(e.to_string()))?;
 
-    // Create a series from the valid data first.
-    let series_no_nulls = Series::from_vec_and_dtype(
-        "", // Name is set by the caller
-        valid_data_bytes,
-        &dtype
-    )?;
-
-    // If a validity mask exists, we need to construct a new Arrow array with it.
-    if let Some(validity_bytes) = validity_bytes_opt {
-        let validity_bitmap = Bitmap::from(validity_bytes);
-        if validity_bitmap.len() != total_len {
-            return Err(PhoenixError::BufferMismatch(validity_bitmap.len(), total_len));
-        }
-
-        // This is the complex part: we need to create a new array with nulls.
-        // We can do this by creating a builder and appending values or nulls.
-        let mut builder = Series::builder_with_capacity(&dtype, total_len);
-        let mut valid_data_iter = series_no_nulls.iter();
-
-        for i in 0..total_len {
-            if validity_bitmap.get(i) {
-                // This is safe because the number of `true` bits should match the
-                // length of the valid data series.
-                builder.append_option(valid_data_iter.next())?;
-            } else {
-                builder.append_null();
-            }
-        }
-        Ok(builder.finish())
-    } else {
-        // No nulls, the series is already correct.
-        Ok(series_no_nulls)
-    }
+    Ok(PrimitiveArray::<T>::from(array_data))
 }
 
 //==================================================================================
-// 2. FFI Dispatcher Logic (Not needed for this module)
+// 2. FFI Dispatcher Logic (REMOVED)
 //==================================================================================
-// This module's logic is complex and tightly coupled with the Polars `Series`
-// object itself. It is not a generic byte-to-byte transform. Therefore, it will
-// be called directly by the orchestrator and FFI layer, not exposed as a
-// granular kernel in the `libphoenix` FFI module. Its public API is the two
-// Rust functions defined above.
+// This module is a pure kernel library. It does not contain any FFI dispatchers.
+// The responsibility for converting Polars/Python objects and calling these
+// pure functions lies within the `ffi.rs` and `orchestrator.rs` modules.
 
 //==================================================================================
-// 3. Unit Tests
+// 3. Unit Tests (REVISED - Tests now target the new, simpler API)
 //==================================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use polars::prelude::*;
+    use arrow::array::Int32Array;
+    use arrow::buffer::Buffer;
 
     #[test]
-    fn test_strip_and_reapply_with_nulls() {
-        let original_series = Series::new("test_i32", &[Some(10), None, Some(20), Some(30), None]);
-        let original_type = "Int32";
-        let total_len = original_series.len();
+    fn test_strip_valid_data_kernel() {
+        let source_array = Int32Array::from(vec![Some(10), None, Some(20), Some(30), None]);
+        let data_slice = source_array.values().as_slice();
+        let validity_bitmap = source_array.validity().unwrap(); // We know it has nulls
 
-        // --- Strip ---
-        let (valid_data_bytes, validity_bytes_opt) = strip_validity(&original_series).unwrap();
-        
-        assert!(validity_bytes_opt.is_some());
-        let validity_bytes = validity_bytes_opt.unwrap();
+        let valid_data_vec = strip_valid_data(data_slice, validity_bitmap).unwrap();
 
-        // Expected valid data: [10, 20, 30]
-        let expected_valid_data: Vec<i32> = vec![10, 20, 30];
-        let expected_valid_bytes = crate::utils::typed_slice_to_bytes(&expected_valid_data);
-        assert_eq!(valid_data_bytes, expected_valid_bytes);
-
-        // Expected bitmap: 10110... (true, false, true, true, false)
-        // Arrow bitmaps are LSB-ordered. 0b...01101 = 13
-        assert_eq!(validity_bytes[0], 0b00001101);
-
-        // --- Re-apply ---
-        let reconstructed_series = reapply_validity(
-            &valid_data_bytes,
-            Some(&validity_bytes),
-            original_type,
-            total_len
-        ).unwrap();
-
-        // Assert that the reconstructed series is identical to the original
-        assert!(original_series.equals(&reconstructed_series));
+        assert_eq!(valid_data_vec, vec![10, 20, 30]);
     }
 
     #[test]
-    fn test_strip_and_reapply_no_nulls() {
-        let original_series = Series::new("test_u16", &[10u16, 20, 30]);
-        let original_type = "UInt16";
-        let total_len = original_series.len();
-
-        // --- Strip ---
-        let (valid_data_bytes, validity_bytes_opt) = strip_validity(&original_series).unwrap();
+    fn test_reapply_bitmap_kernel() {
+        let valid_data: Vec<i32> = vec![10, 20, 30];
+        let valid_data_buffer = Buffer::from_vec(valid_data);
         
-        // There should be no validity mask
-        assert!(validity_bytes_opt.is_none());
-        
-        let expected_bytes = crate::utils::typed_slice_to_bytes(&vec![10u16, 20, 30]);
-        assert_eq!(valid_data_bytes, expected_bytes);
+        // The bitmap for [Some, None, Some, Some, None]
+        let validity_bitmap = Bitmap::from_iter(vec![true, false, true, true, false]);
 
-        // --- Re-apply ---
-        let reconstructed_series = reapply_validity(
-            &valid_data_bytes,
-            None, // Pass None for the validity mask
-            original_type,
-            total_len
+        let reconstructed_array = reapply_bitmap::<arrow::datatypes::Int32Type>(
+            valid_data_buffer,
+            validity_bitmap,
         ).unwrap();
 
-        assert!(original_series.equals(&reconstructed_series));
+        let expected_array = Int32Array::from(vec![Some(10), None, Some(20), Some(30), None]);
+
+        assert_eq!(reconstructed_array, expected_array);
     }
 
     #[test]
-    fn test_reapply_with_mismatched_len() {
-        let valid_data: Vec<i64> = vec![1, 2];
-        let valid_data_bytes = crate::utils::typed_slice_to_bytes(&valid_data);
-        
-        // Bitmap says there are 3 values, but we only provide 2 valid data points.
-        // This should be handled gracefully by the builder logic.
-        let bitmap = Bitmap::from_iter(vec![true, false, true]);
-        let validity_bytes = bitmap.as_slice().to_vec();
+    fn test_strip_with_mismatched_len_errors() {
+        let data_slice: &[i32] = &[10, 20, 30];
+        let validity_bitmap = Bitmap::from_iter(vec![true, false]); // Length 2, not 3
 
-        let result = reapply_validity(&valid_data_bytes, Some(&validity_bytes), "Int64", 3);
-        // The builder logic will panic or error if the iterator runs out.
-        // A robust implementation should catch this.
+        let result = strip_valid_data(data_slice, &validity_bitmap);
         assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("BufferMismatch"));
+        }
     }
 }
