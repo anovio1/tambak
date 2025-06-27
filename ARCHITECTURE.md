@@ -34,6 +34,7 @@ src/
 ├── lib.rs              # Crate root, defines the Python module, and declares all top-level modules.
 |
 ├── ffi/                # The Anti-Corruption Layer for Python.
+│   ├── mod.rs          # Public facade  compress_py, decompress_py, plan_py,
 │   └── python.rs       # Python <-> Rust FFI logic. Handles type conversion, GIL, and error translation.
 |
 ├── pipeline/           # The Core Workflow Management.

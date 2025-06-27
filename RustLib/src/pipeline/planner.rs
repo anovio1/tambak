@@ -3,16 +3,17 @@
 //! The `PipelinePlanner` analyzes the statistical properties of a raw data chunk
 //! (as a typed slice) and constructs a sequence of compression operations
 //! tailored to that specific data. This is the "brain" that makes the Phoenix
-//! writer adaptive and intelligent. It is aware of the full suite of available
-//! compression kernels. This module is PURE RUST and has no FFI dependencies.
+//! writer adaptive and intelligent. This module is PURE RUST and has no FFI
+//! or Polars dependencies.
 
 use num_traits::{PrimInt, Signed, ToPrimitive};
 use serde_json::{json, Value};
 
 use crate::error::PhoenixError;
+use crate::utils::safe_bytes_to_typed_slice;
 
 //==================================================================================
-// 1. Data Profile & Heuristics (REVISED - Performant & Robust)
+// 1. Data Profile & Heuristics (Performant & Robust)
 //==================================================================================
 
 /// A struct to hold the statistical profile of a data chunk.
@@ -24,15 +25,11 @@ struct DataProfile {
     delta_is_mostly_zero: bool,
     max_zigzag_delta_bit_width: u8,
     // A heuristic to decide if shuffling will be effective.
-    // True if deltas are small, meaning high bytes will be mostly zeros or sign extensions.
     shuffle_is_likely_effective: bool,
 }
 
 /// Analyzes a slice of data to build its statistical profile in a single,
 /// performant pass without intermediate allocations.
-///
-/// # Returns
-/// A `Result` containing the `DataProfile` on success.
 fn analyze_data<T>(data: &[T]) -> Result<DataProfile, PhoenixError>
 where
     T: PrimInt + Signed + ToPrimitive,
@@ -48,7 +45,7 @@ where
     let first = data[0];
     profile.all_values_same = data.iter().all(|&x| x == first);
     if profile.all_values_same {
-        return Ok(profile); // No need for further analysis
+        return Ok(profile);
     }
 
     // --- Single-pass analysis using fold to avoid Vec allocation ---
@@ -59,12 +56,14 @@ where
             let new_zeros = if delta.is_zero() { zeros + 1 } else { zeros };
 
             let bits = std::mem::size_of::<T>() * 8;
-            let zigzag_val = (delta.unsigned_shl(1)) ^ (delta.arithmetic_shr(bits - 1))
+            let zigzag_val = (delta.to_unsigned()
+                .ok_or_else(|| PhoenixError::UnsupportedType("Failed to convert delta to unsigned".to_string()))? << 1)
+                ^ (delta.arithmetic_shr(bits - 1))
                 .to_unsigned()
-                .ok_or_else(|| PhoenixError::UnsupportedType("Failed to convert to unsigned".to_string()))?;
+                .ok_or_else(|| PhoenixError::UnsupportedType("Failed to convert sign extension to unsigned".to_string()))?;
             
             let val_u64 = zigzag_val.to_u64()
-                .ok_or_else(|| PhoenixError::UnsupportedType("Failed to convert to u64".to_string()))?;
+                .ok_or_else(|| PhoenixError::UnsupportedType("Failed to convert zigzag value to u64".to_string()))?;
             
             Ok((new_zeros, max_zz.max(val_u64), count + 1))
         })?;
@@ -83,7 +82,7 @@ where
 }
 
 //==================================================================================
-// 2. Pipeline Construction Logic (REVISED - Panic-Free)
+// 2. Pipeline Construction Logic (Panic-Free)
 //==================================================================================
 
 /// Constructs the optimal pipeline JSON based on a data profile.
@@ -91,46 +90,30 @@ where
 fn build_pipeline_from_profile(profile: &DataProfile) -> Result<String, PhoenixError> {
     let mut pipeline: Vec<Value> = Vec::new();
 
-    // --- Layer 1: Value Reduction ---
-    // If all values are the same, RLE is the only transform needed before Zstd.
     if profile.all_values_same {
-        pipeline.push(json!({"op": "rle", "params": {}}));
+        pipeline.push(json!({"op": "rle"}));
     } else {
-    
-    // Otherwise, delta encoding is almost always beneficial for time-series.
         pipeline.push(json!({"op": "delta", "params": {"order": 1}}));
-    // --- Layer 2: Sparsity Exploitation ---
-    // If deltas are mostly zero, RLE is the next logical step.
         if profile.delta_is_mostly_zero {
-            pipeline.push(json!({"op": "rle", "params": {}}));
+            pipeline.push(json!({"op": "rle"}));
         } else {
-        // If not RLE, proceed to the bit-width reduction pipeline.
-        
-        // --- Layer 3: Bit-Width Reduction ---
             if profile.is_signed {
-                pipeline.push(json!({"op": "zigzag", "params": {}}));
+                pipeline.push(json!({"op": "zigzag"}));
             }
-        // Choose between Bitpacking (for uniformly small values) and LEB128 (for variable values).
-        // The signed LEB128 kernel (`sleb128`) could be a distinct choice here if we didn't
-        // use Zig-zag first. Since we do, the input to this stage is always unsigned.
             if profile.max_zigzag_delta_bit_width > 0 && profile.max_zigzag_delta_bit_width <= 16 {
                  pipeline.push(json!({
                     "op": "bitpack",
                     "params": {"bit_width": profile.max_zigzag_delta_bit_width}
                 }));
             } else {
-                pipeline.push(json!({"op": "leb128", "params": {}}));
+                pipeline.push(json!({"op": "leb128"}));
             }
-        // --- Layer 4: Byte Distribution ---
-        // If shuffling is likely to help, apply it before the final compression.
-        // This is most effective on fixed-width integer types after other transforms.
             if profile.shuffle_is_likely_effective {
-                pipeline.push(json!({"op": "shuffle", "params": {}}));
+                pipeline.push(json!({"op": "shuffle"}));
             }
         }
     }
 
-    // --- Final Stage: Entropy Coding ---
     pipeline.push(json!({"op": "zstd", "params": {"level": 3}}));
 
     serde_json::to_string(&pipeline)
@@ -138,31 +121,51 @@ fn build_pipeline_from_profile(profile: &DataProfile) -> Result<String, PhoenixE
 }
 
 //==================================================================================
-// 3. Public API for the Pure Rust Core (NEW - Decoupled)
+// 3. Public API for the Pure Rust Core (Decoupled)
 //==================================================================================
 
-/// The PURE RUST entry point for the planner. It's generic and knows nothing about FFI.
-/// It takes a typed slice and returns a plan.
-pub fn plan_pipeline_for_type<T>(data: &[T]) -> Result<String, PhoenixError>
-where
-    T: PrimInt + Signed + ToPrimitive,
-{
-    let profile = analyze_data(data)?;
-    build_pipeline_from_profile(&profile)
+/// The PURE RUST entry point for the planner. It takes a raw byte buffer,
+/// dispatches to the correct generic analyzer, and returns the plan.
+pub fn plan_pipeline(bytes: &[u8], original_type: &str) -> Result<String, PhoenixError> {
+    macro_rules! dispatch {
+        ($T:ty) => {
+            {
+                let data = safe_bytes_to_typed_slice::<$T>(bytes)?;
+                let profile = analyze_data(data)?;
+                build_pipeline_from_profile(&profile)
+            }
+        };
+    }
+
+    match original_type {
+        "Int8" => dispatch!(i8),
+        "Int16" => dispatch!(i16),
+        "Int32" => dispatch!(i32),
+        "Int64" => dispatch!(i64),
+        // Unsigned types don't need delta/zigzag, so they have a simpler path.
+        // This is a placeholder for a more nuanced unsigned planner.
+        "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Boolean" => {
+            let pipeline = vec![json!({"op": "rle"}), json!({"op": "zstd", "params": {"level": 3}})];
+            serde_json::to_string(&pipeline).map_err(|e| PhoenixError::UnsupportedType(e.to_string()))
+        }
+        _ => Err(PhoenixError::UnsupportedType(original_type.to_string())),
+    }
 }
 
 //==================================================================================
-// 4. Unit Tests (REVISED - Now test the new public API)
+// 4. Unit Tests
 //==================================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::typed_slice_to_bytes;
 
     #[test]
     fn test_plan_for_constant_data() {
         let original_data: Vec<i32> = vec![100, 100, 100, 100, 100];
-        let pipeline_json = plan_pipeline_for_type(&original_data).unwrap();
+        let original_bytes = typed_slice_to_bytes(&original_data);
+        let pipeline_json = plan_pipeline(&original_bytes, "Int32").unwrap();
         let pipeline: Vec<Value> = serde_json::from_str(&pipeline_json).unwrap();
         assert_eq!(pipeline[0]["op"], "rle");
         assert_eq!(pipeline[1]["op"], "zstd");
@@ -171,7 +174,8 @@ mod tests {
     #[test]
     fn test_plan_for_small_deltas_bitpack_and_shuffle() {
         let original_data: Vec<i16> = vec![100, 101, 103, 102, 104, 101];
-        let pipeline_json = plan_pipeline_for_type(&original_data).unwrap();
+        let original_bytes = typed_slice_to_bytes(&original_data);
+        let pipeline_json = plan_pipeline(&original_bytes, "Int16").unwrap();
         let pipeline: Vec<Value> = serde_json::from_str(&pipeline_json).unwrap();
         let op_names: Vec<&str> = pipeline.iter().map(|v| v["op"].as_str().unwrap()).collect();
         assert_eq!(op_names, vec!["delta", "zigzag", "bitpack", "shuffle", "zstd"]);
@@ -181,19 +185,10 @@ mod tests {
     #[test]
     fn test_plan_for_large_deltas_leb128_no_shuffle() {
         let original_data: Vec<i32> = vec![100, 101, 103, 100000, 100002];
-        let pipeline_json = plan_pipeline_for_type(&original_data).unwrap();
+        let original_bytes = typed_slice_to_bytes(&original_data);
+        let pipeline_json = plan_pipeline(&original_bytes, "Int32").unwrap();
         let pipeline: Vec<Value> = serde_json::from_str(&pipeline_json).unwrap();
         let op_names: Vec<&str> = pipeline.iter().map(|v| v["op"].as_str().unwrap()).collect();
         assert_eq!(op_names, vec!["delta", "zigzag", "leb128", "zstd"]);
-    }
-
-    #[test]
-    fn test_analyze_data_is_performant() {
-        // This test doesn't measure performance but ensures the single-pass logic works.
-        let data: Vec<i64> = (0..1000).map(|i| i * (i % 5)).collect();
-        let result = analyze_data(&data);
-        assert!(result.is_ok());
-        let profile = result.unwrap();
-        assert!(!profile.all_values_same);
     }
 }

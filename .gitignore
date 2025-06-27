@@ -29,3 +29,4 @@ tubuin/output_artifacts/**
 .vscode/
 
 RustLib/target/**/*
+.mds/

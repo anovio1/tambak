@@ -1,4 +1,10 @@
-# Phoenix Cache: Kernel Development Guide
+Of course. You are absolutely right. I have the full context and can correct the guide to perfectly match our final, production-ready architecture.
+
+Here is the revised and corrected `KERNEL_GUIDE.md`.
+
+---
+
+# Phoenix Cache: Kernel Development Guide (v2 - Production Standard)
 
 This guide provides a step-by-step playbook for developing, implementing, and hardening new compression/decompression kernels for Phoenix Cache. It outlines the required API contracts, performance considerations, and integration steps to ensure new kernels seamlessly fit into the existing architecture.
 
@@ -8,60 +14,76 @@ In the Phoenix Cache architecture, a "kernel" is a **pure, stateless, and highly
 
 *   **Location:** All kernels reside in the `src/kernels/` directory.
 *   **Contract:** Every kernel must adhere to a strict `encode` and `decode` API, conforming to the `executor`'s buffer-swapping strategy.
-*   **Independence:** Kernels are completely decoupled from `pyo3`, `polars`, and the FFI layer. They operate purely on Rust primitive types (`&[T]`, `&[u8]`) and write to provided `Vec<u8>` buffers.
+*   **Independence:** Kernels are completely decoupled from `pyo3`, `polars`, and the FFI layer. The central dispatcher in `kernels/mod.rs` handles all type-casting. Kernels operate purely on Rust typed slices (`&[T]`) and write their output (as raw bytes) to provided `Vec<u8>` buffers.
 *   **Panic-Free:** All kernels **must be panic-free**. Recoverable errors are returned via `Result<..., PhoenixError>`.
 
 ## 2. The Kernel API Contract
 
-Each kernel module (`src/kernels/my_new_kernel.rs`) must expose two primary public functions:
+Each kernel module (`src/kernels/my_new_kernel.rs`) must expose two primary public functions with these exact signatures:
 
 ### `pub fn encode<T>(input_slice: &[T], output_buf: &mut Vec<u8>, ...params) -> Result<(), PhoenixError>`
 
-*   **Purpose:** Compresses/transforms `input_slice` data.
-*   **`T` (Type Parameter):** The generic type of the data (e.g., `i32`, `u64`). This allows the kernel to operate directly on typed data.
-*   **`input_slice` (`&[T]`):** An immutable slice of the *typed* input data. This is typically the data coming from the previous pipeline stage (or the raw data from the orchestrator).
-*   **`output_buf` (`&mut Vec<u8>`):** A mutable reference to a `Vec<u8>` provided by the `executor`. The kernel **must** write its output bytes directly into this buffer. It should `clear()` this buffer at the start of its operation and then `extend_from_slice()` or `push()` bytes into it. This is crucial for performance (buffer reuse).
-*   **`...params`:** Any specific parameters required by the kernel (e.g., `bit_width` for Bitpack, `order` for Delta).
-*   **Returns:** `Result<(), PhoenixError>`. On success, returns `Ok(())`. On failure, returns a specific `PhoenixError`.
+*   **Purpose:** Compresses or transforms the data from `input_slice`.
+*   **`T` (Type Parameter):** The generic type of the data (e.g., `i32`, `u64`).
+*   **`input_slice` (`&[T]`):** An immutable slice of the **typed** input data provided by the dispatcher.
+*   **`output_buf` (`&mut Vec<u8>`):** A mutable reference to a `Vec<u8>` provided by the `executor`. The kernel **must** `clear()` this buffer, then write its output bytes directly into it. This is crucial for performance.
+*   **`...params`:** Any specific parameters required by the kernel (e.g., `bit_width` for Bitpack).
+*   **Returns:** `Result<(), PhoenixError>`.
 
-### `pub fn decode<T>(input_bytes: &[u8], output_buf: &mut Vec<u8>, ...params) -> Result<(), PhoenixError>`
+### `pub fn decode<T>(input_slice: &[T], output_buf: &mut Vec<u8>, ...params) -> Result<(), PhoenixError>`
 
-*   **Purpose:** Decompresses/reverses the transformation on `input_bytes`.
-*   **`T` (Type Parameter):** The generic type `T` that the data will be reconstructed into.
-*   **`input_bytes` (`&[u8]`):** An immutable slice of the *raw bytes* produced by the previous pipeline stage (or the compressed artifact itself).
-*   **`output_buf` (`&mut Vec<u8>`):** A mutable reference to a `Vec<u8>` provided by the `executor`. The kernel **must** write its reconstructed data (as raw bytes, converted from `Vec<T>`) directly into this buffer.
+*   **Purpose:** Decompresses or reverses the transformation.
+*   **`T` (Type Parameter):** The generic type `T` that the data was originally.
+*   **`input_slice` (`&[T]`):** An immutable slice of the **typed** input data. The dispatcher has already converted the raw bytes from the previous stage into a typed slice for you.
+*   **`output_buf` (`&mut Vec<u8>`):** A mutable reference to a `Vec<u8>`. The kernel **must** `clear()` this buffer, then write its reconstructed data (as raw bytes) directly into it.
+*   **`...params`:** Any specific parameters required for decoding (e.g., `num_values`).
 *   **Returns:** `Result<(), PhoenixError>`.
 
 ## 3. The 5-Point Kernel Hardening Playbook
 
-When implementing a new kernel (or hardening an existing prototype), follow these steps to ensure it meets production standards:
+When implementing a new kernel, follow these steps to ensure it meets production standards:
 
-1.  **Update Public API Signatures:**
-    *   Change `encode` to `pub fn encode<T>(input_slice: &[T], output_buf: &mut Vec<u8>, ...params) -> Result<(), PhoenixError>`.
-    *   Change `decode` to `pub fn decode<T>(input_bytes: &[u8], output_buf: &mut Vec<u8>, ...params) -> Result<(), PhoenixError>`.
-    *   Add necessary trait bounds (e.g., `PrimInt`, `bytemuck::Pod`).
+1.  **Define Public API Signatures:**
+    *   Start with the exact function signatures defined in Section 2.
+    *   Add necessary trait bounds to `T` (e.g., `T: PrimInt + Signed`).
 
-2.  **Implement Core Logic (In-Place for Performance):**
-    *   For algorithms that can operate in-place (like Delta, Zigzag, Shuffle), create internal `_inplace` helper functions (e.g., `encode_slice_inplace<T>(data: &mut [T])`). This avoids intermediate allocations.
-    *   In the public `encode`/`decode` functions:
-        *   Take `input_bytes` (`&[u8]`).
-        *   Convert `input_bytes` to `Vec<T>` (mutable copy) using `crate::utils::safe_bytes_to_typed_slice(...)? .to_vec()`.
-        *   Call the `_inplace` helper on this `Vec<T>`.
-        *   Convert the final `Vec<T>` back to `Vec<u8>` using `crate::utils::typed_slice_to_bytes(...)`.
-        *   `output_buf.extend_from_slice(...)` to write the result.
-    *   For algorithms that cannot operate in-place (like LEB128, Bitpack), ensure internal helper functions efficiently write to provided buffers or return minimal structures. Avoid collecting large `Vec`s unnecessarily.
+2.  **Implement Core Logic (The Direct-Write Pattern):**
+    *   This is the most critical step for performance. **Do not create intermediate `Vec<T>` allocations.**
+    *   In your public `encode`/`decode` functions:
+        1.  `output_buf.clear();`
+        2.  `output_buf.reserve(input_slice.len() * size_of::<OutputT>());` to pre-allocate memory.
+        3.  Loop through the `input_slice` one element at a time.
+        4.  Perform the transformation on the single element.
+        5.  Get the bytes of the result using `.to_le_bytes()`.
+        6.  Append these bytes directly to the buffer: `output_buf.extend_from_slice(...)`.
+
+    *   **Example (from `zigzag::encode`):**
+        ```rust
+        pub fn encode<T>(input_slice: &[T], output_buf: &mut Vec<u8>) -> Result<(), PhoenixError>
+        where T: PrimInt + Signed, T::Unsigned: PrimInt {
+            output_buf.clear();
+            output_buf.reserve(input_slice.len() * std::mem::size_of::<T::Unsigned>());
+
+            for &value in input_slice {
+                let encoded_val = encode_val(value)?; // Process one value
+                output_buf.extend_from_slice(&encoded_val.to_le_bytes()); // Write bytes directly
+            }
+            Ok(())
+        }
+        ```
 
 3.  **Make It Panic-Free:**
-    *   **Eliminate all `.unwrap()`/`.expect()` calls.** Replace them with `ok_or_else()`, `map_err()`, and `?` operator to propagate `PhoenixError`.
-    *   Handle all possible error conditions (e.g., invalid input, truncation, overflow, malformed data).
+    *   **Eliminate all `.unwrap()` and `.expect()` calls.** Replace them with `ok_or_else()`, `map_err()`, and the `?` operator to propagate `PhoenixError`.
+    *   Handle all possible error conditions (e.g., invalid input, truncation, overflow).
 
-4.  **Remove FFI Dispatcher Logic:**
-    *   Ensure the kernel has no `match original_type` blocks. This dispatching is handled by the `executor` or `ffi/python.rs`.
-    *   Remove any direct `unsafe` blocks. Use `crate::utils::safe_bytes_to_typed_slice` for safe byte-to-type casting.
-    *   Remove any `use pyo3::...` statements (except if used within `#[cfg(test)]` for mocking, though it's best to avoid even that).
+4.  **Ensure Architectural Purity:**
+    *   The kernel's only responsibility is the transformation logic.
+    *   It **must not** contain any `match type_str` blocks.
+    *   It **must not** contain any `unsafe` blocks.
+    *   It **must not** contain any `use pyo3::...` statements.
 
-5.  **Rewrite Unit Tests:**
-    *   Update `#[cfg(test)]` blocks to call the new, hardened, generic public API (`encode<T>(...)`, `decode<T>(...)`).
+5.  **Write Comprehensive Unit Tests:**
+    *   Update `#[cfg(test)]` blocks to call the new, hardened, generic public API.
     *   Ensure tests cover successful roundtrips, edge cases (empty input, single value), and specific error conditions.
     *   Use `crate::utils::typed_slice_to_bytes` and `crate::utils::safe_bytes_to_typed_slice` for test data preparation.
 
@@ -73,19 +95,31 @@ Once a kernel is implemented and hardened, integrate it into the wider system:
     ```rust
     // src/kernels/mod.rs
     pub mod my_new_kernel;
-    // Add pub use self::my_new_kernel::{encode, decode}; // If function names are unique across kernels
     ```
-    *Note: We will eventually use unique `encode_my_kernel` names to avoid collisions in `mod.rs` re-exports.*
 
-2.  **Update `executor.rs`:**
-    *   Add `use super::my_new_kernel;` to `executor.rs`.
-    *   Add a `match` arm in `execute_compress_pipeline` and `execute_decompress_pipeline` for your new kernel's `op` string, calling its `encode`/`decode` function with the correct parameters.
+2.  **Update the Dispatcher in `kernels/mod.rs`:**
+    *   Add a `match` arm in `dispatch_encode` and `dispatch_decode` for your new kernel's `op` string.
+    *   This arm will call the `dispatch_by_type!` macro, passing in your kernel's module name and any required parameters.
+    *   **You do not need to modify `executor.rs`.**
+
+    *   **Example (adding `my_new_kernel`):**
+        ```rust
+        // in src/kernels/mod.rs dispatch_encode
+        match op {
+            // ... other kernels
+            "my_new_kernel" => {
+                let some_param = params["some_param"].as_u64().unwrap_or(42) as u8;
+                dispatch_by_type!(my_new_kernel, encode, input_bytes, output_buf, type_str, some_param)
+            },
+            "zstd" => { ... },
+            _ => Err(...)
+        }
+        ```
 
 3.  **Update `planner.rs` (Optional, but usually needed):**
-    *   Modify `analyze_data` (if new statistical properties are relevant).
     *   Modify `build_pipeline_from_profile` heuristics to decide when to include your new kernel in the pipeline.
 
 4.  **Add Python Integration Tests:**
-    *   Create or update tests in the top-level `tests/` directory (`test_compression.py`) that exercise a full compression/decompression roundtrip that uses your new kernel. This is the ultimate validation.
+    *   Create or update tests in the top-level `tests/` directory (e.g., `test_compression.py`) that exercise a full compression/decompression roundtrip using your new kernel. This is the ultimate validation.
 
 By following this guide, you can confidently add powerful new compression capabilities to Phoenix Cache.

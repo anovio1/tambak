@@ -2,24 +2,24 @@
 //! and decompression pipelines.
 //!
 //! It acts as the "Foreman," taking a pre-defined pipeline plan (from the `planner`)
-//! and executing the corresponding sequence of kernel operations. It is designed for
-//! maximum performance by minimizing memory allocations through a buffer-swapping
-//! strategy. This module is PURE RUST and has no FFI dependencies.
+//! and executing it by calling the unified `dispatch` functions in the `kernels`
+//! module. It is designed for maximum performance by minimizing memory allocations
+//! through a buffer-swapping strategy. This module is PURE RUST.
 
 use serde_json::Value;
 
-use crate::compression::{delta, rle, zigzag, zstd, leb128, bitpack, shuffle};
 use crate::error::PhoenixError;
+use crate::kernels; // The executor's only dependency is the top-level kernels module.
 
 //==================================================================================
-// 1. Pipeline Execution Logic (REVISED - Performant & Robust)
+// 1. Pipeline Execution Logic (REVISED - Simplified & Corrected)
 //==================================================================================
 
 /// Executes a compression pipeline using a memory-efficient buffer-swapping strategy.
 ///
 /// This function takes a raw byte buffer and a pipeline definition, then
-/// sequentially applies each specified transformation kernel, swapping between two
-/// pre-allocated buffers to avoid allocations in the hot loop.
+/// sequentially calls the `kernels::dispatch_encode` function for each step,
+/// swapping between two pre-allocated buffers to avoid allocations in the hot loop.
 ///
 /// # Args
 /// * `bytes`: The raw, validity-stripped byte buffer of the original data.
@@ -41,54 +41,28 @@ pub fn execute_compress_pipeline(
     }
 
     let mut buffer_a = bytes.to_vec();
-    // Pre-allocate with a reasonable capacity to avoid reallocations.
-    // The output of some steps (like LEB128) can be larger than the input.
-    let mut buffer_b = Vec::with_capacity(buffer_a.len() * 2); 
+    let mut buffer_b = Vec::with_capacity(buffer_a.len()); // Initial capacity
     
     let mut input_buf = &mut buffer_a;
     let mut output_buf = &mut buffer_b;
 
     let mut current_type = original_type.to_string();
 
-    for step in pipeline.iter() {
-        let op = step["op"].as_str().ok_or_else(|| PhoenixError::UnsupportedType("Missing 'op' in pipeline step".to_string()))?;
-        let params = step.get("params").unwrap_or(&Value::Null);
-
-        // Clear the output buffer before each operation
+    for op_config in pipeline.iter() {
         output_buf.clear();
 
-        match op {
-            "delta" => {
-                let order = match params.get("order") {
-                    Some(val) => val.as_u64() // Try to parse it as a u64
-                        .ok_or_else(|| PhoenixError::UnsupportedType(format!("Invalid 'order' parameter: {:?}", val)))? as usize,
-                    None => 1, // If the key doesn't exist at all, use the default.
-                };
-                delta::encode(input_buf, output_buf, order, &current_type)?;
-            }
-            "rle" => rle::encode(input_buf, output_buf, &current_type)?,
-            "zigzag" => {
-                zigzag::encode(input_buf, output_buf, &current_type)?;
-                current_type = current_type.replace("Int", "UInt");
-            }
-            "leb128" => leb128::encode(input_buf, output_buf, &current_type)?,
-            "bitpack" => {
-                let bit_width = params["bit_width"].as_u64().unwrap_or(0) as u8;
-                bitpack::encode(input_buf, output_buf, &current_type, bit_width)?;
-            }
-            "shuffle" => shuffle::shuffle_bytes(input_buf, output_buf, &current_type)?,
-            "zstd" => {
-                let level = params["level"].as_i64().unwrap_or(3) as i32;
-                zstd::compress(input_buf, output_buf, level)?;
-            }
-            _ => return Err(PhoenixError::UnsupportedType(format!("Unsupported pipeline op: {}", op))),
-        };
+        // The executor's ONLY job is to call the dispatcher.
+        // The dispatcher handles all the type casting and kernel-specific logic.
+        kernels::dispatch_encode(op_config, input_buf, output_buf, &current_type)?;
         
-        // Swap buffers for the next iteration
+        // If the operation changed the effective type (only zigzag does this), update it.
+        if op_config["op"].as_str() == Some("zigzag") {
+            current_type = current_type.replace("Int", "UInt");
+        }
+        
         std::mem::swap(&mut input_buf, &mut output_buf);
     }
 
-    // The final result is always in `input_buf` after the last swap
     Ok(input_buf.to_vec())
 }
 
@@ -119,42 +93,19 @@ pub fn execute_decompress_pipeline(
     }
 
     let mut buffer_a = bytes.to_vec();
-    let mut buffer_b = Vec::with_capacity(buffer_a.len() * 2); // Decompression can expand significantly
+    let mut buffer_b = Vec::with_capacity(bytes.len() * 2); // Decompression can expand
 
     let mut input_buf = &mut buffer_a;
     let mut output_buf = &mut buffer_b;
 
-    for step in pipeline.iter().rev() {
-        let op = step["op"].as_str().ok_or_else(|| PhoenixError::UnsupportedType("Missing 'op' in pipeline step".to_string()))?;
-        let params = step.get("params").unwrap_or(&Value::Null);
+    for op_config in pipeline.iter().rev() {
         let current_type = type_stack.pop().ok_or_else(|| PhoenixError::UnsupportedType("Type stack desync during decompression".to_string()))?;
         
         output_buf.clear();
 
-        match op {
-            "delta" => {
-                let order = match params.get("order") {
-                    Some(val) => val.as_u64() // Try to parse it as a u64
-                        .ok_or_else(|| PhoenixError::UnsupportedType(format!("Invalid 'order' parameter: {:?}", val)))? as usize,
-                    None => 1, // If the key doesn't exist at all, use the default.
-                };
-                delta::decode(input_buf, output_buf, order, &current_type)?;
-            }
-            "rle" => rle::decode(input_buf, output_buf, &current_type)?,
-            "zigzag" => {
-                let target_signed_type = type_stack.last().ok_or_else(|| PhoenixError::UnsupportedType("Type stack empty before zigzag decode".to_string()))?;
-                zigzag::decode(input_buf, output_buf, target_signed_type)?;
-            }
-            "leb128" => leb128::decode(input_buf, output_buf, &current_type)?,
-            "bitpack" => {
-                let bit_width = params["bit_width"].as_u64().unwrap_or(0) as u8;
-                bitpack::decode(input_buf, output_buf, &current_type, bit_width, num_values)?;
-            }
-            "shuffle" => shuffle::shuffle_bytes(input_buf, output_buf, &current_type)?,
-            "zstd" => zstd::decompress(input_buf, output_buf)?,
-            _ => return Err(PhoenixError::UnsupportedType(format!("Unsupported pipeline op: {}", op))),
-        };
-
+        // The executor's ONLY job is to call the dispatcher.
+        kernels::dispatch_decode(op_config, input_buf, output_buf, &current_type, num_values)?;
+        
         std::mem::swap(&mut input_buf, &mut output_buf);
     }
 
@@ -171,12 +122,13 @@ mod tests {
     use crate::utils::typed_slice_to_bytes;
 
     #[test]
-    fn test_full_pipeline_roundtrip_with_buffer_swap() {
+    fn test_executor_full_pipeline_roundtrip() {
         let original_data: Vec<i64> = vec![100, 110, 110, 90, 105];
         let original_bytes = typed_slice_to_bytes(&original_data);
         let original_type = "Int64";
         let num_values = original_data.len();
 
+        // The planner would generate this JSON.
         let pipeline_json = r#"[
             {"op": "delta", "params": {"order": 1}},
             {"op": "zigzag"},
@@ -202,5 +154,17 @@ mod tests {
         assert_eq!(original_bytes, decompressed_bytes);
     }
     
-    // Other tests from previous version remain valid...
+    #[test]
+    fn test_executor_empty_pipeline() {
+        let original_data: Vec<i32> = vec![1, 2, 3];
+        let original_bytes = typed_slice_to_bytes(&original_data);
+        let pipeline_json = "[]"; // Empty pipeline
+
+        let compressed_bytes = execute_compress_pipeline(&original_bytes, "Int32", pipeline_json).unwrap();
+        // With an empty pipeline, the data should be identical (just copied).
+        assert_eq!(compressed_bytes, original_bytes);
+
+        let decompressed_bytes = execute_decompress_pipeline(&compressed_bytes, "Int32", pipeline_json, 3).unwrap();
+        assert_eq!(decompressed_bytes, original_bytes);
+    }
 }
