@@ -1,10 +1,9 @@
 //! This module serves as the public API and dispatcher for the collection of all
 //! pure, stateless compression and decompression kernels.
 //!
-//! It declares all kernel sub-modules and provides a single, unified `dispatch`
-//! function for both encoding and decoding. This dispatcher is the sole entry
-//! point for the `pipeline::executor`. It takes an operation definition from the
-//! pipeline plan and calls the appropriate generic kernel implementation.
+//! Its primary responsibility is to centralize all type-casting logic. It takes
+//! raw byte buffers from the executor, safely converts them to the appropriate
+//! typed slices, and then calls the correct generic kernel implementation.
 
 use serde_json::Value;
 use crate::error::PhoenixError;
@@ -14,22 +13,13 @@ use crate::utils::safe_bytes_to_typed_slice;
 // 1. Module Declarations
 //==================================================================================
 
-/// Layer 1: Value Reduction
 pub mod delta;
-
-/// Layer 2: Sparsity Exploitation
 pub mod rle;
-
-/// Layer 3: Bit-Width Reduction
 pub mod zigzag;
 pub mod leb128;
-// pub mod sleb128;
+pub mod sleb128;
 pub mod bitpack;
-
-/// Layer 4: Byte Distribution
 pub mod shuffle;
-
-/// Final Stage: Entropy Coding
 pub mod zstd;
 
 //==================================================================================
@@ -87,7 +77,7 @@ pub fn dispatch_encode(
         "rle" => dispatch_by_type!(rle, encode, input_bytes, output_buf, type_str),
         "zigzag" => dispatch_by_type!(zigzag, encode, input_bytes, output_buf, type_str),
         "leb128" => dispatch_by_type!(leb128, encode, input_bytes, output_buf, type_str),
-        // "sleb128" => dispatch_by_type!(sleb128, encode, input_bytes, output_buf, type_str),
+        "sleb128" => dispatch_by_type!(sleb128, encode, input_bytes, output_buf, type_str),
         "bitpack" => {
             let bit_width = params["bit_width"].as_u64().unwrap_or(0) as u8;
             dispatch_by_type!(bitpack, encode, input_bytes, output_buf, type_str, bit_width)
@@ -117,7 +107,7 @@ pub fn dispatch_decode(
         "rle" => dispatch_by_type!(rle, decode, input_bytes, output_buf, type_str),
         "zigzag" => dispatch_by_type!(zigzag, decode, input_bytes, output_buf, type_str),
         "leb128" => dispatch_by_type!(leb128, decode, input_bytes, output_buf, type_str, num_values),
-        // "sleb128" => dispatch_by_type!(sleb128, decode, input_bytes, output_buf, type_str, num_values),
+        "sleb128" => dispatch_by_type!(sleb128, decode, input_bytes, output_buf, type_str, num_values),
         "bitpack" => {
             let bit_width = params["bit_width"].as_u64().unwrap_or(0) as u8;
             dispatch_by_type!(bitpack, decode, input_bytes, output_buf, type_str, bit_width, num_values)
