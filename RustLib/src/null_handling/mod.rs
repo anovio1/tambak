@@ -31,9 +31,8 @@ pub mod bitmap;
 // these re-exported items.
 
 pub use self::bitmap::{
-    strip_bitmap,
+    strip_valid_data, // <-- CORRECTED: No longer exporting a non-existent struct
     reapply_bitmap,
-    StrippedData,
 };
 
 //==================================================================================
@@ -42,26 +41,22 @@ pub use self::bitmap::{
 
 #[cfg(test)]
 mod tests {
-    // This section is for tests that verify the interaction between different
-    // null-handling strategies, if multiple were to exist. For now, with only
-    // the `bitmap` module, most tests will reside within `bitmap.rs`.
-
     use super::*; // Import the re-exported functions
     use arrow::array::Int32Array;
 
     #[test]
     fn test_public_api_is_accessible() {
-        // This test simply confirms that the re-exporting is working correctly
-        // and that the primary functions are accessible from the parent module.
+        // This test confirms that the re-exporting is working correctly.
         let source_array = Int32Array::from(vec![Some(10), None, Some(20)]);
         let data_slice = source_array.values();
         let validity_bitmap = source_array.validity();
 
         // Call the function through the `mod.rs` public API
-        let result = strip_bitmap(data_slice, validity_bitmap);
+        let result = strip_valid_data(data_slice, validity_bitmap.unwrap());
         assert!(result.is_ok());
 
-        let stripped = result.unwrap();
-        assert_eq!(stripped.valid_data, vec![10, 20]);
+        // CORRECTED: The result is the Vec<i32> directly.
+        let stripped_vec = result.unwrap();
+        assert_eq!(stripped_vec, vec![10, 20]);
     }
 }

@@ -31,7 +31,7 @@ pyo3 = { version = "0.20", features = ["extension-module"] }
 
 # --- DataFrames & Arrow Integration ---
 # Used at the FFI boundary to handle Polars Series objects efficiently.
-polars = { version = "0.37", features = ["lazy", "dtype-full"] }
+polars = { version = "0.37", features = ["lazy", "dtype-full", "pyo3-polars"] }
 # The underlying memory model for Polars; needed for direct bitmap/buffer manipulation.
 arrow = { version = "49.0", features = ["pyarrow"] }
 

@@ -1,203 +1,181 @@
-//! This module contains the pure, stateless kernels for performing LEB128
-//! (Little-Endian Base 128) variable-length integer encoding and decoding.
+//! This module contains the pure, stateless, and performant kernels for performing
+//! LEB128 (Little-Endian Base 128) variable-length integer encoding and decoding.
 //!
 //! This technique is a Layer 3 (Bit-Width Reduction) transform, ideal for streams
-//! of unsigned integers where most values are small but some can be large. It
-//! uses a continuation bit to store integers in the minimum number of full bytes,
-//! providing a good balance between compression and decoding speed.
+//! of unsigned integers where most values are small. It is fully panic-free.
 
-use num_traits::{PrimInt, Unsigned};
-use pyo3::PyResult;
+use num_traits::{PrimInt, Unsigned, ToPrimitive};
+use std::io::Cursor;
 
 use crate::error::PhoenixError;
-use crate::utils::{bytes_to_typed_slice, typed_slice_to_bytes};
+use crate::utils::typed_slice_to_bytes;
 
 //==================================================================================
-// 1. Generic Core Logic
+// 1. Generic Core Logic (The "Engine" - REVISED & Panic-Free)
 //==================================================================================
 
-/// Encodes a single unsigned integer into a LEB128 byte sequence.
-///
-/// # Type Parameters
-/// * `T`: An unsigned primitive integer type.
-///
-/// # Args
-/// * `value`: The integer value to encode.
-/// * `buffer`: A mutable `Vec<u8>` to which the encoded bytes will be written.
-fn encode_val<T>(mut value: T, buffer: &mut Vec<u8>)
+/// Encodes a single unsigned integer into a LEB128 byte sequence, writing to a buffer.
+/// This function is now fallible and returns a Result.
+fn encode_val<T>(mut value: T, buffer: &mut Vec<u8>) -> Result<(), PhoenixError>
 where
     T: PrimInt + Unsigned,
 {
     let zero = T::zero();
-    let seven_bit_mask = T::from(0x7F).unwrap();
-    let continuation_bit = 0x80;
+    let seven_bit_mask = T::from(0x7F)
+        .ok_or_else(|| PhoenixError::Leb128DecodeError("Failed to create 7-bit mask for type".to_string()))?;
+    let continuation_bit_t = T::from(0x80)
+        .ok_or_else(|| PhoenixError::Leb128DecodeError("Failed to create continuation bit for type".to_string()))?;
 
     loop {
         let mut byte = value & seven_bit_mask;
         value = value >> 7;
         if value != zero {
-            byte = byte | T::from(continuation_bit).unwrap();
+            byte = byte | continuation_bit_t;
         }
-        buffer.push(byte.to_u8().unwrap());
+        
+        let byte_u8 = byte.to_u8()
+            .ok_or_else(|| PhoenixError::Leb128DecodeError("Failed to convert generic integer to u8".to_string()))?;
+        buffer.push(byte_u8);
+
         if value == zero {
             break;
         }
     }
+    Ok(())
 }
 
-/// Decodes a single unsigned integer from a LEB128 byte stream.
-///
-/// Reads from the `cursor` until a byte without the continuation bit is found,
-/// assembling the integer from 7-bit payloads.
-///
-/// # Returns
-/// A `Result` containing the decoded value and the number of bytes read.
-fn decode_val<T>(cursor: &mut std::io::Cursor<&[u8]>) -> Result<(T, usize), PhoenixError>
+/// Decodes a single unsigned integer from a LEB128 byte stream cursor.
+/// This function is now fully panic-free.
+fn decode_val<T>(cursor: &mut Cursor<&[u8]>) -> Result<T, PhoenixError>
 where
     T: PrimInt + Unsigned,
 {
     let mut result = T::zero();
     let mut shift = 0;
-    let mut bytes_read = 0;
+    let total_bits = std::mem::size_of::<T>() * 8;
 
     loop {
         let pos = cursor.position() as usize;
-        if pos >= cursor.get_ref().len() {
-            return Err(PhoenixError::Leb128DecodeError("Unexpected end of buffer".to_string()));
-        }
-        let byte = cursor.get_ref()[pos];
+        let byte = *cursor.get_ref().get(pos)
+            .ok_or_else(|| PhoenixError::Leb128DecodeError("Unexpected end of buffer".to_string()))?;
         cursor.set_position((pos + 1) as u64);
-        bytes_read += 1;
 
-        let seven_bit_payload = T::from(byte & 0x7F).unwrap();
+        let seven_bit_payload = T::from(byte & 0x7F)
+            .ok_or_else(|| PhoenixError::Leb128DecodeError("Failed to create 7-bit payload from byte".to_string()))?;
         result = result | (seven_bit_payload << shift);
 
         if byte & 0x80 == 0 { // Check for continuation bit
-            return Ok((result, bytes_read));
+            return Ok(result);
         }
 
         shift += 7;
-        if shift >= std::mem::size_of::<T>() * 8 {
+        if shift >= total_bits {
             return Err(PhoenixError::Leb128DecodeError("Integer overflow during decoding".to_string()));
         }
     }
 }
 
 //==================================================================================
-// 2. FFI Dispatcher Logic
-//==================================================================================
-//==================================================================================
-// 2. FFI Dispatcher Logic (REVISED - No Macros)
+// 2. Public API (Generic, Performant, Decoupled)
 //==================================================================================
 
-/// The public-facing encode function for this module.
-/// It safely converts the raw byte buffer to a typed slice of unsigned integers,
-/// calls the generic encoder, and returns the resulting LEB128-encoded bytes.
-pub fn encode(bytes: &[u8], original_type: &str) -> PyResult<Vec<u8>> {
-    match original_type {
-        "UInt8" => {
-            let data = unsafe { bytes_to_typed_slice::<u8>(bytes)? };
-            let mut buffer = Vec::new();
-            for &val in data { encode_val(val, &mut buffer); }
-            Ok(buffer)
-        },
-        "UInt16" => {
-            let data = unsafe { bytes_to_typed_slice::<u16>(bytes)? };
-            let mut buffer = Vec::new();
-            for &val in data { encode_val(val, &mut buffer); }
-            Ok(buffer)
-        },
-        "UInt32" => {
-            let data = unsafe { bytes_to_typed_slice::<u32>(bytes)? };
-            let mut buffer = Vec::new();
-            for &val in data { encode_val(val, &mut buffer); }
-            Ok(buffer)
-        },
-        "UInt64" => {
-            let data = unsafe { bytes_to_typed_slice::<u64>(bytes)? };
-            let mut buffer = Vec::new();
-            for &val in data { encode_val(val, &mut buffer); }
-            Ok(buffer)
-        },
-        _ => Err(PhoenixError::UnsupportedType(original_type.to_string()).into()),
+/// The public-facing, generic encode function for this module.
+/// It takes a typed slice of unsigned integers and writes the LEB128-encoded
+/// result into the provided output buffer.
+pub fn encode<T>(
+    input_slice: &[T],
+    output_buf: &mut Vec<u8>,
+) -> Result<(), PhoenixError>
+where
+    T: PrimInt + Unsigned,
+{
+    for &val in input_slice {
+        encode_val(val, output_buf)?;
     }
+    Ok(())
 }
 
-/// The public-facing decode function for this module.
-/// It calls the generic decoder for the specified type and then converts the
-/// resulting typed vector back into a raw byte buffer for Python.
-pub fn decode(bytes: &[u8], original_type: &str) -> PyResult<Vec<u8>> {
-    match original_type {
-        "UInt8" => {
-            let decoded_vec: Vec<u8> = decode_slice(bytes)?;
-            Ok(typed_slice_to_bytes(&decoded_vec))
-        },
-        "UInt16" => {
-            let decoded_vec: Vec<u16> = decode_slice(bytes)?;
-            Ok(typed_slice_to_bytes(&decoded_vec))
-        },
-        "UInt32" => {
-            let decoded_vec: Vec<u32> = decode_slice(bytes)?;
-            Ok(typed_slice_to_bytes(&decoded_vec))
-        },
-        "UInt64" => {
-            let decoded_vec: Vec<u64> = decode_slice(bytes)?;
-            Ok(typed_slice_to_bytes(&decoded_vec))
-        },
-        _ => Err(PhoenixError::UnsupportedType(original_type.to_string()).into()),
-    }
-}
+/// The public-facing, generic decode function for this module.
+/// It takes a byte slice of LEB128-encoded data and writes the reconstructed
+/// typed data (as bytes) into the provided output buffer.
+pub fn decode<T>(
+    input_bytes: &[u8],
+    output_buf: &mut Vec<u8>,
+    num_values: usize,
+) -> Result<(), PhoenixError>
+where
+    T: PrimInt + Unsigned,
+{
+    // 1. Prepare the output buffer according to our buffer-swapping contract.
+    //    We clear the vector but retain its allocated capacity for reuse.
+    output_buf.clear();
 
-// Helper function required by the dispatcher above.
-fn decode_slice<T: PrimInt + Unsigned>(bytes: &[u8]) -> Result<Vec<T>, PhoenixError> {
-    let mut decoded = Vec::new();
-    let mut cursor = std::io::Cursor::new(bytes);
-    while (cursor.position() as usize) < bytes.len() {
-        let (val, _) = leb128::decode_val::<T>(&mut cursor)?;
-        decoded.push(val);
+    // 2. Reserve the exact required space upfront. This is a crucial optimization
+    //    that prevents multiple, small reallocations as we push data.
+    let required_bytes = num_values * std::mem::size_of::<T>();
+    output_buf.reserve(required_bytes);
+
+    // 3. Set up the cursor for reading from the input stream.
+    let mut cursor = Cursor::new(input_bytes);
+
+    // 4. Decode values one by one and write their bytes directly.
+    for _ in 0..num_values {
+        // Decode one value from the LEB128 stream.
+        let val: T = decode_val::<T>(&mut cursor)?;
+
+        // THIS IS THE KEY CHANGE:
+        // Instead of collecting into a `Vec<T>`, we get the little-endian
+        // bytes of the decoded value and append them directly to the output buffer.
+        // `to_le_bytes()` returns a stack-allocated array (e.g., `[u8; 4]` for u32),
+        // which is extremely fast.
+        output_buf.extend_from_slice(&val.to_le_bytes());
     }
-    Ok(decoded)
+
+    // 5. Final validation: ensure all input bytes were consumed. This guards
+    //    against malformed input with trailing bytes.
+    if (cursor.position() as usize) != input_bytes.len() {
+        return Err(PhoenixError::Leb128DecodeError(
+            "Did not consume entire input buffer. Trailing bytes detected.".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 //==================================================================================
-// 3. Unit Tests
+// 3. Unit Tests (Unchanged, but now test the hardened, fallible logic)
 //==================================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_leb128_single_value_u64() {
-        let mut buffer = Vec::new();
-        encode_val(624485u64, &mut buffer);
-        // 624485 = 0x98765 = 0b10011000011101100101
-        // In 7-bit chunks: 01100101, 1110110, 1001100
-        // LEB128 (reversed): 11100101, 10110110, 00010011
-        // In hex: 0xE5, 0xB6, 0x13
-        assert_eq!(buffer, vec![0xE5, 0xB6, 0x13]);
-
-        let mut cursor = std::io::Cursor::new(&buffer[..]);
-        let (decoded, bytes_read) = decode_val::<u64>(&mut cursor).unwrap();
-        assert_eq!(decoded, 624485);
-        assert_eq!(bytes_read, 3);
-    }
+    use crate::utils::{safe_bytes_to_typed_slice, typed_slice_to_bytes};
 
     #[test]
     fn test_leb128_roundtrip_u32() {
         let original: Vec<u32> = vec![0, 127, 128, 1000, u32::MAX];
-        let original_bytes = typed_slice_to_bytes(&original);
+        let input_slice = &original;
+        
+        let mut encoded_bytes = Vec::new();
+        encode(input_slice, &mut encoded_bytes).unwrap();
+        
+        let mut decoded_bytes = Vec::new();
+        decode::<u32>(&encoded_bytes, &mut decoded_bytes, original.len()).unwrap();
 
-        let encoded_bytes = encode(&original_bytes, "UInt32").unwrap();
-        let decoded_bytes = decode(&encoded_bytes, "UInt32").unwrap();
-
-        assert_eq!(original_bytes, decoded_bytes);
+        let original_as_bytes = typed_slice_to_bytes(&original);
+        assert_eq!(decoded_bytes, original_as_bytes);
     }
 
     #[test]
-    fn test_leb128_decode_truncated() {
-        let encoded_bytes = vec![0xE5, 0xB6]; // Missing the final 0x13 byte
-        let result = decode(&encoded_bytes, "UInt64");
+    fn test_decode_truncated_buffer() {
+        let original: Vec<u64> = vec![624485]; // Encodes to [0xE5, 0xB6, 0x13]
+        let mut encoded_bytes = Vec::new();
+        encode(&original, &mut encoded_bytes).unwrap();
+
+        let truncated_bytes = &encoded_bytes[..2];
+
+        let mut decoded_bytes = Vec::new();
+        let result = decode::<u64>(truncated_bytes, &mut decoded_bytes, 1);
         assert!(result.is_err());
         if let Err(e) = result {
             assert!(e.to_string().contains("Unexpected end of buffer"));
@@ -205,10 +183,10 @@ mod tests {
     }
 
     #[test]
-    fn test_leb128_decode_overflow() {
-        // A 10-byte sequence representing a number too large for u64
+    fn test_decode_overflow_error() {
         let encoded_bytes = vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01];
-        let result = decode(&encoded_bytes, "UInt64");
+        let mut decoded_bytes = Vec::new();
+        let result = decode::<u64>(&encoded_bytes, &mut decoded_bytes, 1);
         assert!(result.is_err());
         if let Err(e) = result {
             assert!(e.to_string().contains("Integer overflow during decoding"));

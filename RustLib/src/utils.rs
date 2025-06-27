@@ -7,11 +7,15 @@
 //!     that can be heavily audited.
 //! 3.  Offering helper functions for common tasks like determining type sizes.
 
+use pyo3::prelude::*;
+use polars::prelude::{PolarsError, Series};
+use arrow::pyarrow::PyArrow;
+use arrow::array::Array;
 use num_traits::PrimInt;
-use pyo3::PyResult;
-use bytemuck; // Import the crate
+use bytemuck;
 
 use crate::error::PhoenixError;
+use crate::null_handling::bitmap;
 
 //==================================================================================
 // 1. Core Utility Functions
@@ -96,10 +100,10 @@ pub fn typed_slice_to_bytes<T: PrimInt>(data: &[T]) -> Vec<u8> {
 
 //BEFORE
 /// Converts a slice of primitive integers into a `Vec<u8>`.
-/// This involves a copy. Assumes Little-Endian.
-pub fn typed_slice_to_bytes<T: PrimInt>(data: &[T]) -> Vec<u8> {
-    data.iter().flat_map(|&val| val.to_le_bytes()).collect()
-}
+// /// This involves a copy. Assumes Little-Endian.
+// pub fn typed_slice_to_bytes<T: PrimInt>(data: &[T]) -> Vec<u8> {
+//     data.iter().flat_map(|&val| val.to_le_bytes()).collect()
+// }
 
 /// Returns the size in bytes of a given data type specified by its string name.
 ///
@@ -123,6 +127,71 @@ pub fn get_element_size(type_str: &str) -> Result<usize, PhoenixError> {
         _ => Err(PhoenixError::UnsupportedType(type_str.to_string())),
     }
 }
+
+//==================================================================================
+// 2. FFI Helpers (The New Part We Need)
+//==================================================================================
+
+/// Converts a Python object (expected to be a PyArrow Array) into a Rust Polars Series.
+/// This is a primary FFI boundary crossing point.
+pub fn py_to_series(py_obj: &PyAny) -> Result<Series, PhoenixError> {
+    // The recommended way to do this is to have Python pass a PyArrow object.
+    // We can then use `Series::from_arrow` to construct the Series.
+    let arrow_array = Box::<dyn Array>::from_pyarrow(py_obj)?;
+    let series_name = py_obj.getattr("name")?.extract().unwrap_or("");
+    Series::from_arrow(series_name, arrow_array)
+        .map_err(PhoenixError::from)
+}
+
+/// Reconstructs a Polars Series from its raw data and validity parts.
+/// This is the counterpart to `py_to_series` for the decompression workflow.
+pub fn reconstruct_series(
+    data_bytes: &[u8],
+    validity_bytes: Option<Vec<u8>>,
+    original_type: &str,
+) -> Result<Series, PhoenixError> {
+    // This macro will handle the dispatch to the correct Arrow/Polars type.
+    macro_rules! dispatch {
+        ($T:ty) => {{
+            // Use our safe casting utility to view the data bytes as a typed slice.
+            let typed_data = safe_bytes_to_typed_slice::<$T>(data_bytes)?;
+            // Create a new Series from the valid data.
+            let series = Series::new("", typed_data);
+
+            // If there's a validity mask, apply it.
+            if let Some(validity) = validity_bytes {
+                series.with_validity(Some(arrow::bitmap::Bitmap::from(validity)))
+            } else {
+                Ok(series)
+            }
+        }};
+    }
+
+    // The match statement dispatches to the correct generic instantiation.
+    match original_type {
+        "Int8" => dispatch!(i8),
+        "Int16" => dispatch!(i16),
+        "Int32" => dispatch!(i32),
+        "Int64" => dispatch!(i64),
+        "UInt8" => dispatch!(u8),
+        "UInt16" => dispatch!(u16),
+        "UInt32" => dispatch!(u32),
+        "UInt64" => dispatch!(u64),
+        _ => Err(PhoenixError::UnsupportedType(original_type.to_string())),
+    }
+    .map_err(PhoenixError::from)
+}
+
+/// Converts a Rust Polars Series back into a Python object (PyArrow Array).
+pub fn series_to_py(py: Python, series: Series) -> PyObject {
+    // This is the correct, one-line conversion.
+    PySeries(series).into_py(py)
+}
+///OLD
+/// 
+// pub fn series_to_py(py: Python, series: Series) -> PyResult<PyObject> {
+//     series.to_arrow().to_pyarrow(py)
+// }
 
 //==================================================================================
 // 2. FFI Dispatcher Logic (Not Applicable)

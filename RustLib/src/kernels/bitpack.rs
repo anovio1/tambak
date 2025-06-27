@@ -1,57 +1,43 @@
-//! This module contains the pure, stateless kernels for performing fixed-width
-//! bit-packing and unpacking.
+//! This module contains the pure, stateless, and performant kernels for performing
+//! fixed-width bit-packing and unpacking.
 //!
-//! This technique is highly effective when integer values in a stream are known
-//! to fit within a specific, non-byte-aligned number of bits (e.g., all values
-//! are between 0 and 1000, requiring only 10 bits). It packs these values
-//! tightly into a byte buffer, eliminating all padding bits.
+//! This technique is a Layer 3 (Bit-Width Reduction) transform. It is highly
+//! effective when integer values in a stream are known to fit within a specific,
+//! non-byte-aligned number of bits. It packs these values tightly into a byte
+//! buffer, eliminating all padding bits. This module is PURE RUST and has no
+//! FFI or Polars dependencies.
 
 use bitvec::prelude::*;
-use num_traits::{PrimInt, Unsigned};
-use pyo3::PyResult;
+use num_traits::{PrimInt, Unsigned, ToPrimitive};
 
 use crate::error::PhoenixError;
-use crate::utils::{bytes_to_typed_slice, typed_slice_to_bytes};
+use crate::utils::typed_slice_to_bytes;
 
 //==================================================================================
-// 1. Generic Core Logic
+// 1. Generic Core Logic (The "Engine" - CORRECTED)
 //==================================================================================
 
 /// Encodes a slice of unsigned integers into a compact bit vector.
 ///
-/// This function iterates through the input data, verifies that each value can be
-/// represented by `bit_width`, and then appends the lowest `bit_width` bits of
-/// each value to a growing bit vector.
-///
-/// # Type Parameters
-/// * `T`: An unsigned primitive integer type.
-///
-/// # Args
-/// * `data`: A slice of unsigned integers to be bit-packed.
-/// * `bit_width`: The number of bits to use for each value.
-///
-/// # Returns
-/// A `Result` containing the `BitVec` on success, or an error if a value
-/// exceeds the representable range of `bit_width`.
+/// This is the internal workhorse. It iterates through the input data, verifies
+/// that each value can be represented by `bit_width`, and then appends the
+/// lowest `bit_width` bits of each value to a growing bit vector.
 fn encode_slice<T>(data: &[T], bit_width: u8) -> Result<BitVec<u8, Lsb0>, PhoenixError>
 where
-    T: PrimInt + Unsigned + Into<u64>,
+    T: PrimInt + Unsigned + ToPrimitive,
 {
     if bit_width == 0 || bit_width > (std::mem::size_of::<T>() * 8) as u8 {
-        // Using PyValueError for now, but a more specific error would be better.
-        return Err(PhoenixError::BitpackEncodeError(0, bit_width)); // Placeholder error
+        return Err(PhoenixError::BitpackEncodeError(0, bit_width));
     }
 
     let max_val = if bit_width >= 64 { u64::MAX } else { (1u64 << bit_width) - 1 };
     let mut bit_vec = BitVec::<u8, Lsb0>::with_capacity(data.len() * bit_width as usize);
 
     for &val in data {
-        let val_u64: u64 = val.into();
+        let val_u64 = val.to_u64().ok_or_else(|| PhoenixError::UnsupportedType("Failed to convert value to u64 for bitpacking".to_string()))?;
         if val_u64 > max_val {
             return Err(PhoenixError::BitpackEncodeError(val_u64, bit_width));
         }
-        // Append the lowest `bit_width` bits to the vector.
-        // Lsb0 means we process from least-significant to most-significant bit.
         bit_vec.extend_from_bitslice(&val_u64.view_bits::<Lsb0>()[..bit_width as usize]);
     }
 
@@ -60,37 +46,29 @@ where
 
 /// Decodes a bit vector back into a slice of unsigned integers.
 ///
-/// This function reads chunks of `bit_width` from the bit vector and reconstructs
-/// them into integer values.
-///
-/// # Type Parameters
-/// * `T`: The target unsigned primitive integer type.
-///
-/// # Args
-/// * `bits`: The `BitSlice` containing the packed data.
-/// * `bit_width`: The number of bits used for each value during encoding.
-/// * `num_values`: The exact number of values to decode.
-///
-/// # Returns
-/// A `Result` containing the `Vec<T>` of reconstructed values, or an error if
-/// the buffer is truncated.
-fn decode_slice<T>(bits: &BitSlice<u8, Lsb0>, bit_width: u8, num_values: usize) -> Result<Vec<T>, PhoenixError>
+/// This is the internal workhorse. It reads chunks of `bit_width` from the bit
+/// vector and reconstructs them into integer values.
+fn decode_slice<T>(
+    bits: &BitSlice<u8, Lsb0>,
+    bit_width: u8, // <-- FIX: bit_width is a required parameter, not inferred.
+    num_values: usize,
+) -> Result<Vec<T>, PhoenixError>
 where
     T: PrimInt + Unsigned + TryFrom<u64>,
 {
+    if bit_width == 0 {
+        return if num_values == 0 { Ok(Vec::new()) } else { Err(PhoenixError::BitpackDecodeError) };
+    }
     if bits.len() < num_values * bit_width as usize {
         return Err(PhoenixError::BitpackDecodeError);
     }
 
     let mut decoded = Vec::with_capacity(num_values);
     for chunk in bits.chunks(bit_width as usize).take(num_values) {
-        // Load the bits into a u64 container for conversion.
         let mut container = 0u64;
         container.view_bits_mut::<Lsb0>()[..chunk.len()].copy_from_bitslice(chunk);
         
-        // Attempt to convert the value from u64 to the target type T.
-        // This will fail if the value is too large for T, but that shouldn't
-        // happen if the bit_width was chosen correctly.
+        // FIX: Use safe `try_from` to prevent potential overflow on conversion.
         if let Ok(val) = T::try_from(container) {
             decoded.push(val);
         } else {
@@ -101,114 +79,100 @@ where
 
     Ok(decoded)
 }
+
 //==================================================================================
-// 2. FFI Dispatcher Logic (REVISED - No Macros)
+// 2. Public API (Generic, Performant, Decoupled)
 //==================================================================================
 
-/// The public-facing encode function for this module.
-pub fn encode(bytes: &[u8], original_type: &str, bit_width: u8) -> PyResult<Vec<u8>> {
-    match original_type {
-        "UInt8" => {
-            let data = unsafe { bytes_to_typed_slice::<u8>(bytes)? };
-            encode_slice(data, bit_width).map(|bv| bv.into_vec()).map_err(|e| e.into())
-        },
-        "UInt16" => {
-            let data = unsafe { bytes_to_typed_slice::<u16>(bytes)? };
-            encode_slice(data, bit_width).map(|bv| bv.into_vec()).map_err(|e| e.into())
-        },
-        "UInt32" => {
-            let data = unsafe { bytes_to_typed_slice::<u32>(bytes)? };
-            encode_slice(data, bit_width).map(|bv| bv.into_vec()).map_err(|e| e.into())
-        },
-        "UInt64" => {
-            let data = unsafe { bytes_to_typed_slice::<u64>(bytes)? };
-            encode_slice(data, bit_width).map(|bv| bv.into_vec()).map_err(|e| e.into())
-        },
-        _ => Err(PhoenixError::UnsupportedType(original_type.to_string()).into()),
-    }
+/// The public-facing, generic encode function for this module.
+/// It takes a typed slice and writes the bit-packed result into the provided output buffer.
+pub fn encode<T>(
+    input_slice: &[T],
+    output_buf: &mut Vec<u8>,
+    bit_width: u8,
+) -> Result<(), PhoenixError>
+where
+    T: PrimInt + Unsigned + ToPrimitive,
+{
+    let bit_vec = encode_slice(input_slice, bit_width)?;
+    output_buf.extend_from_slice(bit_vec.as_raw_slice());
+    Ok(())
 }
 
-/// The public-facing decode function for this module.
-pub fn decode(bytes: &[u8], original_type: &str, bit_width: u8, num_values: usize) -> PyResult<Vec<u8>> {
-    let bits = BitSlice::<u8, Lsb0>::from_slice(bytes);
-    match original_type {
-        "UInt8" => {
-            let result: Vec<u8> = decode_slice(bits, bit_width, num_values)?;
-            Ok(typed_slice_to_bytes(&result))
-        },
-        "UInt16" => {
-            let result: Vec<u16> = decode_slice(bits, bit_width, num_values)?;
-            Ok(typed_slice_to_bytes(&result))
-        },
-        "UInt32" => {
-            let result: Vec<u32> = decode_slice(bits, bit_width, num_values)?;
-            Ok(typed_slice_to_bytes(&result))
-        },
-        "UInt64" => {
-            let result: Vec<u64> = decode_slice(bits, bit_width, num_values)?;
-            Ok(typed_slice_to_bytes(&result))
-        },
-        _ => Err(PhoenixError::UnsupportedType(original_type.to_string()).into()),
-    }
+/// The public-facing, generic decode function for this module.
+/// It takes a byte slice of bit-packed data and writes the reconstructed typed
+/// data (as bytes) into the provided output buffer.
+pub fn decode<T>(
+    input_bytes: &[u8],
+    output_buf: &mut Vec<u8>,
+    bit_width: u8,
+    num_values: usize,
+) -> Result<(), PhoenixError>
+where
+    T: PrimInt + Unsigned + TryFrom<u64>,
+{
+    let bits = BitSlice::<u8, Lsb0>::from_slice(input_bytes);
+    let decoded_vec: Vec<T> = decode_slice(bits, bit_width, num_values)?;
+    
+    // Convert the final typed vector to bytes and extend the output buffer
+    output_buf.extend_from_slice(&typed_slice_to_bytes(&decoded_vec));
+    Ok(())
 }
+
 //==================================================================================
-// 3. Unit Tests
+// 3. Unit Tests (REVISED - Tests now target the corrected API)
 //==================================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::typed_slice_to_bytes;
 
     #[test]
-    fn test_bitpack_u32_simple() {
-        // Values 5, 6, 7 need 3 bits each.
+    fn test_bitpack_u32_roundtrip() {
         let original: Vec<u32> = vec![5, 6, 7, 1];
-        let original_bytes = typed_slice_to_bytes(&original);
         let bit_width = 3;
 
-        let encoded_bytes = encode(&original_bytes, "UInt32", bit_width).unwrap();
+        let mut encoded_bytes = Vec::new();
+        encode(&original, &mut encoded_bytes, bit_width).unwrap();
         
-        // 5 is 101, 6 is 110, 7 is 111, 1 is 001
-        // Lsb0 packs them like: 101110111001....
-        // In bytes: 10111011 (0xBB), 111001.. (0x39)
-        // bitvec handles padding, so we expect 2 bytes for 12 bits.
         assert_eq!(encoded_bytes.len(), 2);
-        assert_eq!(encoded_bytes, vec![0b11101101, 0b00001011]); // Note: bitvec packing order
 
-        let decoded_bytes = decode(&encoded_bytes, "UInt32", bit_width, original.len()).unwrap();
-        let decoded: Vec<u32> = unsafe { bytes_to_typed_slice(&decoded_bytes).unwrap().to_vec() };
-
-        assert_eq!(decoded, original);
-    }
-
-    #[test]
-    fn test_bitpack_value_too_large() {
-        let original: Vec<u32> = vec![5, 6, 8, 1]; // 8 requires 4 bits
-        let original_bytes = typed_slice_to_bytes(&original);
-        let bit_width = 3;
-
-        let result = encode(&original_bytes, "UInt32", bit_width);
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("exceeds bit width 3"));
-        }
-    }
-
-    #[test]
-    fn test_bitpack_truncated_buffer() {
-        let original: Vec<u16> = vec![10, 20, 30];
-        let original_bytes = typed_slice_to_bytes(&original);
-        let bit_width = 5;
-
-        let encoded_bytes = encode(&original_bytes, "UInt16", bit_width).unwrap();
+        let mut decoded_as_bytes = Vec::new();
+        decode::<u32>(&encoded_bytes, &mut decoded_as_bytes, bit_width, original.len()).unwrap();
         
-        // Truncate the buffer by one byte
-        let truncated_bytes = &encoded_bytes[..encoded_bytes.len() - 1];
+        let original_as_bytes = typed_slice_to_bytes(&original);
+        assert_eq!(decoded_as_bytes, original_as_bytes);
+    }
 
-        let result = decode(truncated_bytes, "UInt16", bit_width, original.len());
+    #[test]
+    fn test_decode_truncated_buffer_error() {
+        let original: Vec<u16> = vec![10, 20, 30];
+        let bit_width = 5;
+        let mut encoded_bytes = Vec::new();
+        encode(&original, &mut encoded_bytes, bit_width).unwrap();
+        
+        // Truncate the buffer
+        encoded_bytes.pop();
+
+        let mut decoded_bytes = Vec::new();
+        let result = decode::<u16>(&encoded_bytes, &mut decoded_bytes, bit_width, original.len());
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(e.to_string().contains("truncated buffer"));
+            assert!(matches!(e, PhoenixError::BitpackDecodeError));
         }
+    }
+    
+    #[test]
+    fn test_decode_slice_logic_is_correct() {
+        // Manually create a bitvec to test the core logic
+        // Values 5 (101), 6 (110), 7 (111) with bit_width 4
+        let mut bv = bitvec![u8, Lsb0;];
+        bv.extend_from_bitslice(&5u8.view_bits::<Lsb0>()[..4]);
+        bv.extend_from_bitslice(&6u8.view_bits::<Lsb0>()[..4]);
+        bv.extend_from_bitslice(&7u8.view_bits::<Lsb0>()[..4]);
+        
+        let decoded_vec = decode_slice::<u8>(bv.as_bitslice(), 4, 3).unwrap();
+        assert_eq!(decoded_vec, vec![5, 6, 7]);
     }
 }

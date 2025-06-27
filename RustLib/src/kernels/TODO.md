@@ -6,6 +6,7 @@ Here are the three categories of changes necessary to harden this kernel, which 
 
 ---
 
+
 ### 1. Critical Need: Change Signatures for Performance (Buffer Reuse)
 
 This is the most important change, driven by the requirements of our hardened `executor`.
@@ -16,25 +17,6 @@ This is the most important change, driven by the requirements of our hardened `e
     2.  **Change the `decode` signature.** It must also accept a mutable output buffer.
     3.  This change will ripple down to the helper functions (`encode_slice`, `decode_slice`).
 
-    **Example of the new public signatures:**
-    ```rust
-    // New encode signature
-    pub fn encode(
-        input_bytes: &[u8],
-        output_buf: &mut Vec<u8>, // <-- New parameter
-        original_type: &str,
-        bit_width: u8,
-    ) -> Result<(), PhoenixError> // <-- Returns () on success
-
-    // New decode signature
-    pub fn decode(
-        input_bytes: &[u8],
-        output_buf: &mut Vec<u8>, // <-- New parameter
-        original_type: &str,
-        bit_width: u8,
-        num_values: usize,
-    ) -> Result<(), PhoenixError> // <-- Returns () on success
-    ```
 
 ---
 
@@ -47,40 +29,6 @@ The kernel's public API is currently acting as an FFI dispatcher, which is the w
     1.  **Make the public functions generic.** The kernel should operate on typed slices (`&[T]`), not raw bytes. The `executor` will be responsible for providing the correctly typed slice.
     2.  **Remove the `match` statement and the `unsafe` block.** The kernel should only need to know the type `T` it's operating on.
 
-    **Example of the new, generic public API:**
-    ```rust
-    // The kernel is now generic over the type T.
-    pub fn encode<T>(
-        input_slice: &[T], // <-- Takes a typed slice
-        output_buf: &mut Vec<u8>,
-        bit_width: u8,
-    ) -> Result<(), PhoenixError>
-    where
-        T: PrimInt + Unsigned + Into<u64>,
-    {
-        // No more match statement or unsafe block.
-        // Directly call the core logic.
-        let bit_vec = encode_slice(input_slice, bit_width)?;
-        output_buf.extend_from_slice(bit_vec.as_raw_slice());
-        Ok(())
-    }
-
-    // Similar generic implementation for decode.
-    pub fn decode<T>(
-        input_bytes: &[u8],
-        output_buf: &mut Vec<u8>,
-        bit_width: u8,
-        num_values: usize,
-    ) -> Result<(), PhoenixError>
-    where
-        T: PrimInt + Unsigned + TryFrom<u64>,
-    {
-        // ...
-    }
-    ```
-    *Note: The `executor` will now be responsible for calling the correct generic instance of these functions.*
-
----
 
 ### 3. Critical Need: Decouple from `pyo3`
 
@@ -97,7 +45,7 @@ To bring `bitpack.rs` and all other kernels up to production standard, the dev t
 1.  **Update all `encode`/`decode` signatures** to accept a mutable output buffer (`&mut Vec<u8>`) and return `Result<(), PhoenixError>`.
 2.  **Make the public functions generic over the type `T`** instead of taking raw bytes and a type string.
 3.  **Remove the `match` statement and `unsafe` blocks** from all kernels.
-4.  **Update the internal helper functions** (`encode_slice`, `decode_slice`) to support the new signatures.
+4.  **Update the internal helper functions**  to support the new signatures.
 5.  **Rewrite the unit tests** to call the new, generic, buffer-writing APIs.
 
 This is a significant, but highly patterned and repeatable, set of changes. Once we do it for one kernel, the template is set for all the others.

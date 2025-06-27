@@ -1,0 +1,59 @@
+# This file defines the Python package for our Phoenix library.
+# It uses the modern PEP 621 standard for metadata and `maturin` as the
+# build backend for compiling our Rust extension module.
+
+#==================================================================================
+# 1. Build System Configuration
+#==================================================================================
+[build-system]
+# Specifies that `maturin` is required to build this package.
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+#==================================================================================
+# 2. Project Metadata (PEP 621)
+#==================================================================================
+[project]
+# The name of the package as it will appear on PyPI.
+name = "phoenix-cache"
+version = "0.1.0"
+description = "A high-performance, adaptive compression library for columnar data, powered by a Rust core."
+authors = [
+  { name = "Your Name", email = "you@example.com" },
+]
+license = { text = "MIT OR Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Archiving :: Compression",
+]
+
+#==================================================================================
+# 3. Maturin Build Configuration
+#==================================================================================
+[tool.maturin]
+# This feature flag is essential for PyO3 to correctly build the extension module.
+features = ["pyo3/extension-module"]
+
+# If we had any pure Python wrapper code, we would specify its location here.
+# It's good practice to include this even if the directory is currently empty.
+python-source = "python"
+
+# The name of the Rust crate inside the `src/` directory that maturin should build.
+# This must match the `[package].name` in `Cargo.toml`.
+# For example, if Cargo.toml has `name = "phoenix-core"`.
+# We will need to align on this name.
+# crate-name = "phoenix_core"

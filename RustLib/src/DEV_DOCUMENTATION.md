@@ -26,8 +26,19 @@ This library will be consumed by a Python package (`phoenix-cache`) which handle
 # PhoenixCache
 This Rust library compresses and decompresses typed columnar data by applying a configurable pipeline of stateless kernels, taking raw byte slices as input and producing compressed byte vectors as output (and vice versa).
 
+---
+PERFECT.
 
-// COMPLETE scaffold for src/pipeline/planner.rs REMEMBER. (Core logicanalyzes the input data and metadata to decide the optimal sequence of compression kernels to apply, producing a pipeline plan for execution) EACH OF THESE SCAFFOLDS ARE MEANT TO BE HANDLED BY A SEPARATE TEAM. IT IS IMPORTANT THAT THEY ARE COMPLETE SCAFFOLDS
+can you continue our process of providing COMPLETE SCAFFOLD for leb128.rs please?
+COMPLETE scaffold for kernels/delta.rs REMEMBER. EACH OF THESE SCAFFOLDS ARE MEANT TO BE HANDLED BY A SEPARATE TEAM. IT IS IMPORTANT THAT THEY ARE COMPLETE SCAFFOLDS
+
+1.  **Update all `encode`/`decode` signatures** to accept a mutable output buffer (`&mut Vec<u8>`) and return `Result<(), PhoenixError>`.
+2.  **Make the public functions generic over the type `T`** instead of taking raw bytes and a type string.
+3.  **Remove the `match` statement and `unsafe` blocks** from all kernels.
+4.  **Update the internal helper functions**  to support the new signatures.
+5.  **Rewrite the unit tests** to call the new, generic, buffer-writing APIs.
+
+---
 
 src/
 ├── lib.rs                   # Main library entry point, exposes public APIs

@@ -18,8 +18,8 @@ pub mod python;
 //==================================================================================
 // This section defines the public API of the FFI layer that the main `lib.rs`
 // will use to construct the final Python module.
-
 pub use self::python::{
-    compress_series_ffi,
-    decompress_chunk_ffi,
+    compress_py,
+    decompress_py,
+    plan_py,
 };

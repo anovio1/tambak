@@ -27,3 +27,5 @@ flows/__pycache__/
 
 tubuin/output_artifacts/**
 .vscode/
+
+RustLib/target/**/*
