@@ -21,39 +21,6 @@ This library will be consumed by a Python package (`phoenix-cache`) which handle
 4.  **Performance via Zero-Copy:** The FFI boundary should be designed for zero-copy data transfer where possible, leveraging the Arrow memory model.
 
 #### **3.0 Required Project Structure (Filesystem Contract)**
-
-You will implement the following file structure. Each file has a specific, non-overlapping responsibility.
-
-```plaintext
-phoenix-cache/
-src/
-├── kernels/                          // Pure, atomic compression kernels (stateless)
-│   ├── delta.rs                     // Delta encoding/decoding kernels
-│   ├── rle.rs                       // Run-Length Encoding kernels
-│   ├── leb128.rs                    // LEB128 unsigned integer kernels
-│   ├── sleb128.rs                   // SLEB128 signed integer kernels
-│   ├── zigzag.rs                    // Zigzag encoding kernels for signed integers
-│   ├── zstd.rs                      // Final compression stage using zstd
-│   └── mod.rs                      // Re-exports all kernel modules
-│
-├── pipeline/                        // The "brain" orchestrating compression & decompression
-│   ├── compress.rs                 // Decides which kernels to run, in which order, handles nulls, builds manifest
-│   ├── decompress.rs               // Reads manifest, reverses kernel steps, reconstructs original data
-│   ├── manifest.rs                // Logic for manifest/footer format (metadata recording kernel pipeline & settings)
-│   └── mod.rs                    // Re-exports pipeline modules
-│
-├── utils/                         // Utility functions used across kernels & pipeline
-│   ├── nulls.rs                  // Null bitmap encoding/decoding
-│   ├── bytes.rs                  // Byte slice to typed slice conversions and vice versa
-│   └── mod.rs                   // Re-exports utils
-│
-├── error.rs                      // Custom error types, e.g. PhoenixError
-│
-└── ffi/                         // Foreign Function Interface (Python, or other) wrappers
-    ├── python.rs                 // Python FFI bindings: call pipeline compress/decompress functions
-    └── mod.rs                   // Re-exports ffi modules
-```
-
 ---
 
 # PhoenixCache
@@ -67,15 +34,20 @@ This Rust library compresses and decompresses typed columnar data by applying a 
 
 src/
 ├── lib.rs                   # Main library entry point, exposes public APIs
-├── error.rs                 # Error types and handling (PhoenixError, etc.)
-├── utils.rs                 # Utility functions (e.g., bytes_to_typed_slice, conversions)
+├── [X] error.rs           # NEED: The implementation of our central PhoenixError enum.
+└── [X] utils.rs           # NEED: The implementation for shared helpers, especially safe casting.
+├── null_handling/
+│   ├── [X] mod.rs         # NEED: The simple glue file for this module.
+│   └── [X] bitmap.rs      # NEED: The implementation for creating and applying null bitmaps.
 ├── pipeline/
-│   ├── mod.rs          # The Pipeline Facade: Declares the module and its public API.
-│   ├── orchestrator.rs # The General Contractor: Manages the end-to-end compression/decompression workflow.
-│   ├── planner.rs      # The Strategist: Analyzes data and creates a compression plan.
-│   └── executor.rs     # The Foreman: Executes a given plan by calling the kernels.
-├── ffi.rs                   # will be extremely simple; it will only call the Orchestrator
+│   ├── [X] mod.rs         # NEED: The simple glue file to declare the pipeline modules.
+│   ├── orchestrator.rs     # The General Contractor: Manages the end-to-end compression/decompression workflow.
+│   ├── planner.rs          # The Strategist: Analyzes data and creates a compression plan.
+│   └── executor.rs         # The Foreman: Executes a given plan by calling the kernels.
+├── ffi/
+│   └── [X] python.rs      # NEED: The FFI bridge to handle Python types, release the GIL, and translate errors.
 ├── kernels/                 # Compression kernel implementations (delta, rle, zstd, etc.)
+│   ├── [X] mod.rs         # NEED: The simple glue file to declare and export all kernels.
 │   ├── mod.rs               # Kernel module root, pub mod each kernel
 │   ├── delta.rs             # Delta encoding/decoding kernel
 │   ├── rle.rs               # Run-length encoding kernel
