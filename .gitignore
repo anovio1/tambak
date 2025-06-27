@@ -1,0 +1,29 @@
+# Environment files
+.env
+**/.env
+
+# Python
+/__pycache__/
+*.pyc
+
+# Virtual environments
+venv/
+.venv/
+!venv/.venv-used
+!.venv/.venv-used
+.winvenv/
+!.winvenv/.venv-used
+
+
+# Prefect artifacts
+*.orion
+.prefect/
+flows/__pycache__/
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+
+tubuin/output_artifacts/**
+.vscode/
