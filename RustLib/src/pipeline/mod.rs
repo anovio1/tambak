@@ -10,6 +10,7 @@
 
 /// The "General Contractor": Manages the end-to-end workflow, including null handling.
 pub mod orchestrator;
+pub mod frame_orchestrator;
 
 /// The "Strategist": Analyzes data to create an optimal compression plan.
 pub mod planner;

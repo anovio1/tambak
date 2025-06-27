@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use polars::prelude::{Series, PolarsDataType};
 use arrow::pyarrow::ToPyArrow;
 
-use crate::pipeline::{orchestrator, planner};
+use crate::pipeline::{orchestrator, planner, frame_orchestrator};
 use crate::utils;
 use crate::error::PhoenixError;
 use crate::null_handling;
@@ -47,5 +47,26 @@ pub fn plan_py(py: Python, series_py: &PyAny) -> PyResult<String> {
         // Call the pure Rust planner.
         planner::plan_pipeline(&data_bytes, &original_type)
             .map_err(PhoenixError::into)
+    })
+}
+
+
+// --- DataFrame Functions ---
+
+#[pyfunction]
+#[pyo3(name = "compress_frame")]
+pub fn compress_frame_py(py: Python, dataframe_py: &PyAny) -> PyResult<Vec<u8>> {
+    let df = dataframe_py.extract::<PyDataFrame>()?.into();
+    py.allow_threads(move || {
+        frame_orchestrator::compress_frame(&df).map_err(PhoenixError::into)
+    })
+}
+
+#[pyfunction]
+#[pyo3(name = "decompress_frame")]
+pub fn decompress_frame_py(py: Python, bytes: &[u8]) -> PyResult<PyDataFrame> {
+    py.allow_threads(move || {
+        let df = frame_orchestrator::decompress_frame(bytes)?;
+        Ok(PyDataFrame(df))
     })
 }
