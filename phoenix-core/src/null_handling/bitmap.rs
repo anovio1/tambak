@@ -1,135 +1,125 @@
-//! This module contains pure, stateless, and high-performance kernels for handling
-//! nullability. Its primary responsibility is to efficiently separate and
-//! reconstruct data based on an Arrow-compatible validity bitmap.
-//! This module is completely decoupled from Polars and the FFI layer.
+// --- IN: src/null_handling/bitmap.rs ---
 
-use arrow::array::PrimitiveArray;
-use polars_arrow::bitmap::Bitmap;
-use arrow::buffer::Buffer;
-use arrow::datatypes::ArrowNumericType;
-use num_traits::PrimInt;
+//! This module contains pure, stateless, and high-performance kernels for handling
+//! nullability, built correctly for the Arrow v55 API. It uses generics and the
+//! official `NullBuffer` and non-generic `Buffer` types.
+
+use arrow::array::{PrimitiveArray, ArrayData};
+use arrow::buffer::{Buffer, NullBuffer};
+use arrow::datatypes::{ArrowNumericType, ToByteSlice}; // ToByteSlice is needed for tests
 
 use crate::error::PhoenixError;
 
 //==================================================================================
-// 1. Generic Core Logic (REVISED - Simplified & Performant)
+// 1. Generic Core Logic (CORRECTED based on Buffer being non-generic)
 //==================================================================================
 
-/// Extracts a contiguous vector of valid data from a slice, guided by a validity bitmap.
+/// Extracts the valid data from a `PrimitiveArray` into a new, dense `Buffer`.
 ///
-/// This function performs a single pass over the data, copying only the elements
-/// marked as valid by the bitmap into a new, tightly packed vector. This is the
-/// core kernel used by the orchestrator when nulls are present.
+/// This function iterates through the array, collects the non-null values into a
+/// `Vec<T::Native>`, and then creates a byte `Buffer` from that vector.
 ///
 /// # Args
-/// * `data`: A slice of the full data, including values at null positions.
-/// * `validity`: An Arrow `Bitmap` describing the validity of `data`.
+/// * `array`: A reference to an Arrow `PrimitiveArray<T>`.
 ///
 /// # Returns
-/// A `Result` containing a `Vec<T>` of only the valid data values.
-pub fn strip_valid_data<T: PrimInt>(
-    data: &[T],
-    validity: &Bitmap,
-) -> Result<Vec<T>, PhoenixError> {
-    if data.len() != validity.len() {
-        return Err(PhoenixError::BufferMismatch(data.len(), validity.len()));
-    }
+/// A byte `Buffer` containing only the valid data values.
+pub fn strip_valid_data_to_buffer<T: ArrowNumericType>(
+    array: &PrimitiveArray<T>,
+) -> Buffer
+where
+    T::Native: ToByteSlice, // Ensure the native type can be viewed as bytes
+{
+    // 1. Collect valid typed data. filter_map is the most efficient way.
+    let valid_data: Vec<T::Native> = array.iter().filter_map(|val| val).collect();
 
-    let num_valid = validity.true_count();
-    let mut valid_data = Vec::with_capacity(num_valid);
-
-    // Single pass: iterate through the data and only copy if valid.
-    for (i, &val) in data.iter().enumerate() {
-        // SAFETY: We've already checked that lengths match.
-        if unsafe { validity.get_bit_unchecked(i) } {
-            valid_data.push(val);
-        }
-    }
-    Ok(valid_data)
+    // 2. Create a byte Buffer from the typed Vec.
+    // `Buffer::from_vec` takes a `Vec<u8>`.
+    Buffer::from(valid_data.to_byte_slice())
 }
 
-/// Re-applies a validity bitmap to a stream of valid data to reconstruct
-/// the original Arrow array with its nulls. This is a zero-copy operation.
-///
-/// This is the high-performance, "zero-copy" way to construct an array.
-/// It creates an `ArrayData` struct from the buffers directly, without iterating
-/// or using a builder.
+/// Re-applies a `NullBuffer` to a byte `Buffer` of valid data to reconstruct
+/// the original Arrow `PrimitiveArray`. This is a zero-copy operation.
 ///
 /// # Args
-/// * `valid_data_buffer`: An Arrow `Buffer` containing the contiguous valid data.
-/// * `validity_bitmap`: An Arrow `Bitmap` describing the full array's validity.
+/// * `valid_data_buffer`: A non-generic Arrow `Buffer` containing the contiguous valid data as bytes.
+/// * `null_buffer`: An `Option<NullBuffer>`. `None` signifies an array with no nulls.
 ///
 /// # Returns
-/// A new Arrow `PrimitiveArray` with nulls correctly reinstated.
+/// A new Arrow `PrimitiveArray<T>` with nulls correctly reinstated.
 pub fn reapply_bitmap<T: ArrowNumericType>(
-    valid_data_buffer: Buffer,
-    validity_bitmap: Bitmap,
+    valid_data_buffer: Buffer, // CORRECT: Buffer is not generic
+    null_buffer: Option<NullBuffer>,
 ) -> Result<PrimitiveArray<T>, PhoenixError> {
-    let array_data = arrow::array::ArrayData::builder(T::DATA_TYPE)
-        .len(validity_bitmap.len())
-        .add_buffer(valid_data_buffer)
-        .nulls(Some(validity_bitmap))
+    // Determine the total number of elements in the final array.
+    let len = if let Some(nb) = &null_buffer {
+        nb.len()
+    } else {
+        // If no nulls, length is the number of elements in the data buffer.
+        // We must divide byte length by element size.
+        valid_data_buffer.len() / std::mem::size_of::<T::Native>()
+    };
+
+    let array_data = ArrayData::builder(T::DATA_TYPE)
+        .len(len)
+        .add_buffer(valid_data_buffer) // add_buffer correctly takes a non-generic Buffer
+        .nulls(null_buffer)
         .build()
-        .map_err(|e| PhoenixError::UnsupportedType(e.to_string()))?;
+        .map_err(|e| PhoenixError::InternalError(format!("Failed to build ArrayData: {}", e)))?;
 
     Ok(PrimitiveArray::<T>::from(array_data))
 }
 
 //==================================================================================
-// 2. FFI Dispatcher Logic (REMOVED)
-//==================================================================================
-// This module is a pure kernel library. It does not contain any FFI dispatchers.
-// The responsibility for converting Polars/Python objects and calling these
-// pure functions lies within the `ffi.rs` and `orchestrator.rs` modules.
-
-//==================================================================================
-// 3. Unit Tests (REVISED - Tests now target the new, simpler API)
+// 2. Unit Tests (REVISED - Reflecting the correct Buffer API)
 //==================================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use arrow::array::Int32Array;
-    use arrow::buffer::Buffer;
+    use arrow::datatypes::Int32Type;
 
     #[test]
-    fn test_strip_valid_data_kernel() {
-        let source_array = Int32Array::from(vec![Some(10), None, Some(20), Some(30), None]);
-        let data_slice = source_array.values().as_slice();
-        let validity_bitmap = source_array.validity().unwrap(); // We know it has nulls
+    fn test_strip_valid_data_to_buffer() {
+        let source_array = Int32Array::from(vec![Some(10), None, Some(30)]);
+        let expected_valid_data: Vec<i32> = vec![10, 30];
 
-        let valid_data_vec = strip_valid_data(data_slice, validity_bitmap).unwrap();
+        // Call the function to get a raw byte buffer
+        let buffer = strip_valid_data_to_buffer::<Int32Type>(&source_array);
 
-        assert_eq!(valid_data_vec, vec![10, 20, 30]);
+        // The buffer's content should be the little-endian bytes of the expected data.
+        assert_eq!(buffer.as_slice(), expected_valid_data.to_byte_slice());
     }
 
     #[test]
-    fn test_reapply_bitmap_kernel() {
-        let valid_data: Vec<i32> = vec![10, 20, 30];
-        let valid_data_buffer = Buffer::from_vec(valid_data);
-        
-        // The bitmap for [Some, None, Some, Some, None]
-        let validity_bitmap = Bitmap::from_iter(vec![true, false, true, true, false]);
+    fn test_reapply_bitmap_with_nulls() {
+        let valid_data: Vec<i32> = vec![10, 30];
+        // CORRECT: Create a byte Buffer from a typed slice.
+        let valid_data_buffer = Buffer::from(valid_data.to_byte_slice());
 
-        let reconstructed_array = reapply_bitmap::<arrow::datatypes::Int32Type>(
+        let null_buffer = NullBuffer::from(vec![true, false, true]);
+
+        let reconstructed_array = reapply_bitmap::<Int32Type>(
             valid_data_buffer,
-            validity_bitmap,
+            Some(null_buffer),
         ).unwrap();
 
-        let expected_array = Int32Array::from(vec![Some(10), None, Some(20), Some(30), None]);
-
+        let expected_array = Int32Array::from(vec![Some(10), None, Some(30)]);
         assert_eq!(reconstructed_array, expected_array);
     }
 
     #[test]
-    fn test_strip_with_mismatched_len_errors() {
-        let data_slice: &[i32] = &[10, 20, 30];
-        let validity_bitmap = Bitmap::from_iter(vec![true, false]); // Length 2, not 3
+    fn test_reapply_bitmap_no_nulls() {
+        let valid_data: Vec<i32> = vec![10, 20, 30];
+        let valid_data_buffer = Buffer::from(valid_data.to_byte_slice());
 
-        let result = strip_valid_data(data_slice, &validity_bitmap);
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("BufferMismatch"));
-        }
+        let reconstructed_array = reapply_bitmap::<Int32Type>(
+            valid_data_buffer,
+            None, // No nulls
+        ).unwrap();
+
+        let expected_array = Int32Array::from(vec![10, 20, 30]);
+        assert_eq!(reconstructed_array, expected_array);
     }
 }

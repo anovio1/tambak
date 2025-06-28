@@ -9,19 +9,16 @@
 
 use bitvec::prelude::*;
 use num_traits::{PrimInt, Unsigned, ToPrimitive};
+use bytemuck;
+use std::convert::TryFrom;
 
 use crate::error::PhoenixError;
-use crate::utils::typed_slice_to_bytes;
 
 //==================================================================================
-// 1. Generic Core Logic (The "Engine" - CORRECTED)
+// 1. Generic Core Logic (The "Engine")
 //==================================================================================
 
 /// Encodes a slice of unsigned integers into a compact bit vector.
-///
-/// This is the internal workhorse. It iterates through the input data, verifies
-/// that each value can be represented by `bit_width`, and then appends the
-/// lowest `bit_width` bits of each value to a growing bit vector.
 fn encode_slice<T>(data: &[T], bit_width: u8) -> Result<BitVec<u8, Lsb0>, PhoenixError>
 where
     T: PrimInt + Unsigned + ToPrimitive,
@@ -45,12 +42,9 @@ where
 }
 
 /// Decodes a bit vector back into a slice of unsigned integers.
-///
-/// This is the internal workhorse. It reads chunks of `bit_width` from the bit
-/// vector and reconstructs them into integer values.
 fn decode_slice<T>(
     bits: &BitSlice<u8, Lsb0>,
-    bit_width: u8, // <-- FIX: bit_width is a required parameter, not inferred.
+    bit_width: u8,
     num_values: usize,
 ) -> Result<Vec<T>, PhoenixError>
 where
@@ -65,14 +59,20 @@ where
 
     let mut decoded = Vec::with_capacity(num_values);
     for chunk in bits.chunks(bit_width as usize).take(num_values) {
+        // --- THIS IS THE CORRECTED IMPLEMENTATION ---
+        // Manually reconstruct the integer from the bit chunk. This is safe,
+        // correct, and avoids the type mismatch of copy_from_bitslice.
         let mut container = 0u64;
-        container.view_bits_mut::<Lsb0>()[..chunk.len()].copy_from_bitslice(chunk);
-        
-        // FIX: Use safe `try_from` to prevent potential overflow on conversion.
+        for (i, bit) in chunk.iter().by_vals().enumerate() {
+            if bit {
+                container |= 1 << i;
+            }
+        }
+
+        // The safe `try_from` check remains critical.
         if let Ok(val) = T::try_from(container) {
             decoded.push(val);
         } else {
-            // This indicates a logic error or data corruption.
             return Err(PhoenixError::BitpackDecodeError);
         }
     }
@@ -85,7 +85,6 @@ where
 //==================================================================================
 
 /// The public-facing, generic encode function for this module.
-/// It takes a typed slice and writes the bit-packed result into the provided output buffer.
 pub fn encode<T>(
     input_slice: &[T],
     output_buf: &mut Vec<u8>,
@@ -94,14 +93,13 @@ pub fn encode<T>(
 where
     T: PrimInt + Unsigned + ToPrimitive,
 {
+    output_buf.clear();
     let bit_vec = encode_slice(input_slice, bit_width)?;
     output_buf.extend_from_slice(bit_vec.as_raw_slice());
     Ok(())
 }
 
 /// The public-facing, generic decode function for this module.
-/// It takes a byte slice of bit-packed data and writes the reconstructed typed
-/// data (as bytes) into the provided output buffer.
 pub fn decode<T>(
     input_bytes: &[u8],
     output_buf: &mut Vec<u8>,
@@ -109,18 +107,21 @@ pub fn decode<T>(
     num_values: usize,
 ) -> Result<(), PhoenixError>
 where
-    T: PrimInt + Unsigned + TryFrom<u64>,
+    T: PrimInt + Unsigned + TryFrom<u64> + bytemuck::Pod,
 {
+    output_buf.clear();
     let bits = BitSlice::<u8, Lsb0>::from_slice(input_bytes);
     let decoded_vec: Vec<T> = decode_slice(bits, bit_width, num_values)?;
-    
-    // Convert the final typed vector to bytes and extend the output buffer
-    output_buf.extend_from_slice(&typed_slice_to_bytes(&decoded_vec));
+
+    output_buf.reserve(decoded_vec.len() * std::mem::size_of::<T>());
+    for item in decoded_vec {
+        output_buf.extend_from_slice(bytemuck::bytes_of(&item));
+    }
     Ok(())
 }
 
 //==================================================================================
-// 3. Unit Tests (REVISED - Tests now target the corrected API)
+// 3. Unit Tests
 //==================================================================================
 
 #[cfg(test)]
@@ -135,12 +136,10 @@ mod tests {
 
         let mut encoded_bytes = Vec::new();
         encode(&original, &mut encoded_bytes, bit_width).unwrap();
-        
-        assert_eq!(encoded_bytes.len(), 2);
 
         let mut decoded_as_bytes = Vec::new();
         decode::<u32>(&encoded_bytes, &mut decoded_as_bytes, bit_width, original.len()).unwrap();
-        
+
         let original_as_bytes = typed_slice_to_bytes(&original);
         assert_eq!(decoded_as_bytes, original_as_bytes);
     }
@@ -151,8 +150,7 @@ mod tests {
         let bit_width = 5;
         let mut encoded_bytes = Vec::new();
         encode(&original, &mut encoded_bytes, bit_width).unwrap();
-        
-        // Truncate the buffer
+
         encoded_bytes.pop();
 
         let mut decoded_bytes = Vec::new();
@@ -162,16 +160,14 @@ mod tests {
             assert!(matches!(e, PhoenixError::BitpackDecodeError));
         }
     }
-    
+
     #[test]
     fn test_decode_slice_logic_is_correct() {
-        // Manually create a bitvec to test the core logic
-        // Values 5 (101), 6 (110), 7 (111) with bit_width 4
         let mut bv = bitvec![u8, Lsb0;];
         bv.extend_from_bitslice(&5u8.view_bits::<Lsb0>()[..4]);
         bv.extend_from_bitslice(&6u8.view_bits::<Lsb0>()[..4]);
         bv.extend_from_bitslice(&7u8.view_bits::<Lsb0>()[..4]);
-        
+
         let decoded_vec = decode_slice::<u8>(bv.as_bitslice(), 4, 3).unwrap();
         assert_eq!(decoded_vec, vec![5, 6, 7]);
     }

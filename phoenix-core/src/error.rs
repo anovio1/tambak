@@ -6,7 +6,9 @@
 //! cleanly translated into a Python exception. The `thiserror` crate is used
 //! to reduce boilerplate.
 
+use pyo3::PyErr;
 use thiserror::Error;
+use pyo3::exceptions::PyException;
 
 #[derive(Error, Debug)]
 pub enum PhoenixError {
@@ -38,23 +40,24 @@ pub enum PhoenixError {
         source: Box<PhoenixError>,
     },
 
-    #[error("Polars operation failed: {0}")]
-    PolarsError(String),
+    // RENAMED: This is for errors that come from the Python/FFI boundary.
+    #[error("FFI operation failed: {0}")]
+    FfiError(String),
 
     #[error("Internal logic error (this is a bug): {0}")]
     InternalError(String),
 }
 
-// This allows us to convert a PolarsError into our PhoenixError easily.
-impl From<polars::prelude::PolarsError> for PhoenixError {
-    fn from(err: polars::prelude::PolarsError) -> Self {
-        PhoenixError::PolarsError(err.to_string())
+impl From<PyErr> for PhoenixError {
+    fn from(err: PyErr) -> Self {
+        PhoenixError::FfiError(err.to_string())
     }
 }
 
-// This allows us to convert our PhoenixError into a PyErr for the FFI layer.
-impl From<PhoenixError> for pyo3::prelude::PyErr {
-    fn from(err: PhoenixError) -> pyo3::prelude::PyErr {
+// This part for converting our error back to a PyErr is still correct.
+impl From<PhoenixError> for PyErr {
+    fn from(err: PhoenixError) -> PyErr {
         pyo3::exceptions::PyValueError::new_err(err.to_string())
     }
 }
+

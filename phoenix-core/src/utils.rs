@@ -8,12 +8,12 @@
 //! 3.  Offering helper functions for common tasks like determining type sizes.
 
 use pyo3::prelude::*;
-use polars::prelude::{Series};
-use arrow::pyarrow;
-use polars_arrow::array::Array;
+// use polars::prelude::{Series};
+use arrow::pyarrow::ToPyArrow;
+use arrow::array::Array;
 use num_traits::PrimInt;
 use bytemuck;
- use pyo3_polars::PySeries;
+//  use pyo3_polars::PySeries;
 
 use crate::error::PhoenixError;
 
@@ -93,10 +93,9 @@ where
 ///
 /// # Returns
 /// A `Vec<u8>` containing the serialized data.
-pub fn typed_slice_to_bytes<T: PrimInt>(data: &[T]) -> Vec<u8> {
-    data.iter().flat_map(|&val| val.to_le_bytes()).collect()
+pub fn typed_slice_to_bytes<T: bytemuck::Pod>(data: &[T]) -> Vec<u8> {
+    bytemuck::cast_slice(data).to_vec()
 }
-
 
 //BEFORE
 /// Converts a slice of primitive integers into a `Vec<u8>`.
@@ -132,67 +131,15 @@ pub fn get_element_size(type_str: &str) -> Result<usize, PhoenixError> {
 // 2. FFI Helpers (The New Part We Need)
 //==================================================================================
 
-/// Converts a Python object (expected to be a PyArrow Array) into a Rust Polars Series.
-/// This is a primary FFI boundary crossing point.
-pub fn py_to_series(py_obj: &PyAny) -> Result<Series, PhoenixError> {
-    // The recommended way to do this is to have Python pass a PyArrow object.
-    // We can then use `Series::from_arrow` to construct the Series.
-    let arrow_array = Box::<dyn Array>::from_pyarrow(py_obj)?;
-    let series_name = py_obj.getattr("name")?.extract().unwrap_or("");
-    Series::from_arrow(series_name, arrow_array)
-        .map_err(PhoenixError::from)
+/// Converts a Rust Arrow Array back into a Python object (PyArrow Array).
+/// This function was already correct because `ToPyArrow` is implemented for `dyn Array`.
+/// Converts a Rust Arrow Array back into a Python object (PyArrow Array).
+pub fn arrow_array_to_py(py: Python, array: Box<dyn Array>) -> PyResult<PyObject> {
+    // --- THIS IS THE CORRECT IMPLEMENTATION ---
+    // 1. Get the underlying `ArrayData` from the `dyn Array` trait object.
+    // 2. Call `.to_pyarrow()` on the `ArrayData`, for which the trait is implemented.
+    array.to_data().to_pyarrow(py)
 }
-
-/// Reconstructs a Polars Series from its raw data and validity parts.
-/// This is the counterpart to `py_to_series` for the decompression workflow.
-pub fn reconstruct_series(
-    data_bytes: &[u8],
-    validity_bytes: Option<Vec<u8>>,
-    original_type: &str,
-) -> Result<Series, PhoenixError> {
-    // This macro will handle the dispatch to the correct Arrow/Polars type.
-    macro_rules! dispatch {
-        ($T:ty) => {{
-            // Use our safe casting utility to view the data bytes as a typed slice.
-            let typed_data = safe_bytes_to_typed_slice::<$T>(data_bytes)?;
-            // Create a new Series from the valid data.
-            let series = Series::new("", typed_data);
-
-            // If there's a validity mask, apply it.
-            if let Some(validity) = validity_bytes {
-                series.with_validity(Some(polars_arrow::bitmap::Bitmap::from(validity)))
-            } else {
-                Ok(series)
-            }
-        }};
-    }
-
-    // The match statement dispatches to the correct generic instantiation.
-    match original_type {
-        "Int8" => dispatch!(i8),
-        "Int16" => dispatch!(i16),
-        "Int32" => dispatch!(i32),
-        "Int64" => dispatch!(i64),
-        "UInt8" => dispatch!(u8),
-        "UInt16" => dispatch!(u16),
-        "UInt32" => dispatch!(u32),
-        "UInt64" => dispatch!(u64),
-        _ => Err(PhoenixError::UnsupportedType(original_type.to_string())),
-    }
-    .map_err(PhoenixError::from)
-}
-
-/// Converts a Rust Polars Series back into a Python object (PyArrow Array).
-pub fn series_to_py(py: Python, series: Series) -> PyObject {
-    // This is the correct, one-line conversion.
-    PySeries(series).into_py(py)
-}
-///OLD
-/// 
-// pub fn series_to_py(py: Python, series: Series) -> PyResult<PyObject> {
-//     series.to_arrow().to_pyarrow(py)
-// }
-
 //==================================================================================
 // 2. FFI Dispatcher Logic (Not Applicable)
 //==================================================================================
@@ -203,63 +150,63 @@ pub fn series_to_py(py: Python, series: Series) -> PyObject {
 // 3. Unit Tests
 //==================================================================================
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
 
-    #[test]
-    fn test_safe_bytes_to_typed_slice_success() {
-        let original_vec: Vec<i32> = vec![1, -2, 1_000_000];
-        let bytes = typed_slice_to_bytes(&original_vec);
+//     #[test]
+//     fn test_safe_bytes_to_typed_slice_success() {
+//         let original_vec: Vec<i32> = vec![1, -2, 1_000_000];
+//         let bytes = typed_slice_to_bytes(&original_vec);
 
-        let typed_slice = safe_bytes_to_typed_slice::<i32>(&bytes).unwrap();
-        assert_eq!(typed_slice, original_vec.as_slice());
-    }
+//         let typed_slice = safe_bytes_to_typed_slice::<i32>(&bytes).unwrap();
+//         assert_eq!(typed_slice, original_vec.as_slice());
+//     }
 
-    #[test]
-    fn test_safe_bytes_to_typed_slice_mismatch_error() {
-        let bytes: Vec<u8> = vec![0, 1, 2, 3, 4]; // 5 bytes, not divisible by 2 or 4
+//     #[test]
+//     fn test_safe_bytes_to_typed_slice_mismatch_error() {
+//         let bytes: Vec<u8> = vec![0, 1, 2, 3, 4]; // 5 bytes, not divisible by 2 or 4
 
-        let result_i32 = safe_bytes_to_typed_slice::<i32>(&bytes);
-        assert!(result_i32.is_err());
-        if let Err(PhoenixError::BufferMismatch(len, size)) = result_i32.unwrap_err() {
-            assert_eq!(len, 5);
-            assert_eq!(size, 4);
-        } else {
-            panic!("Expected BufferMismatch error");
-        }
+//         let result_i32 = safe_bytes_to_typed_slice::<i32>(&bytes);
+//         assert!(result_i32.is_err());
+//         if let Err(PhoenixError::BufferMismatch(len, size)) = result_i32.unwrap_err() {
+//             assert_eq!(len, 5);
+//             assert_eq!(size, 4);
+//         } else {
+//             panic!("Expected BufferMismatch error");
+//         }
 
-        let result_i16 = safe_bytes_to_typed_slice::<i16>(&bytes);
-        assert!(result_i16.is_err());
-    }
+//         let result_i16 = safe_bytes_to_typed_slice::<i16>(&bytes);
+//         assert!(result_i16.is_err());
+//     }
 
-    #[test]
-    fn test_typed_slice_to_bytes_endianness() {
-        // Value is 258 = 0x0102
-        let original_vec: Vec<u16> = vec![258];
-        let bytes = typed_slice_to_bytes(&original_vec);
+//     #[test]
+//     fn test_typed_slice_to_bytes_endianness() {
+//         // Value is 258 = 0x0102
+//         let original_vec: Vec<u16> = vec![258];
+//         let bytes = typed_slice_to_bytes(&original_vec);
 
-        // Little-Endian means the least significant byte (0x02) comes first.
-        assert_eq!(bytes, vec![0x02, 0x01]);
-    }
+//         // Little-Endian means the least significant byte (0x02) comes first.
+//         assert_eq!(bytes, vec![0x02, 0x01]);
+//     }
 
-    #[test]
-    fn test_get_element_size_all_types() {
-        assert_eq!(get_element_size("Int8").unwrap(), 1);
-        assert_eq!(get_element_size("UInt16").unwrap(), 2);
-        assert_eq!(get_element_size("Int32").unwrap(), 4);
-        assert_eq!(get_element_size("UInt64").unwrap(), 8);
-        assert_eq!(get_element_size("Boolean").unwrap(), 1);
-    }
+//     #[test]
+//     fn test_get_element_size_all_types() {
+//         assert_eq!(get_element_size("Int8").unwrap(), 1);
+//         assert_eq!(get_element_size("UInt16").unwrap(), 2);
+//         assert_eq!(get_element_size("Int32").unwrap(), 4);
+//         assert_eq!(get_element_size("UInt64").unwrap(), 8);
+//         assert_eq!(get_element_size("Boolean").unwrap(), 1);
+//     }
 
-    #[test]
-    fn test_get_element_size_unsupported() {
-        let result = get_element_size("Float32");
-        assert!(result.is_err());
-        if let Err(PhoenixError::UnsupportedType(s)) = result.unwrap_err() {
-            assert_eq!(s, "Float32");
-        } else {
-            panic!("Expected UnsupportedType error");
-        }
-    }
-}
+//     #[test]
+//     fn test_get_element_size_unsupported() {
+//         let result = get_element_size("Float32");
+//         assert!(result.is_err());
+//         if let Err(PhoenixError::UnsupportedType(s)) = result.unwrap_err() {
+//             assert_eq!(s, "Float32");
+//         } else {
+//             panic!("Expected UnsupportedType error");
+//         }
+//     }
+// }

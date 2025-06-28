@@ -32,42 +32,10 @@ pub mod shuffle;
 /// Final Stage: Entropy Coding
 pub mod zstd;
 
-//==================================================================================
-// 2. Public API (Unified Dispatchers - with CORRECTED Two-Matcher Macro)
-//==================================================================================
 
-/// A private macro to eliminate boilerplate for dispatching to generic kernels
-/// that operate on a typed slice. This is the heart of the dispatcher.
-macro_rules! dispatch_by_type {
-    // --- MATCHER 1: For kernels that take NO extra parameters ---
-    ($kernel:ident, $func:ident, $input:expr, $output:expr, $type_str:expr) => {
-        match $type_str {
-            "Int8" => $kernel::$func(safe_bytes_to_typed_slice::<i8>($input)?, $output),
-            "UInt8" | "Boolean" => $kernel::$func(safe_bytes_to_typed_slice::<u8>($input)?, $output),
-            "Int16" => $kernel::$func(safe_bytes_to_typed_slice::<i16>($input)?, $output),
-            "UInt16" => $kernel::$func(safe_bytes_to_typed_slice::<u16>($input)?, $output),
-            "Int32" => $kernel::$func(safe_bytes_to_typed_slice::<i32>($input)?, $output),
-            "UInt32" => $kernel::$func(safe_bytes_to_typed_slice::<u32>($input)?, $output),
-            "Int64" => $kernel::$func(safe_bytes_to_typed_slice::<i64>($input)?, $output),
-            "UInt64" => $kernel::$func(safe_bytes_to_typed_slice::<u64>($input)?, $output),
-            _ => Err(PhoenixError::UnsupportedType(format!("Unsupported type for this operation: {}", $type_str)))
-        }
-    };
-    // --- MATCHER 2: For kernels that DO take extra parameters ---
-    ($kernel:ident, $func:ident, $input:expr, $output:expr, $type_str:expr, $($params:expr),*) => {
-        match $type_str {
-            "Int8" => $kernel::$func(safe_bytes_to_typed_slice::<i8>($input)?, $output, $($params),*),
-            "UInt8" | "Boolean" => $kernel::$func(safe_bytes_to_typed_slice::<u8>($input)?, $output, $($params),*),
-            "Int16" => $kernel::$func(safe_bytes_to_typed_slice::<i16>($input)?, $output, $($params),*),
-            "UInt16" => $kernel::$func(safe_bytes_to_typed_slice::<u16>($input)?, $output, $($params),*),
-            "Int32" => $kernel::$func(safe_bytes_to_typed_slice::<i32>($input)?, $output, $($params),*),
-            "UInt32" => $kernel::$func(safe_bytes_to_typed_slice::<u32>($input)?, $output, $($params),*),
-            "Int64" => $kernel::$func(safe_bytes_to_typed_slice::<i64>($input)?, $output, $($params),*),
-            "UInt64" => $kernel::$func(safe_bytes_to_typed_slice::<u64>($input)?, $output, $($params),*),
-            _ => Err(PhoenixError::UnsupportedType(format!("Unsupported type for this operation: {}", $type_str)))
-        }
-    };
-}
+//==================================================================================
+// 2. Public API (Unified Dispatchers - CORRECTED without faulty macro)
+//==================================================================================
 
 /// The single, unified dispatcher for all ENCODE operations.
 pub fn dispatch_encode(
@@ -82,17 +50,69 @@ pub fn dispatch_encode(
     match op {
         "delta" => {
             let order = params["order"].as_u64().unwrap_or(1) as usize;
-            dispatch_by_type!(delta, encode, input_bytes, output_buf, type_str, order)
+            match type_str {
+                "Int8" => delta::encode(safe_bytes_to_typed_slice::<i8>(input_bytes)?, output_buf, order),
+                "UInt8" => delta::encode(safe_bytes_to_typed_slice::<u8>(input_bytes)?, output_buf, order),
+                "Int16" => delta::encode(safe_bytes_to_typed_slice::<i16>(input_bytes)?, output_buf, order),
+                "UInt16" => delta::encode(safe_bytes_to_typed_slice::<u16>(input_bytes)?, output_buf, order),
+                "Int32" => delta::encode(safe_bytes_to_typed_slice::<i32>(input_bytes)?, output_buf, order),
+                "UInt32" => delta::encode(safe_bytes_to_typed_slice::<u32>(input_bytes)?, output_buf, order),
+                "Int64" => delta::encode(safe_bytes_to_typed_slice::<i64>(input_bytes)?, output_buf, order),
+                "UInt64" => delta::encode(safe_bytes_to_typed_slice::<u64>(input_bytes)?, output_buf, order),
+                _ => Err(PhoenixError::UnsupportedType(type_str.to_string())),
+            }
         },
-        "rle" => dispatch_by_type!(rle, encode, input_bytes, output_buf, type_str),
-        "zigzag" => dispatch_by_type!(zigzag, encode, input_bytes, output_buf, type_str),
-        "leb128" => dispatch_by_type!(leb128, encode, input_bytes, output_buf, type_str),
-        // "sleb128" => dispatch_by_type!(sleb128, encode, input_bytes, output_buf, type_str),
-        "bitpack" => {
+        "rle" => {
+            match type_str {
+                "Int8" => rle::encode(safe_bytes_to_typed_slice::<i8>(input_bytes)?, output_buf),
+                "UInt8" | "Boolean" => rle::encode(safe_bytes_to_typed_slice::<u8>(input_bytes)?, output_buf),
+                "Int16" => rle::encode(safe_bytes_to_typed_slice::<i16>(input_bytes)?, output_buf),
+                "UInt16" => rle::encode(safe_bytes_to_typed_slice::<u16>(input_bytes)?, output_buf),
+                "Int32" => rle::encode(safe_bytes_to_typed_slice::<i32>(input_bytes)?, output_buf),
+                "UInt32" => rle::encode(safe_bytes_to_typed_slice::<u32>(input_bytes)?, output_buf),
+                "Int64" => rle::encode(safe_bytes_to_typed_slice::<i64>(input_bytes)?, output_buf),
+                "UInt64" => rle::encode(safe_bytes_to_typed_slice::<u64>(input_bytes)?, output_buf),
+                _ => Err(PhoenixError::UnsupportedType(type_str.to_string())),
+            }
+        },
+        "zigzag" => {
+            // ZigZag encode ONLY operates on SIGNED integers.
+            match type_str {
+                "Int8" => zigzag::encode(safe_bytes_to_typed_slice::<i8>(input_bytes)?, output_buf),
+                "Int16" => zigzag::encode(safe_bytes_to_typed_slice::<i16>(input_bytes)?, output_buf),
+                "Int32" => zigzag::encode(safe_bytes_to_typed_slice::<i32>(input_bytes)?, output_buf),
+                "Int64" => zigzag::encode(safe_bytes_to_typed_slice::<i64>(input_bytes)?, output_buf),
+                _ => Err(PhoenixError::UnsupportedType(format!("ZigZag encode requires a signed integer type, but got {}", type_str))),
+            }
+        },
+        "leb128" | "bitpack" => {
+            // LEB128 and BitPack ONLY operate on UNSIGNED integers.
             let bit_width = params["bit_width"].as_u64().unwrap_or(0) as u8;
-            dispatch_by_type!(bitpack, encode, input_bytes, output_buf, type_str, bit_width)
+            match type_str {
+                "UInt8" => bitpack::encode(safe_bytes_to_typed_slice::<u8>(input_bytes)?, output_buf, bit_width),
+                "UInt16" => bitpack::encode(safe_bytes_to_typed_slice::<u16>(input_bytes)?, output_buf, bit_width),
+                "UInt32" => bitpack::encode(safe_bytes_to_typed_slice::<u32>(input_bytes)?, output_buf, bit_width),
+                "UInt64" => bitpack::encode(safe_bytes_to_typed_slice::<u64>(input_bytes)?, output_buf, bit_width),
+                _ => Err(PhoenixError::UnsupportedType(format!("{} requires an unsigned integer type, but got {}", op, type_str))),
+            }
         },
-        "shuffle" => dispatch_by_type!(shuffle, encode, input_bytes, output_buf, type_str),
+        "shuffle" => {
+            match type_str {
+                "Int16" => shuffle::encode(safe_bytes_to_typed_slice::<i16>(input_bytes)?, output_buf),
+                "UInt16" => shuffle::encode(safe_bytes_to_typed_slice::<u16>(input_bytes)?, output_buf),
+                "Int32" => shuffle::encode(safe_bytes_to_typed_slice::<i32>(input_bytes)?, output_buf),
+                "UInt32" => shuffle::encode(safe_bytes_to_typed_slice::<u32>(input_bytes)?, output_buf),
+                "Int64" => shuffle::encode(safe_bytes_to_typed_slice::<i64>(input_bytes)?, output_buf),
+                "UInt64" => shuffle::encode(safe_bytes_to_typed_slice::<u64>(input_bytes)?, output_buf),
+                // No-op for 1-byte types, just copy the data.
+                "Int8" | "UInt8" | "Boolean" => {
+                    output_buf.clear();
+                    output_buf.extend_from_slice(input_bytes);
+                    Ok(())
+                },
+                _ => Err(PhoenixError::UnsupportedType(type_str.to_string())),
+            }
+        },
         "zstd" => {
             let level = params["level"].as_i64().unwrap_or(3) as i32;
             zstd::encode(input_bytes, output_buf, level)
@@ -113,16 +133,71 @@ pub fn dispatch_decode(
     let params = op_config.get("params").unwrap_or(&Value::Null);
 
     match op {
-        "delta" => dispatch_by_type!(delta, decode, input_bytes, output_buf, type_str, num_values),
-        "rle" => dispatch_by_type!(rle, decode, input_bytes, output_buf, type_str),
-        "zigzag" => dispatch_by_type!(zigzag, decode, input_bytes, output_buf, type_str),
-        "leb128" => dispatch_by_type!(leb128, decode, input_bytes, output_buf, type_str, num_values),
-        // "sleb128" => dispatch_by_type!(sleb128, decode, input_bytes, output_buf, type_str, num_values),
-        "bitpack" => {
-            let bit_width = params["bit_width"].as_u64().unwrap_or(0) as u8;
-            dispatch_by_type!(bitpack, decode, input_bytes, output_buf, type_str, bit_width, num_values)
+        "delta" => {
+            let order = params["order"].as_u64().unwrap_or(1) as usize;
+            match type_str {
+                "Int8" => delta::decode(safe_bytes_to_typed_slice::<i8>(input_bytes)?, output_buf, order),
+                "UInt8" => delta::decode(safe_bytes_to_typed_slice::<u8>(input_bytes)?, output_buf, order),
+                "Int16" => delta::decode(safe_bytes_to_typed_slice::<i16>(input_bytes)?, output_buf, order),
+                "UInt16" => delta::decode(safe_bytes_to_typed_slice::<u16>(input_bytes)?, output_buf, order),
+                "Int32" => delta::decode(safe_bytes_to_typed_slice::<i32>(input_bytes)?, output_buf, order),
+                "UInt32" => delta::decode(safe_bytes_to_typed_slice::<u32>(input_bytes)?, output_buf, order),
+                "Int64" => delta::decode(safe_bytes_to_typed_slice::<i64>(input_bytes)?, output_buf, order),
+                "UInt64" => delta::decode(safe_bytes_to_typed_slice::<u64>(input_bytes)?, output_buf, order),
+                _ => Err(PhoenixError::UnsupportedType(type_str.to_string())),
+            }
         },
-        "shuffle" => dispatch_by_type!(shuffle, decode, input_bytes, output_buf, type_str),
+        "rle" => {
+            match type_str {
+                "Int8" => rle::decode::<i8>(input_bytes, output_buf, num_values),
+                "UInt8" | "Boolean" => rle::decode::<u8>(input_bytes, output_buf, num_values),
+                "Int16" => rle::decode::<i16>(input_bytes, output_buf, num_values),
+                "UInt16" => rle::decode::<u16>(input_bytes, output_buf, num_values),
+                "Int32" => rle::decode::<i32>(input_bytes, output_buf, num_values),
+                "UInt32" => rle::decode::<u32>(input_bytes, output_buf, num_values),
+                "Int64" => rle::decode::<i64>(input_bytes, output_buf, num_values),
+                "UInt64" => rle::decode::<u64>(input_bytes, output_buf, num_values),
+                _ => Err(PhoenixError::UnsupportedType(type_str.to_string())),
+            }
+        },
+        "zigzag" => {
+            // ZigZag decode ONLY operates on UNSIGNED integers.
+            match type_str {
+                "Int8" => zigzag::decode(safe_bytes_to_typed_slice::<u8>(input_bytes)?, output_buf),
+                "Int16" => zigzag::decode(safe_bytes_to_typed_slice::<u16>(input_bytes)?, output_buf),
+                "Int32" => zigzag::decode(safe_bytes_to_typed_slice::<u32>(input_bytes)?, output_buf),
+                "Int64" => zigzag::decode(safe_bytes_to_typed_slice::<u64>(input_bytes)?, output_buf),
+                _ => Err(PhoenixError::UnsupportedType(format!("ZigZag decode requires an unsigned integer type, but original type was {}", type_str))),
+            }
+        },
+        "leb128" | "bitpack" => {
+            // LEB128 and BitPack ONLY operate on UNSIGNED integers.
+            let bit_width = params["bit_width"].as_u64().unwrap_or(0) as u8;
+            match type_str {
+                "UInt8" => bitpack::decode::<u8>(input_bytes, output_buf, bit_width, num_values),
+                "UInt16" => bitpack::decode::<u16>(input_bytes, output_buf, bit_width, num_values),
+                "UInt32" => bitpack::decode::<u32>(input_bytes, output_buf, bit_width, num_values),
+                "UInt64" => bitpack::decode::<u64>(input_bytes, output_buf, bit_width, num_values),
+                _ => Err(PhoenixError::UnsupportedType(format!("{} requires an unsigned integer type, but got {}", op, type_str))),
+            }
+        },
+        "shuffle" => {
+            match type_str {
+                "Int16" => shuffle::decode::<i16>(input_bytes, output_buf),
+                "UInt16" => shuffle::decode::<u16>(input_bytes, output_buf),
+                "Int32" => shuffle::decode::<i32>(input_bytes, output_buf),
+                "UInt32" => shuffle::decode::<u32>(input_bytes, output_buf),
+                "Int64" => shuffle::decode::<i64>(input_bytes, output_buf),
+                "UInt64" => shuffle::decode::<u64>(input_bytes, output_buf),
+                // No-op for 1-byte types, just copy the data.
+                "Int8" | "UInt8" | "Boolean" => {
+                    output_buf.clear();
+                    output_buf.extend_from_slice(input_bytes);
+                    Ok(())
+                },
+                _ => Err(PhoenixError::UnsupportedType(type_str.to_string())),
+            }
+        },
         "zstd" => zstd::decode(input_bytes, output_buf),
         _ => Err(PhoenixError::UnsupportedType(format!("Unsupported decode op: {}", op))),
     }
@@ -136,31 +211,32 @@ pub fn dispatch_decode(
 mod tests {
     use super::*;
     use crate::utils::typed_slice_to_bytes;
+    use serde_json::json;
 
     #[test]
-    fn test_dispatch_rle_no_params() {
-        let original_data: Vec<u16> = vec![7, 7, 7];
+    fn test_dispatch_zigzag_signed_only() {
+        let original_data: Vec<i32> = vec![-1, 2, -3];
         let original_bytes = typed_slice_to_bytes(&original_data);
-        let op_config = json!({"op": "rle"});
+        let op_config = json!({"op": "zigzag"});
 
         let mut compressed_buf = Vec::new();
-        // This call now correctly matches the first arm of the macro
-        dispatch_encode(&op_config, &original_bytes, &mut compressed_buf, "UInt16").unwrap();
-        
+        dispatch_encode(&op_config, &original_bytes, &mut compressed_buf, "Int32").unwrap();
+
         let mut decompressed_buf = Vec::new();
-        dispatch_decode(&op_config, &compressed_buf, &mut decompressed_buf, "UInt16", original_data.len()).unwrap();
+        // Note: The type string for decode is the *original* signed type.
+        // The dispatcher handles mapping this to the correct unsigned slice type.
+        dispatch_decode(&op_config, &compressed_buf, &mut decompressed_buf, "Int32", original_data.len()).unwrap();
 
         assert_eq!(decompressed_buf, original_bytes);
     }
 
     #[test]
-    fn test_dispatch_bitpack_with_params() {
+    fn test_dispatch_bitpack_unsigned_only() {
         let original_data: Vec<u32> = vec![1, 2, 3, 4, 5];
         let original_bytes = typed_slice_to_bytes(&original_data);
         let op_config = json!({"op": "bitpack", "params": {"bit_width": 3}});
 
         let mut compressed_buf = Vec::new();
-        // This call now correctly matches the second arm of the macro
         dispatch_encode(&op_config, &original_bytes, &mut compressed_buf, "UInt32").unwrap();
 
         let mut decompressed_buf = Vec::new();

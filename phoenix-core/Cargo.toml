@@ -18,10 +18,10 @@ pyo3 = { version = "0.20", features = ["extension-module"] }
 
 # --- DataFrames & Arrow Integration ---
 # We only depend on polars. It re-exports the correct, compatible version of arrow.
-polars = { version = "0.37.0", features = ["dtype-full", "dtype-struct"] }
-polars-arrow = { version = "0.37.0" }
-pyo3-polars = "0.10.0"
-arrow = {version = "25.0"}
+# polars = { version = "0.37.0", features = ["dtype-full", "dtype-struct"] }
+# polars-arrow = { version = "0.37.0" }
+# pyo3-polars = "0.10.0"
+arrow = {version = "50.0", features = ["pyarrow"]}
 
 # --- Core Utilities ---
 thiserror = "1.0"

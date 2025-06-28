@@ -44,13 +44,14 @@ fn phoenix_cache(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ffi::python::decompress_py, m)?)?;
     m.add_function(wrap_pyfunction!(ffi::python::plan_py, m)?)?;
 
-    //  data frame
-    m.add_function(wrap_pyfunction!(ffi::python::compress_frame_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ffi::python::decompress_frame_py, m)?)?;
+    // //  data frame
+    // m.add_function(wrap_pyfunction!(ffi::python::compress_frame_py, m)?)?;
+    // m.add_function(wrap_pyfunction!(ffi::python::decompress_frame_py, m)?)?;
 
-    // As a best practice, we can also expose our custom Rust error type
-    // to Python, which can be useful for more specific error handling.
-    m.add("PhoenixError", py.get_type::<error::PhoenixError>())?;
+    // As a best practice, we can also expose a standard Python exception type
+    // for error handling in Python code. If you want a custom exception,
+    // you must define it with #[pyclass] and #[pymethods] in a separate module.
+    m.add("PhoenixError", py.get_type::<pyo3::exceptions::PyValueError>())?;
 
     Ok(())
 }

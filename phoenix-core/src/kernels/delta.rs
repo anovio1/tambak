@@ -20,7 +20,7 @@ use crate::utils::{safe_bytes_to_typed_slice, typed_slice_to_bytes};
 /// computation. It calculates `data[i] = data[i] - data[i - order]`.
 fn encode_slice_inplace<T>(data: &mut [T], order: usize)
 where
-    T: PrimInt + WrappingSub,
+    T: PrimInt + WrappingSub + bytemuck::Pod,
 {
     if data.len() <= order {
         return;
@@ -37,7 +37,7 @@ where
 /// values by calculating `data[i] = data[i] + data[i - order]`.
 fn decode_slice_inplace<T>(data: &mut [T], order: usize)
 where
-    T: PrimInt + WrappingAdd,
+    T: PrimInt + WrappingAdd + bytemuck::Pod,
 {
     if data.len() <= order {
         return;
@@ -61,7 +61,7 @@ pub fn encode<T>(
     order: usize,
 ) -> Result<(), PhoenixError>
 where
-    T: PrimInt + WrappingSub,
+    T: PrimInt + WrappingSub + bytemuck::Pod,
 {
     // 1. Create a mutable copy. This is the one necessary allocation to enable
     //    the fast in-place algorithm while respecting the immutable input slice.
@@ -84,7 +84,7 @@ pub fn decode<T>(
     order: usize,
 ) -> Result<(), PhoenixError>
 where
-    T: PrimInt + WrappingAdd,
+    T: PrimInt + WrappingAdd + bytemuck::Pod,
 {
     // 1. Create a mutable copy of the delta-encoded data.
     let mut data_vec = input_slice.to_vec();

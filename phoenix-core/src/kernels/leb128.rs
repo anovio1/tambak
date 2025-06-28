@@ -4,19 +4,19 @@
 //! This technique is a Layer 3 (Bit-Width Reduction) transform, ideal for streams
 //! of unsigned integers where most values are small. It is fully panic-free.
 
-use num_traits::{PrimInt, Unsigned, ToPrimitive};
+use num_traits::{PrimInt, Unsigned};
 use std::io::Cursor;
+use bytemuck;
 
 use crate::error::PhoenixError;
-use crate::utils::typed_slice_to_bytes;
 
 //==================================================================================
-// 1. Generic Core Logic (The "Engine" - REVISED & Panic-Free)
+// 1. Public API for Single-Value Operations
 //==================================================================================
 
 /// Encodes a single unsigned integer into a LEB128 byte sequence, writing to a buffer.
-/// This function is now fallible and returns a Result.
-fn encode_val<T>(mut value: T, buffer: &mut Vec<u8>) -> Result<(), PhoenixError>
+/// This is the primary public function for single-value encoding.
+pub fn encode_one<T>(value: T, buffer: &mut Vec<u8>) -> Result<(), PhoenixError>
 where
     T: PrimInt + Unsigned,
 {
@@ -26,18 +26,19 @@ where
     let continuation_bit_t = T::from(0x80)
         .ok_or_else(|| PhoenixError::Leb128DecodeError("Failed to create continuation bit for type".to_string()))?;
 
+    let mut current_value = value;
     loop {
-        let mut byte = value & seven_bit_mask;
-        value = value >> 7;
-        if value != zero {
+        let mut byte = current_value & seven_bit_mask;
+        current_value = current_value >> 7;
+        if current_value != zero {
             byte = byte | continuation_bit_t;
         }
-        
+
         let byte_u8 = byte.to_u8()
             .ok_or_else(|| PhoenixError::Leb128DecodeError("Failed to convert generic integer to u8".to_string()))?;
         buffer.push(byte_u8);
 
-        if value == zero {
+        if current_value == zero {
             break;
         }
     }
@@ -45,8 +46,8 @@ where
 }
 
 /// Decodes a single unsigned integer from a LEB128 byte stream cursor.
-/// This function is now fully panic-free.
-fn decode_val<T>(cursor: &mut Cursor<&[u8]>) -> Result<T, PhoenixError>
+/// This is the primary public function for single-value decoding.
+pub fn decode_one<T>(cursor: &mut Cursor<&[u8]>) -> Result<T, PhoenixError>
 where
     T: PrimInt + Unsigned,
 {
@@ -76,12 +77,10 @@ where
 }
 
 //==================================================================================
-// 2. Public API (Generic, Performant, Decoupled)
+// 2. Public API for Slice Operations
 //==================================================================================
 
-/// The public-facing, generic encode function for this module.
-/// It takes a typed slice of unsigned integers and writes the LEB128-encoded
-/// result into the provided output buffer.
+/// The public-facing, generic encode function for an entire slice.
 pub fn encode<T>(
     input_slice: &[T],
     output_buf: &mut Vec<u8>,
@@ -89,50 +88,31 @@ pub fn encode<T>(
 where
     T: PrimInt + Unsigned,
 {
+    output_buf.clear();
     for &val in input_slice {
-        encode_val(val, output_buf)?;
+        encode_one(val, output_buf)?;
     }
     Ok(())
 }
 
-/// The public-facing, generic decode function for this module.
-/// It takes a byte slice of LEB128-encoded data and writes the reconstructed
-/// typed data (as bytes) into the provided output buffer.
+/// The public-facing, generic decode function for an entire slice.
 pub fn decode<T>(
     input_bytes: &[u8],
     output_buf: &mut Vec<u8>,
     num_values: usize,
 ) -> Result<(), PhoenixError>
 where
-    T: PrimInt + Unsigned,
+    T: PrimInt + Unsigned + bytemuck::Pod,
 {
-    // 1. Prepare the output buffer according to our buffer-swapping contract.
-    //    We clear the vector but retain its allocated capacity for reuse.
     output_buf.clear();
-
-    // 2. Reserve the exact required space upfront. This is a crucial optimization
-    //    that prevents multiple, small reallocations as we push data.
-    let required_bytes = num_values * std::mem::size_of::<T>();
-    output_buf.reserve(required_bytes);
-
-    // 3. Set up the cursor for reading from the input stream.
+    output_buf.reserve(num_values * std::mem::size_of::<T>());
     let mut cursor = Cursor::new(input_bytes);
 
-    // 4. Decode values one by one and write their bytes directly.
     for _ in 0..num_values {
-        // Decode one value from the LEB128 stream.
-        let val: T = decode_val::<T>(&mut cursor)?;
-
-        // THIS IS THE KEY CHANGE:
-        // Instead of collecting into a `Vec<T>`, we get the little-endian
-        // bytes of the decoded value and append them directly to the output buffer.
-        // `to_le_bytes()` returns a stack-allocated array (e.g., `[u8; 4]` for u32),
-        // which is extremely fast.
-        output_buf.extend_from_slice(&val.to_le_bytes());
+        let val: T = decode_one::<T>(&mut cursor)?;
+        output_buf.extend_from_slice(bytemuck::bytes_of(&val));
     }
 
-    // 5. Final validation: ensure all input bytes were consumed. This guards
-    //    against malformed input with trailing bytes.
     if (cursor.position() as usize) != input_bytes.len() {
         return Err(PhoenixError::Leb128DecodeError(
             "Did not consume entire input buffer. Trailing bytes detected.".to_string(),
@@ -143,22 +123,22 @@ where
 }
 
 //==================================================================================
-// 3. Unit Tests (Unchanged, but now test the hardened, fallible logic)
+// 3. Unit Tests
 //==================================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::{safe_bytes_to_typed_slice, typed_slice_to_bytes};
+    use crate::utils::typed_slice_to_bytes;
 
     #[test]
     fn test_leb128_roundtrip_u32() {
         let original: Vec<u32> = vec![0, 127, 128, 1000, u32::MAX];
         let input_slice = &original;
-        
+
         let mut encoded_bytes = Vec::new();
         encode(input_slice, &mut encoded_bytes).unwrap();
-        
+
         let mut decoded_bytes = Vec::new();
         decode::<u32>(&encoded_bytes, &mut decoded_bytes, original.len()).unwrap();
 
