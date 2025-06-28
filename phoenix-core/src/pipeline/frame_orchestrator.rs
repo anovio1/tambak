@@ -4,7 +4,7 @@
 
 use std::io::{Cursor, Read, Write};
 use polars::prelude::{DataFrame, Series};
-use arrow::array::Array;
+use polars_arrow::array::Array;
 
 use crate::error::PhoenixError;
 use crate::pipeline::orchestrator as series_orchestrator; // Our existing component
@@ -68,7 +68,7 @@ pub fn compress_frame(df: &DataFrame) -> Result<Vec<u8>, PhoenixError> {
     let mut column_index: Vec<ColumnIndexEntry> = Vec::new();
 
     // 1. Iterate and compress each column individually using our existing orchestrator.
-    for series in df.get_columns() {
+    for series in df.get_columns().iter() {
         let compressed_chunk = series_orchestrator::compress_chunk(series)?;
         column_blobs.push(compressed_chunk);
     }

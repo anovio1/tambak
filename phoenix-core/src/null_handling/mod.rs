@@ -42,7 +42,7 @@ pub use self::bitmap::{
 #[cfg(test)]
 mod tests {
     use super::*; // Import the re-exported functions
-    use arrow::array::Int32Array;
+    use polars::arrow::array::Int32Array;
 
     #[test]
     fn test_public_api_is_accessible() {

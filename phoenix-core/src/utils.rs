@@ -8,14 +8,14 @@
 //! 3.  Offering helper functions for common tasks like determining type sizes.
 
 use pyo3::prelude::*;
-use polars::prelude::{PolarsError, Series};
-use arrow::pyarrow::PyArrow;
-use arrow::array::Array;
+use polars::prelude::{Series};
+use arrow::pyarrow;
+use polars_arrow::array::Array;
 use num_traits::PrimInt;
 use bytemuck;
+ use pyo3_polars::PySeries;
 
 use crate::error::PhoenixError;
-use crate::null_handling::bitmap;
 
 //==================================================================================
 // 1. Core Utility Functions
@@ -160,7 +160,7 @@ pub fn reconstruct_series(
 
             // If there's a validity mask, apply it.
             if let Some(validity) = validity_bytes {
-                series.with_validity(Some(arrow::bitmap::Bitmap::from(validity)))
+                series.with_validity(Some(polars_arrow::bitmap::Bitmap::from(validity)))
             } else {
                 Ok(series)
             }

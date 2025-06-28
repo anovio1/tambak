@@ -44,7 +44,7 @@ where
         } else {
             // Write the previous run to the buffer
             output_buf.extend_from_slice(current_val.to_le_bytes());
-            leb128::encode_val(run_count, output_buf)?;
+            leb128::encode(run_count, output_buf)?;
             
             // Start a new run
             current_val = val;
@@ -54,7 +54,7 @@ where
 
     // Write the final run
     output_buf.extend_from_slice(current_val.to_le_bytes());
-    leb128::encode_val(run_count, output_buf)?;
+    leb128::encode(run_count, output_buf)?;
 
     Ok(())
 }
@@ -92,7 +92,7 @@ where
         cursor.set_position(end as u64);
 
         // 3. Read the LEB128-encoded run length
-        let run_length = leb128::decode_val::<u64>(&mut cursor)?;
+        let run_length = leb128::decode::<u64>(&mut cursor)?;
 
         // 4. Expand the run by writing the value's bytes directly to the output buffer.
         //    This is the key performance optimization.

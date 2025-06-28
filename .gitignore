@@ -28,5 +28,6 @@ flows/__pycache__/
 tubuin/output_artifacts/**
 .vscode/
 
+phoenix-core/target/**/*
 RustLib/target/**/*
 .mds/

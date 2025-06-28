@@ -3,7 +3,8 @@
 
 use pyo3::prelude::*;
 use polars::prelude::{Series, PolarsDataType};
-use arrow::pyarrow::ToPyArrow;
+use polars_arrow::pyarrow::ToPyArrow;
+use pyo3_polars::PyDataFrame;
 
 use crate::pipeline::{orchestrator, planner, frame_orchestrator};
 use crate::utils;
@@ -41,7 +42,7 @@ pub fn plan_py(py: Python, series_py: &PyAny) -> PyResult<String> {
 
     py.allow_threads(move || {
         // The planner needs the raw data bytes, stripped of nulls.
-        let (data_bytes, _) = null_handling::bitmap::strip_validity_to_bytes(&series)?;
+        let (data_bytes, _) = null_handling::bitmap::strip_valid_data(&series)?;
         let original_type = series.dtype().to_string();
 
         // Call the pure Rust planner.

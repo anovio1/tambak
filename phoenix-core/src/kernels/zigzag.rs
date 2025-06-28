@@ -6,6 +6,8 @@
 //! PURE RUST, panic-free, and has no FFI or Polars dependencies.
 
 use num_traits::{PrimInt, Signed, Unsigned, ToPrimitive};
+use crate::traits::{HasUnsigned, HasSigned}; // adjust path if needed
+
 
 use crate::error::PhoenixError;
 use crate::utils::typed_slice_to_bytes;
@@ -16,10 +18,10 @@ use crate::utils::typed_slice_to_bytes;
 
 /// Encodes a single signed integer using the Zig-zag algorithm.
 /// This function is now fallible and returns a Result.
-fn encode_val<T>(n: T) -> Result<T::Unsigned, PhoenixError>
+fn encode_val<T>(n: T) -> Result<<T as HasUnsigned>::Unsigned, PhoenixError>
 where
-    T: PrimInt + Signed,
-    T::Unsigned: PrimInt,
+    T: PrimInt + Signed + HasUnsigned,
+    <T as HasUnsigned>::Unsigned: PrimInt,
 {
     let bits = std::mem::size_of::<T>() * 8;
     let unsigned_n = n.to_unsigned()
@@ -33,10 +35,10 @@ where
 
 /// Decodes a single unsigned integer back to its signed representation.
 /// This function is now fallible and returns a Result.
-fn decode_val<U>(n: U) -> Result<U::Signed, PhoenixError>
+fn decode_val<U>(n: U) -> Result<<U as HasSigned>::Signed, PhoenixError>
 where
-    U: PrimInt + Unsigned,
-    U::Signed: PrimInt,
+    U: PrimInt + Unsigned + HasSigned,
+    <U as HasSigned>::Signed: PrimInt,
 {
     let one = U::one();
     let shifted_n = n.unsigned_shr(1);
@@ -62,8 +64,8 @@ pub fn encode<T>(
     output_buf: &mut Vec<u8>,
 ) -> Result<(), PhoenixError>
 where
-    T: PrimInt + Signed,
-    T::Unsigned: PrimInt,
+    T: PrimInt + Signed + HasUnsigned,
+    <T as HasUnsigned>::Unsigned: PrimInt,
 {
     output_buf.clear();
     output_buf.reserve(input_slice.len() * std::mem::size_of::<T::Unsigned>());
@@ -83,8 +85,8 @@ pub fn decode<U>(
     output_buf: &mut Vec<u8>,
 ) -> Result<(), PhoenixError>
 where
-    U: PrimInt + Unsigned,
-    U::Signed: PrimInt,
+    U: PrimInt + Unsigned + HasSigned,
+    <U as HasSigned>::Signed: PrimInt,
 {
     output_buf.clear();
     output_buf.reserve(input_slice.len() * std::mem::size_of::<U::Signed>());

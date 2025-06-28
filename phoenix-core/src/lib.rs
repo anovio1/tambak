@@ -18,6 +18,7 @@ mod kernels;
 mod null_handling;
 mod pipeline;
 mod utils;
+pub mod traits;
 
 //==================================================================================
 // 2. Python Module Definition

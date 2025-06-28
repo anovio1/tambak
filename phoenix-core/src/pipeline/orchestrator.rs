@@ -11,7 +11,7 @@
 //! This module is PURE RUST and is completely decoupled from the FFI layer itself.
 
 use polars::prelude::*;
-use arrow::array::Array;
+use polars_arrow::array::Array;
 use std::io::{Cursor, Write, Read};
 
 use crate::error::PhoenixError;
@@ -83,7 +83,7 @@ pub fn compress_chunk(series: &Series) -> Result<Vec<u8>, PhoenixError> {
     let original_type = series.dtype().to_string();
     let total_rows = series.len();
 
-    let (valid_data_bytes, validity_bytes_opt) = null_handling::bitmap::strip_validity_to_bytes(series)?;
+    let (valid_data_bytes, validity_bytes_opt) = null_handling::bitmap::strip_valid_data(series)?;
 
     let compressed_nullmap = if let Some(validity_bytes) = validity_bytes_opt {
         let pipeline_json = r#"[{"op": "rle"}, {"op": "zstd", "params": {"level": 19}}]"#;
@@ -126,7 +126,7 @@ pub fn decompress_chunk(bytes: &[u8], original_type: &str) -> Result<Box<dyn Arr
             validity_pipeline_json,
             artifact.total_rows as usize,
         )?;
-        Some(arrow::bitmap::Bitmap::from(validity_bytes))
+        Some(polars_arrow::bitmap::Bitmap::from(validity_bytes))
     };
 
     // --- FIX: Calculate num_valid_rows correctly AFTER decompressing the nullmap ---
@@ -145,7 +145,7 @@ pub fn decompress_chunk(bytes: &[u8], original_type: &str) -> Result<Box<dyn Arr
     )?;
 
     // --- Step 4: Delegate to Null Handling to reconstruct the final Arrow Array ---
-    null_handling::bitmap::reapply_bitmap_to_arrow(
+    null_handling::bitmap::reapply_bitmap(
         &decompressed_data_bytes,
         validity_bitmap,
         original_type,

@@ -4,7 +4,7 @@
 //! This module is completely decoupled from Polars and the FFI layer.
 
 use arrow::array::PrimitiveArray;
-use arrow::bitmap::Bitmap;
+use polars_arrow::bitmap::Bitmap;
 use arrow::buffer::Buffer;
 use arrow::datatypes::ArrowNumericType;
 use num_traits::PrimInt;
@@ -62,7 +62,7 @@ pub fn strip_valid_data<T: PrimInt>(
 /// # Returns
 /// A new Arrow `PrimitiveArray` with nulls correctly reinstated.
 pub fn reapply_bitmap<T: ArrowNumericType>(
-    valid_data_buffer: Buffer<T::Native>,
+    valid_data_buffer: Buffer,
     validity_bitmap: Bitmap,
 ) -> Result<PrimitiveArray<T>, PhoenixError> {
     let array_data = arrow::array::ArrayData::builder(T::DATA_TYPE)
