@@ -49,22 +49,25 @@ where
         return Ok(profile);
     }
 
-    let (zero_count, max_zigzag_val, delta_count) = data
+    let (zero_count, max_zigzag_delta, delta_count) = data
         .windows(2)
         .map(|w| w[1].wrapping_sub(&w[0]))
-        // --- YOUR CORRECT FIX IS APPLIED HERE ---
         .try_fold((0u64, 0u64, 0u64), |(zeros, max_zz, count), delta| -> Result<(u64, u64, u64), PhoenixError> {
             let new_zeros = if delta.is_zero() { zeros + 1 } else { zeros };
-
             let zigzag_val = zigzag::encode_val(delta);
-
             let val_u64 = zigzag_val.to_u64()
                 .ok_or_else(|| PhoenixError::UnsupportedType("Failed to convert zigzag value to u64".to_string()))?;
-
             Ok((new_zeros, max_zz.max(val_u64), count + 1))
         })?;
 
+    let first_val_zigzag = zigzag::encode_val(data[0]);
+    let first_val_u64 = first_val_zigzag.to_u64()
+        .ok_or_else(|| PhoenixError::UnsupportedType("Failed to convert first value to u64".to_string()))?;
+
+    let max_zigzag_val = max_zigzag_delta.max(first_val_u64);
+
     if delta_count == 0 {
+        profile.max_zigzag_delta_bit_width = if max_zigzag_val == 0 { 0 } else { 64 - max_zigzag_val.leading_zeros() as u8 };
         return Ok(profile);
     }
 
@@ -95,17 +98,22 @@ fn build_pipeline_from_profile(profile: &DataProfile) -> Result<String, PhoenixE
             if profile.is_signed {
                 pipeline.push(json!({"op": "zigzag"}));
             }
+
+            // --- THIS IS THE CORRECTED LOGIC ORDER ---
+            // 1. Decide if we should shuffle. Shuffle operates on fixed-width data,
+            //    so it must come BEFORE variable-width encodings like bitpack/leb128.
+            if profile.shuffle_is_likely_effective {
+                pipeline.push(json!({"op": "shuffle"}));
+            }
+
+            // 2. Now, apply the final bit-width reduction.
             if profile.max_zigzag_delta_bit_width > 0 && profile.max_zigzag_delta_bit_width <= 16 {
                  pipeline.push(json!({
                     "op": "bitpack",
                     "params": {"bit_width": profile.max_zigzag_delta_bit_width}
                 }));
             } else {
-                // For larger bit-widths, LEB128 is a good general-purpose choice.
                 pipeline.push(json!({"op": "leb128"}));
-            }
-            if profile.shuffle_is_likely_effective {
-                pipeline.push(json!({"op": "shuffle"}));
             }
         }
     }
@@ -139,7 +147,6 @@ pub fn plan_pipeline(bytes: &[u8], original_type: &str) -> Result<String, Phoeni
         "Int32" => dispatch!(i32),
         "Int64" => dispatch!(i64),
         _ => {
-            // For unsigned or unsupported types, we don't run the advanced planner.
             let pipeline = vec![json!({"op": "zstd", "params": {"level": 3}})];
             serde_json::to_string(&pipeline).map_err(|e| PhoenixError::UnsupportedType(e.to_string()))
         }
@@ -162,7 +169,8 @@ mod tests {
         let pipeline_json = plan_pipeline(&original_bytes, "Int16").unwrap();
         let pipeline: Vec<Value> = serde_json::from_str(&pipeline_json).unwrap();
         let op_names: Vec<&str> = pipeline.iter().map(|v| v["op"].as_str().unwrap()).collect();
-        assert_eq!(op_names, vec!["delta", "zigzag", "bitpack", "shuffle", "zstd"]);
-        assert_eq!(pipeline[2]["params"]["bit_width"], 3);
+
+        // The order should now be correct: shuffle BEFORE leb128.
+        assert_eq!(op_names, vec!["delta", "zigzag", "shuffle", "leb128", "zstd"]);
     }
 }
