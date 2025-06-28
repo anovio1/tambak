@@ -90,35 +90,35 @@ def run_compression_test(test_name: str, original_array: pa.Array):
         print(
             f"❌ FAILURE: Decompressed array does NOT match the original for '{test_name}'."
         )
+    
+    if len(original_array) < 20:
+        # Convert to Python values and string representations
+        orig_values = [v.as_py() for v in original_array]
+        decomp_values = [v.as_py() for v in decompressed_array]
 
-        if len(original_array) < 20:
-            # Convert to Python values and string representations
-            orig_values = [v.as_py() for v in original_array]
-            decomp_values = [v.as_py() for v in decompressed_array]
+        # Combine to compute max width
+        all_strs = [str(val) for val in orig_values + decomp_values]
+        field_width = max(len(s) for s in all_strs)
 
-            # Combine to compute max width
-            all_strs = [str(val) for val in orig_values + decomp_values]
-            field_width = max(len(s) for s in all_strs)
-
-            print("Original Array:")
-            print(
-                " ".join(
-                    f"{str(val):>{field_width}}" for val in orig_values
-                )
+        print("Original Array:")
+        print(
+            " ".join(
+                f"{str(val):>{field_width}}" for val in orig_values
             )
+        )
 
-            print("Decompressed Array:")
-            print(
-                " ".join(
-                    f"{str(val):>{field_width}}" for val in decomp_values
-                )
+        print("Decompressed Array:")
+        print(
+            " ".join(
+                f"{str(val):>{field_width}}" for val in decomp_values
             )
-        else:
-            print("Original Array (snippet):")
-            print(" ".join(map(str, (v.as_py() for v in original_array[:10]))))
+        )
+    else:
+        print("Original Array (snippet):")
+        print(" ".join(map(str, (v.as_py() for v in original_array[:10]))))
 
-            print("Decompressed Array (snippet):")
-            print(" ".join(map(str, (v.as_py() for v in decompressed_array[:10]))))
+        print("Decompressed Array (snippet):")
+        print(" ".join(map(str, (v.as_py() for v in decompressed_array[:10]))))
 
 
 if __name__ == "__main__":
@@ -128,14 +128,14 @@ if __name__ == "__main__":
     small_array = pa.array(small_data, type=pa.int64())
     run_compression_test("1_Small Scale Sanity Check", small_array)
 
-    # # --- Test Case 2: Large-scale time-series data ---
-    # # This demonstrates the real-world effectiveness of the compression pipeline.
-    # # The data has strong locality, which is ideal for delta encoding.
-    # large_data = [1000 + (i % 50) + (-1) ** i for i in range(10_000)]
-    # large_data[100] = None  # Add some nulls
-    # large_data[5000] = None
-    # large_array = pa.array(large_data, type=pa.int64())
-    # run_compression_test("2_Large Scale Time-Series", large_array)
+    # --- Test Case 2: Large-scale time-series data ---
+    # This demonstrates the real-world effectiveness of the compression pipeline.
+    # The data has strong locality, which is ideal for delta encoding.
+    large_data = [1000 + (i % 50) + (-1) ** i for i in range(10_000)]
+    large_data[100] = None  # Add some nulls
+    large_data[5000] = None
+    large_array = pa.array(large_data, type=pa.int64())
+    run_compression_test("2_Large Scale Time-Series", large_array)
 
     # --- Test Case 3: Data with low cardinality ---
     # This should trigger the RLE kernel to be used effectively.

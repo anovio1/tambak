@@ -78,6 +78,7 @@ impl CompressedChunk {
         }
 
         let compressed_nullmap = bytes[header_size..header_size + nullmap_len].to_vec();
+
         let pipeline_json =
             String::from_utf8(bytes[header_size + nullmap_len..data_start].to_vec())
                 .map_err(|e| PhoenixError::UnsupportedType(e.to_string()))?;
@@ -106,7 +107,7 @@ where
 
     if array.null_count() == array.len() {
         let validity_bytes = array.nulls().unwrap().buffer().as_slice();
-        let pipeline_json = r#"[{"op": "rle"}, {"op": "zstd", "params": {"level": 19}}]"#;
+        let pipeline_json = r#"[{"op": "zstd", "params": {"level": 19}}]"#;
         let compressed_nullmap =
             executor::execute_compress_pipeline(validity_bytes, "Boolean", &pipeline_json)?;
 
@@ -125,11 +126,17 @@ where
     // CORRECT: This now returns a typed Vec, not a byte buffer.
     let valid_data_vec: Vec<T::Native> =
         crate::null_handling::bitmap::strip_valid_data_to_vec(array);
+    println!(
+        "[DEBUG] Compression: valid_data_vec.len() = {}, expected valid count = {}",
+        valid_data_vec.len(),
+        array.len() - array.null_count()
+    );
     let validity_bytes_opt = array.nulls().map(|nb| nb.buffer().as_slice().to_vec());
 
     // --- Step 2: Compress the validity buffer (if it exists) ---
     let compressed_nullmap = if let Some(validity_bytes) = validity_bytes_opt {
-        let pipeline_json = r#"[{"op": "rle"}, {"op": "zstd", "params": {"level": 19}}]"#;
+        // --- THIS IS THE FIX ---
+        let pipeline_json = r#"[{"op": "zstd", "params": {"level": 19}}]"#;
         executor::execute_compress_pipeline(&validity_bytes, "Boolean", &pipeline_json)?
     } else {
         Vec::new()
@@ -150,6 +157,8 @@ where
     // --- END CHECKPOINT ---
 
     let pipeline_json = planner::plan_pipeline(&valid_data_bytes, &original_type)?;
+    
+
     // --- ADD THIS CHECKPOINT ---
     println!("\n[CHECKPOINT 2] Planner -> Orchestrator: pipeline_json = planner::plan_pipeline");
     println!("  - Pipeline JSON: {}", &pipeline_json);
@@ -198,12 +207,13 @@ pub fn compress_chunk(array: &dyn Array) -> Result<Vec<u8>, PhoenixError> {
     if array.len() == 0 || array.null_count() == array.len() {
         let compressed_nullmap = if let Some(null_buffer) = array.nulls() {
             let validity_bytes = null_buffer.buffer().as_slice();
-            let pipeline_json = r#"[{"op": "rle"}, {"op": "zstd", "params": {"level": 19}}]"#;
+            // --- THIS IS THE FIX ---
+            // A raw bitmap should not be RLE'd. Just use Zstd.
+            let pipeline_json = r#"[{"op": "zstd", "params": {"level": 19}}]"#;
             executor::execute_compress_pipeline(validity_bytes, "Boolean", &pipeline_json)?
         } else {
             Vec::new()
         };
-
         let artifact = CompressedChunk {
             total_rows: array.len() as u64,
             compressed_nullmap,
@@ -253,11 +263,15 @@ pub fn get_compressed_chunk_info(bytes: &[u8]) -> Result<(usize, usize, String),
     let mut cursor = Cursor::new(bytes);
 
     let mut u64_buf = [0u8; 8];
-    cursor.read_exact(&mut u64_buf).map_err(|e| PhoenixError::InternalError(e.to_string()))?;
+    cursor
+        .read_exact(&mut u64_buf)
+        .map_err(|e| PhoenixError::InternalError(e.to_string()))?;
     let nullmap_len = u64::from_le_bytes(u64_buf) as usize;
-    cursor.read_exact(&mut u64_buf).map_err(|e| PhoenixError::InternalError(e.to_string()))?;
+    cursor
+        .read_exact(&mut u64_buf)
+        .map_err(|e| PhoenixError::InternalError(e.to_string()))?;
     let pipeline_len = u64::from_le_bytes(u64_buf) as usize;
-    
+
     // --- NEW: Read the pipeline JSON from the buffer ---
     let header_fixed_size = 24;
     let pipeline_start = header_fixed_size + nullmap_len;
@@ -267,8 +281,10 @@ pub fn get_compressed_chunk_info(bytes: &[u8]) -> Result<(usize, usize, String),
         return Err(PhoenixError::BufferMismatch(bytes.len(), pipeline_end));
     }
 
-    let pipeline_json = String::from_utf8(bytes[pipeline_start..pipeline_end].to_vec())
-        .map_err(|e| PhoenixError::InternalError(format!("Failed to parse pipeline JSON from header: {}", e)))?;
+    let pipeline_json =
+        String::from_utf8(bytes[pipeline_start..pipeline_end].to_vec()).map_err(|e| {
+            PhoenixError::InternalError(format!("Failed to parse pipeline JSON from header: {}", e))
+        })?;
 
     // Calculate sizes
     let header_size = header_fixed_size + nullmap_len + pipeline_len;
@@ -327,6 +343,11 @@ pub fn decompress_chunk(bytes: &[u8], original_type: &str) -> Result<Box<dyn Arr
             nb.len() - nb.null_count()
         });
 
+    println!(
+        "[DEBUG] Decompression: total_rows = {}, num_valid_rows = {}",
+        artifact.total_rows, num_valid_rows
+    );
+
     let decompressed_data_bytes = if !artifact.compressed_data.is_empty() {
         executor::execute_decompress_pipeline(
             &artifact.compressed_data,
@@ -337,6 +358,12 @@ pub fn decompress_chunk(bytes: &[u8], original_type: &str) -> Result<Box<dyn Arr
     } else {
         Vec::new()
     };
+
+    println!(
+        "[DEBUG] Decompressed bytes len: {}",
+        decompressed_data_bytes.len()
+    );
+    println!("[DEBUG] Expected bytes: {}", num_valid_rows * 8); // 8 bytes per Int64
 
     macro_rules! dispatch_reconstruct {
         ($T:ty) => {{

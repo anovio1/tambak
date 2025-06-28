@@ -33,3 +33,4 @@ RustLib/target/**/*
 .mds/
 
 phoenix-core/src-copy/**/*
+/*.md

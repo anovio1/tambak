@@ -124,21 +124,20 @@ fn build_pipeline_from_profile(profile: &DataProfile) -> Result<String, PhoenixE
                 pipeline.push(json!({"op": "zigzag"}));
             }
 
-            // THIS IS THE IMPLEMENTATION OF YOUR "CLEAN FIX":
-            // This if/else if/else structure GUARANTEES only one layout
-            // transform is chosen, preventing the invalid shuffle -> bitpack chain.
-            if profile.shuffle_is_likely_effective {
-                // Choice 1: Shuffle is the most beneficial.
-                pipeline.push(json!({"op": "shuffle"}));
-            } else if profile.max_zigzag_delta_bit_width > 0 && profile.max_zigzag_delta_bit_width <= 16 {
-                // Choice 2: If not shuffling, bitpacking is the next best.
+            // --- CORRECTED SEQUENTIAL LOGIC ---
+            // Step 1: Choose the best bit-width reduction technique.
+            if profile.max_zigzag_delta_bit_width > 0 && profile.max_zigzag_delta_bit_width <= 16 {
                 pipeline.push(json!({
                     "op": "bitpack",
                     "params": {"bit_width": profile.max_zigzag_delta_bit_width}
                 }));
             } else {
-                // Choice 3: Fall back to LEB128.
                 pipeline.push(json!({"op": "leb128"}));
+            }
+
+            // Step 2: Independently decide if shuffling is beneficial for the final zstd step.
+            if profile.shuffle_is_likely_effective {
+                pipeline.push(json!({"op": "shuffle"}));
             }
         }
     }

@@ -57,23 +57,34 @@ pub fn strip_valid_data_to_vec<T: ArrowNumericType>(
 /// # Returns
 /// A new Arrow `PrimitiveArray<T>` with nulls correctly reinstated.
 pub fn reapply_bitmap<T: ArrowNumericType>(
-    valid_data_bytes: Vec<u8>, // It receives bytes from the executor
+    valid_data_bytes: Vec<u8>,
     null_buffer: Option<NullBuffer>,
     num_rows: usize,
-) -> Result<PrimitiveArray<T>, PhoenixError> {
-    let data_buffer = Buffer::from(valid_data_bytes);
+) -> Result<PrimitiveArray<T>, PhoenixError>
+where
+    T::Native: bytemuck::Pod, // Required for the safe cast
+{
+    let mut builder = PrimitiveBuilder::<T>::with_capacity(num_rows);
 
-    // The key is converting the generic Buffer to a typed ScalarBuffer
-    let typed_data_buffer: ScalarBuffer<T::Native> = data_buffer.into();
+    if let Some(nb) = null_buffer {
+        let valid_data: &[T::Native] = bytemuck::cast_slice(&valid_data_bytes);
+        let mut valid_data_iter = valid_data.iter();
 
-    let array_data = ArrayData::builder(T::DATA_TYPE)
-        .len(num_rows)
-        .add_buffer(typed_data_buffer.into_inner()) // Convert ScalarBuffer back to Buffer
-        .nulls(null_buffer)
-        .build()
-        .map_err(|e| PhoenixError::InternalError(e.to_string()))?;
+        for is_valid in nb.iter() {
+            if is_valid {
+                builder.append_value(*valid_data_iter.next().unwrap());
+            } else {
+                builder.append_null();
+            }
+        }
+    } else {
+        let valid_data: &[T::Native] = bytemuck::cast_slice(&valid_data_bytes);
+        for &val in valid_data {
+            builder.append_value(val);
+        }
+    }
 
-    Ok(PrimitiveArray::<T>::from(array_data))
+    Ok(builder.finish())
 }
 
 //==================================================================================
@@ -83,6 +94,7 @@ pub fn reapply_bitmap<T: ArrowNumericType>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::typed_slice_to_bytes; // <-- Import the utility
     use arrow::array::Int32Array;
     use arrow::datatypes::Int32Type;
 
@@ -99,12 +111,16 @@ mod tests {
         let null_buffer = NullBuffer::from(vec![true, false, true]);
         let total_rows = 3;
 
-        // Reconstruct the array using the correct builder-based function.
+        // --- THIS IS THE FIX ---
+        // Convert the typed Vec<i32> to a byte Vec<u8> before calling the function.
+        let valid_data_bytes = typed_slice_to_bytes(&valid_data);
+
         let reconstructed_array = reapply_bitmap::<Int32Type>(
-            valid_data,
+            valid_data_bytes, // Pass the correct byte vector
             Some(null_buffer),
             total_rows,
-        ).unwrap();
+        )
+        .unwrap();
 
         let expected_array = Int32Array::from(vec![Some(10), None, Some(30)]);
         assert_eq!(reconstructed_array, expected_array);
@@ -115,11 +131,16 @@ mod tests {
         let valid_data: Vec<i32> = vec![10, 20, 30];
         let total_rows = 3;
 
+        // --- THIS IS THE FIX ---
+        // Convert the typed Vec<i32> to a byte Vec<u8>.
+        let valid_data_bytes = typed_slice_to_bytes(&valid_data);
+
         let reconstructed_array = reapply_bitmap::<Int32Type>(
-            valid_data,
-            None, // No nulls
+            valid_data_bytes, // Pass the correct byte vector
+            None,             // No nulls
             total_rows,
-        ).unwrap();
+        )
+        .unwrap();
 
         let expected_array = Int32Array::from(vec![10, 20, 30]);
         assert_eq!(reconstructed_array, expected_array);
