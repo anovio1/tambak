@@ -66,6 +66,16 @@ where
 {
     let mut builder = PrimitiveBuilder::<T>::with_capacity(num_rows);
 
+    // --- THIS IS THE FIX ---
+    // If there are no valid values, we can just append nulls and finish early.
+    if valid_data_bytes.is_empty() {
+        for _ in 0..num_rows {
+            builder.append_null();
+        }
+        return Ok(builder.finish());
+    }
+    // --- END FIX ---
+
     if let Some(nb) = null_buffer {
         let valid_data: &[T::Native] = bytemuck::cast_slice(&valid_data_bytes);
         let mut valid_data_iter = valid_data.iter();

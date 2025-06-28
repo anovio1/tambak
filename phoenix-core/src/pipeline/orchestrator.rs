@@ -101,8 +101,17 @@ impl CompressedChunk {
 fn compress_primitive_array<T>(array: &PrimitiveArray<T>) -> Result<Vec<u8>, PhoenixError>
 where
     T: ArrowNumericType,
-    T::Native: ToByteSlice + bytemuck::Pod, // Add Pod bound
+    T::Native: ToByteSlice + bytemuck::Pod,
 {
+    if array.is_empty() {
+        return CompressedChunk {
+            total_rows: 0,
+            compressed_nullmap: Vec::new(),
+            compressed_data: Vec::new(),
+            pipeline_json: "[]".to_string(),
+        }
+        .to_bytes();
+    }
     let total_rows = array.len() as u64;
 
     if array.null_count() == array.len() {
@@ -126,11 +135,15 @@ where
     // CORRECT: This now returns a typed Vec, not a byte buffer.
     let valid_data_vec: Vec<T::Native> =
         crate::null_handling::bitmap::strip_valid_data_to_vec(array);
-    println!(
-        "[DEBUG] Compression: valid_data_vec.len() = {}, expected valid count = {}",
-        valid_data_vec.len(),
-        array.len() - array.null_count()
-    );
+
+    #[cfg(debug_assertions)]
+    {
+        println!(
+            "[DEBUG] Compression: valid_data_vec.len() = {}, expected valid count = {}",
+            valid_data_vec.len(),
+            array.len() - array.null_count()
+        );
+    }
     let validity_bytes_opt = array.nulls().map(|nb| nb.buffer().as_slice().to_vec());
 
     // --- Step 2: Compress the validity buffer (if it exists) ---
@@ -145,37 +158,53 @@ where
     // --- Step 3: Plan and compress the main data buffer ---
     // CORRECT: Convert the typed Vec to bytes for the planner/executor.
     let valid_data_bytes = crate::utils::typed_slice_to_bytes(&valid_data_vec);
-
-    // --- ADD THIS CHECKPOINT ---
-    println!("\n[CHECKPOINT 1] Orchestrator -> Planner");
-    println!("\n[CHECKPOINT 1] valid_data_bytes = bytemuck::cast_slice(&valid_data_vec)");
-    println!("  - Type: {}", &original_type);
-    println!(
-        "  - Bytes Sent to ExePlannerutor (first 50): {:?}...",
-        &valid_data_bytes[..valid_data_bytes.len().min(50)]
-    );
+    #[cfg(debug_assertions)]
+    {
+        // --- ADD THIS CHECKPOINT ---
+        println!("\n[CHECKPOINT 1] Orchestrator -> Planner");
+        println!("\n[CHECKPOINT 1] valid_data_bytes = bytemuck::cast_slice(&valid_data_vec)");
+        println!("  - Type: {}", &original_type);
+        println!(
+            "  - Bytes Sent to ExePlannerutor (first 50): {:?}...",
+            &valid_data_bytes[..valid_data_bytes.len().min(50)]
+        );
+    }
     // --- END CHECKPOINT ---
 
+    // After extracting valid_data_vec and before planner call
+    #[cfg(debug_assertions)]
+    {
+        println!(
+            "[DEBUG] Compression: total_rows = {}, null_count = {}, valid rows = {}",
+            array.len(),
+            array.null_count(),
+            array.len() - array.null_count()
+        );
+    }
     let pipeline_json = planner::plan_pipeline(&valid_data_bytes, &original_type)?;
-    
 
-    // --- ADD THIS CHECKPOINT ---
-    println!("\n[CHECKPOINT 2] Planner -> Orchestrator: pipeline_json = planner::plan_pipeline");
-    println!("  - Pipeline JSON: {}", &pipeline_json);
-    // --- END CHECKPOINT ---
+    #[cfg(debug_assertions)]
+    {
+        println!(
+            "\n[CHECKPOINT 2] Planner -> Orchestrator: pipeline_json = planner::plan_pipeline"
+        );
+        println!("  - Pipeline JSON: {}", &pipeline_json);
+    }
+
     let compressed_data =
         executor::execute_compress_pipeline(&valid_data_bytes, &original_type, &pipeline_json)?;
 
-    // --- ADD THIS CHECKPOINT (before the call) ---
-    println!("\n[CHECKPOINT 3] Orchestrator -> Executor");
-    println!("\n[CHECKPOINT 3] compress_primitive_array");
-    println!("  - Type: {}", &original_type);
-    println!(
-        "  - Bytes Sent to Executor (first 50): {:?}...",
-        &valid_data_bytes[..valid_data_bytes.len().min(50)]
-    );
-    println!("  - Plan Sent to Executor: {}", &pipeline_json);
-    // --- END CHECKPOINT ---
+    #[cfg(debug_assertions)]
+    {
+        println!("\n[CHECKPOINT 3] Orchestrator -> Executor");
+        println!("\n[CHECKPOINT 3] compress_primitive_array");
+        println!("  - Type: {}", &original_type);
+        println!(
+            "  - Bytes Sent to Executor (first 50): {:?}...",
+            &valid_data_bytes[..valid_data_bytes.len().min(50)]
+        );
+        println!("  - Plan Sent to Executor: {}", &pipeline_json);
+    }
 
     // --- Step 4: Package the final artifact ---
     let artifact = CompressedChunk {
@@ -195,33 +224,9 @@ where
 /// The public-facing compression orchestrator. Its ONLY job is to downcast
 /// the dynamic `Array` and dispatch to the generic worker function.
 pub fn compress_chunk(array: &dyn Array) -> Result<Vec<u8>, PhoenixError> {
-    if array.len() == 0 {
-        let artifact = CompressedChunk {
-            total_rows: 0,
-            compressed_nullmap: Vec::new(),
-            compressed_data: Vec::new(),
-            pipeline_json: "[]".to_string(),
-        };
-        return artifact.to_bytes();
-    }
-    if array.len() == 0 || array.null_count() == array.len() {
-        let compressed_nullmap = if let Some(null_buffer) = array.nulls() {
-            let validity_bytes = null_buffer.buffer().as_slice();
-            // --- THIS IS THE FIX ---
-            // A raw bitmap should not be RLE'd. Just use Zstd.
-            let pipeline_json = r#"[{"op": "zstd", "params": {"level": 19}}]"#;
-            executor::execute_compress_pipeline(validity_bytes, "Boolean", &pipeline_json)?
-        } else {
-            Vec::new()
-        };
-        let artifact = CompressedChunk {
-            total_rows: array.len() as u64,
-            compressed_nullmap,
-            compressed_data: Vec::new(),
-            pipeline_json: "[]".to_string(),
-        };
-        return artifact.to_bytes();
-    }
+    // The generic worker function `compress_primitive_array` already handles
+    // the all-null and empty-data cases correctly. We can remove the
+    // redundant logic from this top-level dispatcher.
 
     // This macro performs the downcast and calls the generic worker.
     macro_rules! dispatch {
@@ -343,10 +348,13 @@ pub fn decompress_chunk(bytes: &[u8], original_type: &str) -> Result<Box<dyn Arr
             nb.len() - nb.null_count()
         });
 
-    println!(
-        "[DEBUG] Decompression: total_rows = {}, num_valid_rows = {}",
-        artifact.total_rows, num_valid_rows
-    );
+    #[cfg(debug_assertions)]
+    {
+        println!(
+            "[DEBUG] Decompression: total_rows = {}, num_valid_rows = {}",
+            artifact.total_rows, num_valid_rows
+        );
+    }
 
     let decompressed_data_bytes = if !artifact.compressed_data.is_empty() {
         executor::execute_decompress_pipeline(
@@ -359,12 +367,14 @@ pub fn decompress_chunk(bytes: &[u8], original_type: &str) -> Result<Box<dyn Arr
         Vec::new()
     };
 
-    println!(
-        "[DEBUG] Decompressed bytes len: {}",
-        decompressed_data_bytes.len()
-    );
-    println!("[DEBUG] Expected bytes: {}", num_valid_rows * 8); // 8 bytes per Int64
-
+    #[cfg(debug_assertions)]
+    {
+        println!(
+            "[DEBUG] Decompressed bytes len: {}",
+            decompressed_data_bytes.len()
+        );
+        println!("[DEBUG] Expected bytes: {}", num_valid_rows * 8); // 8 bytes per Int64
+    }
     macro_rules! dispatch_reconstruct {
         ($T:ty) => {{
             let array = bitmap::reapply_bitmap::<$T>(

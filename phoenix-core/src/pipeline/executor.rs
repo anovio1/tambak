@@ -49,12 +49,81 @@ pub fn execute_compress_pipeline(
     let mut current_type = original_type.to_string();
 
     for op_config in pipeline.iter() {
-        // --- ADD THIS CHECKPOINT ---
-        println!("\n[CHECKPOINT 4] Executor Loop: for op_config in pipeline.iter");
-        println!("  - Executing Op: {}", op_config);
-        println!("  - Current Type: {}", &current_type);
-        println!("  - Input Buf (first 16 bytes): {:?}", &input_buf.get(..16.min(input_buf.len())));
-        // --- END CHECKPOINT ---
+        #[cfg(debug_assertions)]
+        {
+            // --- ADD THIS CHECKPOINT ---
+            let op_name = op_config["op"].as_str().unwrap_or("unknown");
+            println!("\n[CHECKPOINT 4] Executor Loop: for op_config in pipeline.iter");
+            println!("  - Executing Op: {}", op_config);
+            println!("  - Current Type: {}", &current_type);
+            println!(
+                "  - Input Buf (first 16 bytes): {:?}",
+                &input_buf.get(..16.min(input_buf.len()))
+            );
+            println!(
+                "  - [DEBUG] Op: {}, Input Buf Length: {}, Output Buf Length: {}",
+                op_name,
+                input_buf.len(),
+                output_buf.len()
+            );
+
+            // If this op is bitpack, print the max value of the input buffer to diagnose errors
+            if op_name == "bitpack" {
+                use bytemuck::cast_slice;
+
+                // Convert input_buf bytes to typed slice for the current_type
+                match current_type.as_str() {
+                    "UInt8" => {
+                        let typed_input: &[u8] = cast_slice(input_buf);
+                        let max_val = typed_input.iter().copied().max().unwrap_or(0);
+                        println!("   [DEBUG] Bitpack input max value (u8): {}", max_val);
+                    }
+                    "UInt16" => {
+                        let typed_input: &[u16] = cast_slice(input_buf);
+                        let max_val = typed_input.iter().copied().max().unwrap_or(0);
+                        println!("   [DEBUG] Bitpack input max value (u16): {}", max_val);
+                    }
+                    "UInt32" => {
+                        let typed_input: &[u32] = cast_slice(input_buf);
+                        let max_val = typed_input.iter().copied().max().unwrap_or(0);
+                        println!("   [DEBUG] Bitpack input max value (u32): {}", max_val);
+                    }
+                    "UInt64" => {
+                        let typed_input: &[u64] = cast_slice(input_buf);
+                        let max_val = typed_input.iter().copied().max().unwrap_or(0);
+                        println!("   [DEBUG] Bitpack input max value (u64): {}", max_val);
+                    }
+                    "Int8" => {
+                        let typed_input: &[i8] = cast_slice(input_buf);
+                        let max_val = typed_input.iter().copied().max().unwrap_or(0);
+                        println!("   [DEBUG] Bitpack input max value (i8): {}", max_val);
+                    }
+                    "Int16" => {
+                        let typed_input: &[i16] = cast_slice(input_buf);
+                        let max_val = typed_input.iter().copied().max().unwrap_or(0);
+                        println!("   [DEBUG] Bitpack input max value (i16): {}", max_val);
+                    }
+                    "Int32" => {
+                        let typed_input: &[i32] = cast_slice(input_buf);
+                        let max_val = typed_input.iter().copied().max().unwrap_or(0);
+                        println!("   [DEBUG] Bitpack input max value (i32): {}", max_val);
+                    }
+                    "Int64" => {
+                        let typed_input: &[i64] = cast_slice(input_buf);
+                        let max_val = typed_input.iter().copied().max().unwrap_or(0);
+                        println!("   [DEBUG] Bitpack input max value (i64): {}", max_val);
+                    }
+                    _ => {
+                        println!(
+                            "   [DEBUG] Bitpack op with unsupported current_type: {}",
+                            current_type
+                        );
+                    }
+                }
+            }
+            // --- END CHECKPOINT ---
+        }
+
         output_buf.clear();
 
         // The executor's ONLY job is to call the dispatcher.
@@ -66,7 +135,23 @@ pub fn execute_compress_pipeline(
             current_type = current_type.replace("Int", "UInt");
         }
 
+        #[cfg(debug_assertions)]
+        {
+            println!(
+                "   - [DEBUG] Before swap: input_buf.len() = {}, output_buf.len() = {}",
+                input_buf.len(),
+                output_buf.len()
+            );
+        }
         std::mem::swap(&mut input_buf, &mut output_buf);
+        #[cfg(debug_assertions)]
+        {
+            println!(
+                "   - [DEBUG] After swap: input_buf.len() = {}, output_buf.len() = {}",
+                input_buf.len(),
+                output_buf.len()
+            );
+        }
     }
 
     Ok(input_buf.to_vec())
@@ -223,13 +308,19 @@ mod tests {
     }
     #[test]
     fn checkpoint_10_after_zstd() {
+        // 1. Define the original data
         let data = b"some intermediate byte stream";
-        let mut output_buf = Vec::new();
-        crate::kernels::zstd::encode(data, &mut output_buf, 3).unwrap();
 
-        println!("\n--- CHECKPOINT 10: AFTER ZSTD ---");
-        dbg!(&output_buf);
-        println!("---------------------------------\n");
-        assert!(output_buf.len() < data.len());
+        // 2. Compress it
+        let mut compressed_buf = Vec::new();
+        crate::kernels::zstd::encode(data, &mut compressed_buf, 3).unwrap();
+
+        // 3. Decompress it
+        let mut decompressed_buf = Vec::new();
+        crate::kernels::zstd::decode(&compressed_buf, &mut decompressed_buf).unwrap();
+
+        // 4. Assert that the decompressed data is identical to the original.
+        // This is the correct way to test for correctness.
+        assert_eq!(data, decompressed_buf.as_slice());
     }
 }

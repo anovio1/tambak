@@ -3,7 +3,7 @@
 name = "phoenix-core"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <you@example.com>"]
+authors = ["anovio1 <anastace.novio@gmail.com>"]
 description = "Core Rust library for the Phoenix high-performance compression protocol."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/your-repo/phoenix"

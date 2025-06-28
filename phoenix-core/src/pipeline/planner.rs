@@ -124,29 +124,32 @@ fn build_pipeline_from_profile(profile: &DataProfile) -> Result<String, PhoenixE
                 pipeline.push(json!({"op": "zigzag"}));
             }
 
-            // --- CORRECTED SEQUENTIAL LOGIC ---
-            // Step 1: Choose the best bit-width reduction technique.
-            if profile.max_zigzag_delta_bit_width > 0 && profile.max_zigzag_delta_bit_width <= 16 {
+            // --- FINAL, DEFINITIVE MUTUALLY EXCLUSIVE LOGIC ---
+            // The planner must choose only ONE of these terminal operations.
+            
+            // Heuristic 1: Is shuffle the most effective?
+            if profile.shuffle_is_likely_effective {
+                pipeline.push(json!({"op": "shuffle"}));
+            
+            // Heuristic 2: If not, is bitpacking a good choice?
+            } else if profile.max_zigzag_delta_bit_width > 0 && profile.max_zigzag_delta_bit_width <= 16 {
                 pipeline.push(json!({
                     "op": "bitpack",
                     "params": {"bit_width": profile.max_zigzag_delta_bit_width}
                 }));
+
+            // Heuristic 3: Otherwise, fall back to the most general-purpose option.
             } else {
                 pipeline.push(json!({"op": "leb128"}));
-            }
-
-            // Step 2: Independently decide if shuffling is beneficial for the final zstd step.
-            if profile.shuffle_is_likely_effective {
-                pipeline.push(json!({"op": "shuffle"}));
             }
         }
     }
 
-    // Zstd is always the final, entropy-coding step.
     pipeline.push(json!({"op": "zstd", "params": {"level": 3}}));
 
-    serde_json::to_string(&pipeline)
-        .map_err(|e| PhoenixError::UnsupportedType(format!("Pipeline JSON serialization failed: {}", e)))
+    serde_json::to_string(&pipeline).map_err(|e| {
+        PhoenixError::UnsupportedType(format!("Pipeline JSON serialization failed: {}", e))
+    })
 }
 
 //==================================================================================
@@ -159,7 +162,10 @@ pub fn plan_pipeline(bytes: &[u8], original_type: &str) -> Result<String, Phoeni
     macro_rules! dispatch {
         ($T:ty) => {{
             if bytes.len() % std::mem::size_of::<$T>() != 0 {
-                return Err(PhoenixError::BufferMismatch(bytes.len(), std::mem::size_of::<$T>()));
+                return Err(PhoenixError::BufferMismatch(
+                    bytes.len(),
+                    std::mem::size_of::<$T>(),
+                ));
             }
             // This safe, copying conversion is the key to fixing the alignment bugs.
             let data: Vec<$T> = bytes
@@ -206,6 +212,7 @@ mod tests {
         let original_bytes = typed_slice_to_bytes(&original_data);
         let pipeline_json = plan_pipeline(&original_bytes, "Int32").unwrap();
         let op_names = get_op_names(&pipeline_json);
+        // This test is still correct.
         assert_eq!(op_names, vec!["rle", "zstd"]);
     }
 
@@ -215,35 +222,69 @@ mod tests {
         let original_bytes = typed_slice_to_bytes(&original_data);
         let pipeline_json = plan_pipeline(&original_bytes, "Int32").unwrap();
         let op_names = get_op_names(&pipeline_json);
+        // This test is also still correct.
         assert_eq!(op_names, vec!["delta", "rle", "zstd"]);
     }
 
     #[test]
-    fn test_plan_for_small_deltas_is_bitpack_and_shuffle() {
+    // RENAMED: The old name was misleading.
+    fn test_plan_for_small_deltas_chooses_shuffle() {
+        // Data analysis:
+        // - Type: i16 (16 bits)
+        // - Max zigzagged delta value is 200, which requires 8 bits.
+        // - Shuffle heuristic: `bit_width <= (element_size / 2)` -> `8 <= (16 / 2)` -> `true`.
+        // - The planner will choose `shuffle` because this condition is met first.
         let original_data: Vec<i16> = vec![100, 101, 103, 102, 104, 101];
         let original_bytes = typed_slice_to_bytes(&original_data);
         let pipeline_json = plan_pipeline(&original_bytes, "Int16").unwrap();
         let op_names = get_op_names(&pipeline_json);
+        
+        // CORRECTED ASSERTION
         assert_eq!(
             op_names,
-            vec!["delta", "zigzag", "shuffle", "bitpack", "zstd"]
+            vec!["delta", "zigzag", "shuffle", "zstd"]
         );
     }
 
     #[test]
-    fn test_plan_for_large_deltas_still_shuffles_if_beneficial() {
-        // Deltas are large, but still fit within 12 bits. For a 32-bit type,
-        // 12 <= 16, so shuffle is still considered beneficial by the heuristic.
-        // This is correct behavior.
+    // RENAMED: The old name was misleading.
+    fn test_plan_for_medium_deltas_chooses_shuffle() {
+        // Data analysis:
+        // - Type: i32 (32 bits)
+        // - Max zigzagged delta value is 3990, which requires 12 bits.
+        // - Shuffle heuristic: `bit_width <= (element_size / 2)` -> `12 <= (32 / 2)` -> `true`.
+        // - The planner will choose `shuffle` because this condition is met first.
         let original_data: Vec<i32> = vec![0, 1000, 5, 2000, 10];
         let original_bytes = typed_slice_to_bytes(&original_data);
         let pipeline_json = plan_pipeline(&original_bytes, "Int32").unwrap();
         let op_names = get_op_names(&pipeline_json);
 
-        // The test is updated to reflect the planner's correct decision.
+        // CORRECTED ASSERTION
         assert_eq!(
             op_names,
-            vec!["delta", "zigzag", "shuffle", "bitpack", "zstd"]
+            vec!["delta", "zigzag", "shuffle", "zstd"]
+        );
+    }
+
+    #[test]
+    // NEW TEST: This case is specifically designed to fail the shuffle heuristic
+    // but pass the bitpack heuristic, ensuring the `else if` path is tested.
+    fn test_plan_chooses_bitpack_when_shuffle_ineffective() {
+        // Data analysis:
+        // - Type: i16 (16 bits)
+        // - Max zigzagged delta value is 512, which requires 10 bits.
+        // - Shuffle heuristic: `bit_width <= (element_size / 2)` -> `10 <= (16 / 2)` -> `false`.
+        // - Bitpack heuristic: `bit_width <= 16` -> `10 <= 16` -> `true`.
+        // - The planner will skip `shuffle` and choose `bitpack`.
+        let original_data: Vec<i16> = vec![0, 256, 0]; // Delta is 256, zigzag is 512
+        let original_bytes = typed_slice_to_bytes(&original_data);
+        let pipeline_json = plan_pipeline(&original_bytes, "Int16").unwrap();
+        let op_names = get_op_names(&pipeline_json);
+
+        // This assertion validates the bitpack path.
+        assert_eq!(
+            op_names,
+            vec!["delta", "zigzag", "bitpack", "zstd"]
         );
     }
 }
