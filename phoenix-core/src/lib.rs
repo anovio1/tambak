@@ -17,8 +17,8 @@ mod ffi;
 mod kernels;
 mod null_handling;
 mod pipeline;
-mod utils;
 pub mod traits;
+mod utils;
 
 //==================================================================================
 // 2. Python Module Definition
@@ -44,6 +44,9 @@ fn phoenix_cache(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ffi::python::decompress_py, m)?)?;
     m.add_function(wrap_pyfunction!(ffi::python::plan_py, m)?)?;
 
+    //  Returns header size as well as plan
+    m.add_function(wrap_pyfunction!(ffi::python::compress_analyze_py, m)?)?;
+
     // //  data frame
     // m.add_function(wrap_pyfunction!(ffi::python::compress_frame_py, m)?)?;
     // m.add_function(wrap_pyfunction!(ffi::python::decompress_frame_py, m)?)?;
@@ -51,7 +54,10 @@ fn phoenix_cache(py: Python, m: &PyModule) -> PyResult<()> {
     // As a best practice, we can also expose a standard Python exception type
     // for error handling in Python code. If you want a custom exception,
     // you must define it with #[pyclass] and #[pymethods] in a separate module.
-    m.add("PhoenixError", py.get_type::<pyo3::exceptions::PyValueError>())?;
+    m.add(
+        "PhoenixError",
+        py.get_type::<pyo3::exceptions::PyValueError>(),
+    )?;
 
     Ok(())
 }

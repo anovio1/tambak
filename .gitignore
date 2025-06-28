@@ -31,3 +31,5 @@ tubuin/output_artifacts/**
 phoenix-core/target/**/*
 RustLib/target/**/*
 .mds/
+
+phoenix-core/src-copy/**/*

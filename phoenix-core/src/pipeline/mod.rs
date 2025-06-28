@@ -27,4 +27,5 @@ pub mod executor;
 pub use self::orchestrator::{
     compress_chunk,
     decompress_chunk,
+    get_compressed_chunk_info,
 };

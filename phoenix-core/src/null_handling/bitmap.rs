@@ -4,7 +4,7 @@
 //! nullability, built correctly for the Arrow v55 API. It uses generics and the
 //! official `NullBuffer` and non-generic `Buffer` types.
 
-use arrow::array::{PrimitiveArray, ArrayData};
+use arrow::array::{ArrayData, PrimitiveArray, PrimitiveBuilder};
 use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::{ArrowNumericType, ToByteSlice}; // ToByteSlice is needed for tests
 
@@ -38,6 +38,15 @@ where
     Buffer::from(valid_data.to_byte_slice())
 }
 
+pub fn strip_valid_data_to_vec<T: ArrowNumericType>(
+    array: &PrimitiveArray<T>,
+) -> Vec<T::Native> {
+    // The iterator on PrimitiveArray yields Option<T::Native>.
+    // filter_map is the most idiomatic and efficient way to collect non-null values.
+    array.iter().filter_map(|val| val).collect()
+}
+
+
 /// Re-applies a `NullBuffer` to a byte `Buffer` of valid data to reconstruct
 /// the original Arrow `PrimitiveArray`. This is a zero-copy operation.
 ///
@@ -48,26 +57,36 @@ where
 /// # Returns
 /// A new Arrow `PrimitiveArray<T>` with nulls correctly reinstated.
 pub fn reapply_bitmap<T: ArrowNumericType>(
-    valid_data_buffer: Buffer, // CORRECT: Buffer is not generic
+    valid_data: Vec<T::Native>,
     null_buffer: Option<NullBuffer>,
+    num_rows: usize, // The total number of rows in the final array is required.
 ) -> Result<PrimitiveArray<T>, PhoenixError> {
-    // Determine the total number of elements in the final array.
-    let len = if let Some(nb) = &null_buffer {
-        nb.len()
+    // The PrimitiveBuilder is the correct, idiomatic, and safe way to build
+    // an array from sparse data and a validity mask.
+    let mut builder = PrimitiveBuilder::<T>::with_capacity(num_rows);
+
+    if let Some(nb) = null_buffer {
+        let mut valid_data_iter = valid_data.iter();
+        // Iterate through the boolean validity iterator provided by the NullBuffer.
+        for is_valid in nb.iter() {
+            if is_valid {
+                // The orchestrator guarantees that the number of `true` values in the
+                // bitmap matches the length of `valid_data`, so this unwrap is safe.
+                builder.append_value(*valid_data_iter.next().unwrap());
+            } else {
+                // The builder correctly handles appending a null slot.
+                builder.append_null();
+            }
+        }
     } else {
-        // If no nulls, length is the number of elements in the data buffer.
-        // We must divide byte length by element size.
-        valid_data_buffer.len() / std::mem::size_of::<T::Native>()
-    };
+        // If there are no nulls, we can just append all the values.
+        for val in valid_data {
+            builder.append_value(val);
+        }
+    }
 
-    let array_data = ArrayData::builder(T::DATA_TYPE)
-        .len(len)
-        .add_buffer(valid_data_buffer) // add_buffer correctly takes a non-generic Buffer
-        .nulls(null_buffer)
-        .build()
-        .map_err(|e| PhoenixError::InternalError(format!("Failed to build ArrayData: {}", e)))?;
-
-    Ok(PrimitiveArray::<T>::from(array_data))
+    // The finish() method constructs the final, correct PrimitiveArray.
+    Ok(builder.finish())
 }
 
 //==================================================================================
@@ -81,28 +100,23 @@ mod tests {
     use arrow::datatypes::Int32Type;
 
     #[test]
-    fn test_strip_valid_data_to_buffer() {
+    fn test_strip_valid_data_to_vec() {
         let source_array = Int32Array::from(vec![Some(10), None, Some(30)]);
-        let expected_valid_data: Vec<i32> = vec![10, 30];
-
-        // Call the function to get a raw byte buffer
-        let buffer = strip_valid_data_to_buffer::<Int32Type>(&source_array);
-
-        // The buffer's content should be the little-endian bytes of the expected data.
-        assert_eq!(buffer.as_slice(), expected_valid_data.to_byte_slice());
+        let valid_data_vec = strip_valid_data_to_vec::<Int32Type>(&source_array);
+        assert_eq!(valid_data_vec, vec![10, 30]);
     }
 
     #[test]
     fn test_reapply_bitmap_with_nulls() {
         let valid_data: Vec<i32> = vec![10, 30];
-        // CORRECT: Create a byte Buffer from a typed slice.
-        let valid_data_buffer = Buffer::from(valid_data.to_byte_slice());
-
         let null_buffer = NullBuffer::from(vec![true, false, true]);
+        let total_rows = 3;
 
+        // Reconstruct the array using the correct builder-based function.
         let reconstructed_array = reapply_bitmap::<Int32Type>(
-            valid_data_buffer,
+            valid_data,
             Some(null_buffer),
+            total_rows,
         ).unwrap();
 
         let expected_array = Int32Array::from(vec![Some(10), None, Some(30)]);
@@ -112,11 +126,12 @@ mod tests {
     #[test]
     fn test_reapply_bitmap_no_nulls() {
         let valid_data: Vec<i32> = vec![10, 20, 30];
-        let valid_data_buffer = Buffer::from(valid_data.to_byte_slice());
+        let total_rows = 3;
 
         let reconstructed_array = reapply_bitmap::<Int32Type>(
-            valid_data_buffer,
+            valid_data,
             None, // No nulls
+            total_rows,
         ).unwrap();
 
         let expected_array = Int32Array::from(vec![10, 20, 30]);

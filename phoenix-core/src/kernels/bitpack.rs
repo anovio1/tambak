@@ -127,7 +127,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::typed_slice_to_bytes;
+    use crate::utils::{safe_bytes_to_typed_slice, typed_slice_to_bytes};
 
     #[test]
     fn test_bitpack_u32_roundtrip() {
@@ -170,5 +170,23 @@ mod tests {
 
         let decoded_vec = decode_slice::<u8>(bv.as_bitslice(), 4, 3).unwrap();
         assert_eq!(decoded_vec, vec![5, 6, 7]);
+    }
+
+    #[test]
+    fn test_encode_value_exceeds_bit_width_error() {
+        let original: Vec<u32> = vec![1, 2, 3, 8]; // 8 requires 4 bits
+        let bit_width = 3;
+        let mut encoded_bytes = Vec::new();
+        
+        let result = encode(&original, &mut encoded_bytes, bit_width);
+        
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let PhoenixError::BitpackEncodeError(val, width) = err {
+            assert_eq!(val, 8);
+            assert_eq!(width, 3);
+        } else {
+            panic!("Expected BitpackEncodeError");
+        }
     }
 }

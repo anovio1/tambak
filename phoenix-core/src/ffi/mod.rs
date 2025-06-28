@@ -20,6 +20,7 @@ pub mod python;
 // will use to construct the final Python module.
 pub use self::python::{
     compress_py,
+    compress_analyze_py,
     decompress_py,
     plan_py,
 };

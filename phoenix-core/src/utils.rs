@@ -149,64 +149,74 @@ pub fn arrow_array_to_py(py: Python, array: Box<dyn Array>) -> PyResult<PyObject
 //==================================================================================
 // 3. Unit Tests
 //==================================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+    #[test]
+    fn test_safe_bytes_to_typed_slice_success() {
+        let original_vec: Vec<i32> = vec![1, -2, 1_000_000];
+        let bytes = typed_slice_to_bytes(&original_vec);
 
-//     #[test]
-//     fn test_safe_bytes_to_typed_slice_success() {
-//         let original_vec: Vec<i32> = vec![1, -2, 1_000_000];
-//         let bytes = typed_slice_to_bytes(&original_vec);
+        let typed_slice = safe_bytes_to_typed_slice::<i32>(&bytes).unwrap();
+        assert_eq!(typed_slice, original_vec.as_slice());
+    }
 
-//         let typed_slice = safe_bytes_to_typed_slice::<i32>(&bytes).unwrap();
-//         assert_eq!(typed_slice, original_vec.as_slice());
-//     }
 
-//     #[test]
-//     fn test_safe_bytes_to_typed_slice_mismatch_error() {
-//         let bytes: Vec<u8> = vec![0, 1, 2, 3, 4]; // 5 bytes, not divisible by 2 or 4
+    #[test]
+    fn test_safe_bytes_to_typed_slice_mismatch_error() {
+        // 5 bytes is not divisible by size_of::<i32>(4) or size_of::<i16>(2).
+        // It may also be unaligned. We want to ensure any error from bytemuck
+        // is correctly wrapped in our InternalError type.
+        let bytes: Vec<u8> = vec![0, 1, 2, 3, 4];
 
-//         let result_i32 = safe_bytes_to_typed_slice::<i32>(&bytes);
-//         assert!(result_i32.is_err());
-//         if let Err(PhoenixError::BufferMismatch(len, size)) = result_i32.unwrap_err() {
-//             assert_eq!(len, 5);
-//             assert_eq!(size, 4);
-//         } else {
-//             panic!("Expected BufferMismatch error");
-//         }
+        // Test with i32
+        let result_i32 = safe_bytes_to_typed_slice::<i32>(&bytes);
+        assert!(result_i32.is_err());
+        // --- THIS IS THE CORRECTED ASSERTION ---
+        // We check that the error is the correct variant of our enum.
+        // We don't need to be brittle by checking the specific string,
+        // which can change between library versions.
+        assert!(matches!(result_i32, Err(PhoenixError::InternalError(_))));
 
-//         let result_i16 = safe_bytes_to_typed_slice::<i16>(&bytes);
-//         assert!(result_i16.is_err());
-//     }
+        // Test with i16
+        let result_i16 = safe_bytes_to_typed_slice::<i16>(&bytes);
+        assert!(result_i16.is_err());
+        assert!(matches!(result_i16, Err(PhoenixError::InternalError(_))));
+    }
 
-//     #[test]
-//     fn test_typed_slice_to_bytes_endianness() {
-//         // Value is 258 = 0x0102
-//         let original_vec: Vec<u16> = vec![258];
-//         let bytes = typed_slice_to_bytes(&original_vec);
+    #[test]
+    fn test_typed_slice_to_bytes_endianness() {
+        // Value is 258 = 0x0102 in hex
+        let original_vec: Vec<u16> = vec![258];
+        let bytes = typed_slice_to_bytes(&original_vec);
 
-//         // Little-Endian means the least significant byte (0x02) comes first.
-//         assert_eq!(bytes, vec![0x02, 0x01]);
-//     }
+        // bytemuck respects native endianness. On most machines (x86, ARM),
+        // this will be little-endian, so the least significant byte (0x02) comes first.
+        if cfg!(target_endian = "little") {
+            assert_eq!(bytes, vec![0x02, 0x01]);
+        } else {
+            assert_eq!(bytes, vec![0x01, 0x02]);
+        }
+    }
 
-//     #[test]
-//     fn test_get_element_size_all_types() {
-//         assert_eq!(get_element_size("Int8").unwrap(), 1);
-//         assert_eq!(get_element_size("UInt16").unwrap(), 2);
-//         assert_eq!(get_element_size("Int32").unwrap(), 4);
-//         assert_eq!(get_element_size("UInt64").unwrap(), 8);
-//         assert_eq!(get_element_size("Boolean").unwrap(), 1);
-//     }
+    #[test]
+    fn test_get_element_size_all_types() {
+        assert_eq!(get_element_size("Int8").unwrap(), 1);
+        assert_eq!(get_element_size("UInt16").unwrap(), 2);
+        assert_eq!(get_element_size("Int32").unwrap(), 4);
+        assert_eq!(get_element_size("UInt64").unwrap(), 8);
+        assert_eq!(get_element_size("Boolean").unwrap(), 1);
+    }
 
-//     #[test]
-//     fn test_get_element_size_unsupported() {
-//         let result = get_element_size("Float32");
-//         assert!(result.is_err());
-//         if let Err(PhoenixError::UnsupportedType(s)) = result.unwrap_err() {
-//             assert_eq!(s, "Float32");
-//         } else {
-//             panic!("Expected UnsupportedType error");
-//         }
-//     }
-// }
+    #[test]
+    fn test_get_element_size_unsupported() {
+        let result = get_element_size("Float32");
+        assert!(result.is_err());
+        if let Err(PhoenixError::UnsupportedType(s)) = result {
+            assert_eq!(s, "Float32");
+        } else {
+            panic!("Expected UnsupportedType error");
+        }
+    }
+}

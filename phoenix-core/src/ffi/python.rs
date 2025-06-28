@@ -7,8 +7,9 @@ use pyo3::prelude::*;
 use arrow::pyarrow::FromPyArrow;
 // use pyo3_polars::PyDataFrame
 use crate::error::PhoenixError;
-use crate::pipeline::{orchestrator, planner};
+use crate::pipeline::{orchestrator, planner, get_compressed_chunk_info};
 use crate::utils;
+use pyo3::types::{PyBytes, PyDict};
 
 //==================================================================================
 // 1. Public Python Functions (Final Version)
@@ -16,7 +17,7 @@ use crate::utils;
 
 #[pyfunction]
 #[pyo3(name = "compress")]
-pub fn compress_py(py: Python, array_py: &PyAny) -> PyResult<Vec<u8>> {
+pub fn compress_py<'py>(py: Python<'py>, array_py: &PyAny) -> PyResult<&'py PyBytes> {
     // --- THIS IS THE CORRECT IMPLEMENTATION ---
 
     // 1. WITH GIL: Convert the Python Arrow object into a Rust `ArrayData`.
@@ -30,12 +31,35 @@ pub fn compress_py(py: Python, array_py: &PyAny) -> PyResult<Vec<u8>> {
 
     // 3. RELEASE GIL: The rest of the function, which operates on the pure
     //    `rust_array` object, is now correct.
-    py.allow_threads(move || {
+    let compressed_vec = py.allow_threads(move || {
         orchestrator::compress_chunk(rust_array.as_ref())
-            .map_err(PhoenixError::into)
-    })
+    })?;
+
+    Ok(PyBytes::new(py, &compressed_vec))
 }
 
+#[pyfunction]
+#[pyo3(name = "compress_analyze")] // Renamed as you suggested
+pub fn compress_analyze_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
+    let array_data = ArrayData::from_pyarrow(array_py)?;
+    let rust_array = make_array(array_data.into());
+
+    let artifact_bytes = py.allow_threads(move || {
+        orchestrator::compress_chunk(rust_array.as_ref())
+    })?;
+
+    // The function now returns the pipeline_json as the third element
+    let (header_size, data_size, pipeline_json) = get_compressed_chunk_info(&artifact_bytes)?;
+
+    let result_dict = PyDict::new(py);
+    result_dict.set_item("artifact", PyBytes::new(py, &artifact_bytes))?;
+    result_dict.set_item("header_size", header_size)?;
+    result_dict.set_item("data_size", data_size)?;
+    result_dict.set_item("total_size", artifact_bytes.len())?;
+    result_dict.set_item("plan", pipeline_json)?; // <-- ADD THE PLAN
+
+    Ok(result_dict.into())
+}
 
 #[pyfunction]
 #[pyo3(name = "decompress")]
