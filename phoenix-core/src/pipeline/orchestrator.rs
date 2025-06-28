@@ -137,7 +137,8 @@ where
 
     // --- Step 3: Plan and compress the main data buffer ---
     // CORRECT: Convert the typed Vec to bytes for the planner/executor.
-    let valid_data_bytes = bytemuck::cast_slice(&valid_data_vec);
+    let valid_data_bytes = crate::utils::typed_slice_to_bytes(&valid_data_vec);
+
     // --- ADD THIS CHECKPOINT ---
     println!("\n[CHECKPOINT 1] Orchestrator -> Planner");
     println!("\n[CHECKPOINT 1] valid_data_bytes = bytemuck::cast_slice(&valid_data_vec)");
@@ -148,13 +149,13 @@ where
     );
     // --- END CHECKPOINT ---
 
-    let pipeline_json = planner::plan_pipeline(valid_data_bytes, &original_type)?;
+    let pipeline_json = planner::plan_pipeline(&valid_data_bytes, &original_type)?;
     // --- ADD THIS CHECKPOINT ---
     println!("\n[CHECKPOINT 2] Planner -> Orchestrator: pipeline_json = planner::plan_pipeline");
     println!("  - Pipeline JSON: {}", &pipeline_json);
     // --- END CHECKPOINT ---
     let compressed_data =
-        executor::execute_compress_pipeline(valid_data_bytes, &original_type, &pipeline_json)?;
+        executor::execute_compress_pipeline(&valid_data_bytes, &original_type, &pipeline_json)?;
 
     // --- ADD THIS CHECKPOINT (before the call) ---
     println!("\n[CHECKPOINT 3] Orchestrator -> Executor");
@@ -339,13 +340,8 @@ pub fn decompress_chunk(bytes: &[u8], original_type: &str) -> Result<Box<dyn Arr
 
     macro_rules! dispatch_reconstruct {
         ($T:ty) => {{
-            let valid_data_vec = bytemuck::try_cast_slice(&decompressed_data_bytes)
-                .map_err(|e| {
-                    PhoenixError::InternalError(format!("Failed to cast byte slice: {}", e))
-                })?
-                .to_vec();
             let array = bitmap::reapply_bitmap::<$T>(
-                valid_data_vec,
+                decompressed_data_bytes, // Pass the Vec<u8> directly
                 null_buffer,
                 artifact.total_rows as usize,
             )?;

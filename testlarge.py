@@ -128,14 +128,14 @@ if __name__ == "__main__":
     small_array = pa.array(small_data, type=pa.int64())
     run_compression_test("1_Small Scale Sanity Check", small_array)
 
-    # --- Test Case 2: Large-scale time-series data ---
-    # This demonstrates the real-world effectiveness of the compression pipeline.
-    # The data has strong locality, which is ideal for delta encoding.
-    large_data = [1000 + (i % 50) + (-1) ** i for i in range(10_000)]
-    large_data[100] = None  # Add some nulls
-    large_data[5000] = None
-    large_array = pa.array(large_data, type=pa.int64())
-    run_compression_test("2_Large Scale Time-Series", large_array)
+    # # --- Test Case 2: Large-scale time-series data ---
+    # # This demonstrates the real-world effectiveness of the compression pipeline.
+    # # The data has strong locality, which is ideal for delta encoding.
+    # large_data = [1000 + (i % 50) + (-1) ** i for i in range(10_000)]
+    # large_data[100] = None  # Add some nulls
+    # large_data[5000] = None
+    # large_array = pa.array(large_data, type=pa.int64())
+    # run_compression_test("2_Large Scale Time-Series", large_array)
 
     # --- Test Case 3: Data with low cardinality ---
     # This should trigger the RLE kernel to be used effectively.

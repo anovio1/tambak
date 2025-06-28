@@ -5,7 +5,7 @@
 //! official `NullBuffer` and non-generic `Buffer` types.
 
 use arrow::array::{ArrayData, PrimitiveArray, PrimitiveBuilder};
-use arrow::buffer::{Buffer, NullBuffer};
+use arrow::buffer::{Buffer, NullBuffer, ScalarBuffer};
 use arrow::datatypes::{ArrowNumericType, ToByteSlice}; // ToByteSlice is needed for tests
 
 use crate::error::PhoenixError;
@@ -57,36 +57,23 @@ pub fn strip_valid_data_to_vec<T: ArrowNumericType>(
 /// # Returns
 /// A new Arrow `PrimitiveArray<T>` with nulls correctly reinstated.
 pub fn reapply_bitmap<T: ArrowNumericType>(
-    valid_data: Vec<T::Native>,
+    valid_data_bytes: Vec<u8>, // It receives bytes from the executor
     null_buffer: Option<NullBuffer>,
-    num_rows: usize, // The total number of rows in the final array is required.
+    num_rows: usize,
 ) -> Result<PrimitiveArray<T>, PhoenixError> {
-    // The PrimitiveBuilder is the correct, idiomatic, and safe way to build
-    // an array from sparse data and a validity mask.
-    let mut builder = PrimitiveBuilder::<T>::with_capacity(num_rows);
+    let data_buffer = Buffer::from(valid_data_bytes);
 
-    if let Some(nb) = null_buffer {
-        let mut valid_data_iter = valid_data.iter();
-        // Iterate through the boolean validity iterator provided by the NullBuffer.
-        for is_valid in nb.iter() {
-            if is_valid {
-                // The orchestrator guarantees that the number of `true` values in the
-                // bitmap matches the length of `valid_data`, so this unwrap is safe.
-                builder.append_value(*valid_data_iter.next().unwrap());
-            } else {
-                // The builder correctly handles appending a null slot.
-                builder.append_null();
-            }
-        }
-    } else {
-        // If there are no nulls, we can just append all the values.
-        for val in valid_data {
-            builder.append_value(val);
-        }
-    }
+    // The key is converting the generic Buffer to a typed ScalarBuffer
+    let typed_data_buffer: ScalarBuffer<T::Native> = data_buffer.into();
 
-    // The finish() method constructs the final, correct PrimitiveArray.
-    Ok(builder.finish())
+    let array_data = ArrayData::builder(T::DATA_TYPE)
+        .len(num_rows)
+        .add_buffer(typed_data_buffer.into_inner()) // Convert ScalarBuffer back to Buffer
+        .nulls(null_buffer)
+        .build()
+        .map_err(|e| PhoenixError::InternalError(e.to_string()))?;
+
+    Ok(PrimitiveArray::<T>::from(array_data))
 }
 
 //==================================================================================
