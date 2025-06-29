@@ -224,6 +224,13 @@ if __name__ == "__main__":
     run_compression_test("4_Low Cardinality Data", low_cardinality_array)
     run_zstd_only_test("ZSTD ONLY: 4_Low Cardinality Data", small_array)
 
+    # --- Test Case 4b: Signed Data with low cardinality ---
+    # This should trigger the RLE kernel to be used effectively.
+    low_cardinality_data = [-10, -10, -10, -10, 20, 20, 20, 20, 10, 10] * 1000
+    low_cardinality_array = pa.array(low_cardinality_data, type=pa.int32())
+    run_compression_test("4b_Low Cardinality Signed Data", low_cardinality_array)
+    run_zstd_only_test("ZSTD ONLY: 4b_Low Cardinality Signed Data", small_array)
+
     # --- Test Case 5: Large Data with low cardinality ---
     # This should trigger the RLE kernel to be used effectively.
     random.seed(42)  # for reproducibility

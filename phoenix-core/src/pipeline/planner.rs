@@ -21,10 +21,8 @@ use crate::utils::safe_bytes_to_typed_slice;
 #[derive(Debug, Default)]
 struct DataProfile {
     all_values_same: bool,
-    // For Signed Integers
-    delta_is_mostly_zero: bool,
+    delta_is_mostly_zero: bool, // Used by BOTH signed and unsigned analysis
     max_overall_bit_width: u8,
-    // For Unsigned Integers (Float Bits)
     avg_xor_delta_leading_zeros: f32,
 }
 
@@ -48,6 +46,7 @@ where
 
     let mut max_sub_delta_zz: u64 = 0;
     let mut sub_delta_zero_count: u64 = 0;
+    let mut delta_count: u64 = 0;
     let mut prev = first;
 
     for &curr in &data[1..] {
@@ -56,12 +55,17 @@ where
         let sub_delta_zz = zigzag::encode_val(sub_delta);
         max_sub_delta_zz = max_sub_delta_zz.max(sub_delta_zz.to_u64().unwrap_or(0));
         prev = curr;
+        delta_count += 1;
     }
     
     let first_zz = zigzag::encode_val(first);
     max_sub_delta_zz = max_sub_delta_zz.max(first_zz.to_u64().unwrap_or(0));
     profile.max_overall_bit_width = bit_width(max_sub_delta_zz);
-    profile.delta_is_mostly_zero = sub_delta_zero_count * 2 > data.len() as u64;
+    
+    if delta_count > 0 {
+        profile.delta_is_mostly_zero = sub_delta_zero_count * 3 > delta_count; // >33% zeros
+    }
+    
     profile
 }
 
@@ -81,15 +85,14 @@ where
     let mut delta_count: u64 = 0;
     let mut max_overall_val: u64 = first.to_u64().unwrap_or(0);
     let mut prev = first;
+    let mut xor_delta_zero_count: u64 = 0;
 
     for &curr in &data[1..] {
-        // --- THIS IS THE CRITICAL FIX ---
-        // Perform XOR on the native type T, THEN get leading zeros.
-        // This avoids the incorrect up-casting to u64 which inflated the zero count.
         let xor_delta: T = prev ^ curr;
+        if xor_delta.is_zero() {
+            xor_delta_zero_count += 1;
+        }
         total_leading_zeros += xor_delta.leading_zeros() as u64;
-        // --- END FIX ---
-
         max_overall_val = max_overall_val.max(xor_delta.to_u64().unwrap_or(0));
         delta_count += 1;
         prev = curr;
@@ -99,12 +102,14 @@ where
     profile.max_overall_bit_width = bit_width(max_overall_val);
     if delta_count > 0 {
         profile.avg_xor_delta_leading_zeros = total_leading_zeros as f32 / delta_count as f32;
+        profile.delta_is_mostly_zero = xor_delta_zero_count * 3 > delta_count; // >33% zeros
     }
+    
     profile
 }
 
 //==================================================================================
-// 2. Pipeline Construction Logic (Unchanged, but now receives correct profile)
+// 2. Pipeline Construction Logic (FINAL, CORRECTED VERSION)
 //==================================================================================
 
 /// Builds the pipeline for signed integer data based on its profile.
@@ -139,15 +144,23 @@ fn build_unsigned_pipeline(profile: DataProfile, type_str: &str) -> Vec<Value> {
         return pipeline;
     }
     pipeline.push(json!({"op": "xor_delta"}));
-    let element_size_bits = if type_str == "u32" { 32.0 } else { 64.0 };
 
-    if profile.avg_xor_delta_leading_zeros > (element_size_bits / 4.0) {
-        pipeline.push(json!({"op": "shuffle"}));
-    } else if profile.max_overall_bit_width > 0 {
-        pipeline.push(json!({
-            "op": "bitpack",
-            "params": {"bit_width": profile.max_overall_bit_width}
-        }));
+    // THIS IS THE FINAL, CORRECT LOGIC
+    // First, check for the low-cardinality case, which is best handled by RLE.
+    if profile.delta_is_mostly_zero {
+        pipeline.push(json!({"op": "rle"}));
+    } 
+    // If not low-cardinality, then decide between shuffle and bitpack for other patterns.
+    else {
+        let element_size_bits = if type_str == "u32" { 32.0 } else { 64.0 };
+        if profile.avg_xor_delta_leading_zeros > (element_size_bits / 4.0) {
+            pipeline.push(json!({"op": "shuffle"}));
+        } else if profile.max_overall_bit_width > 0 {
+            pipeline.push(json!({
+                "op": "bitpack",
+                "params": {"bit_width": profile.max_overall_bit_width}
+            }));
+        }
     }
     pipeline
 }
@@ -260,9 +273,6 @@ mod tests {
         ];
         let bytes = typed_slice_to_bytes(&data);
         let plan = plan_pipeline(&bytes, "UInt64").unwrap();
-        // Add debug printing to see the values
-        let profile = analyze_unsigned_data(&data);
-        println!("[DEBUG TEST] Profile for small_xor_deltas: {:?}", profile);
         assert_eq!(get_op_names(&plan), vec!["xor_delta", "shuffle", "zstd"]);
     }
 
@@ -275,9 +285,15 @@ mod tests {
         ];
         let bytes = typed_slice_to_bytes(&data);
         let plan = plan_pipeline(&bytes, "UInt32").unwrap();
-        // Add debug printing to see the values
-        let profile = analyze_unsigned_data(&data);
-        println!("[DEBUG TEST] Profile for large_xor_deltas: {:?}", profile);
         assert_eq!(get_op_names(&plan), vec!["xor_delta", "bitpack", "zstd"]);
+    }
+
+    #[test]
+    fn test_low_cardinality_float_is_rle() {
+        let data: Vec<f32> = vec![100.5, 42.42, 100.5, 100.5, 100.5, 42.42];
+        let u32_data: Vec<u32> = data.iter().map(|&f| f.to_bits()).collect();
+        let bytes = typed_slice_to_bytes(&u32_data);
+        let plan = plan_pipeline(&bytes, "UInt32").unwrap();
+        assert_eq!(get_op_names(&plan), vec!["xor_delta", "rle", "zstd"]);
     }
 }
