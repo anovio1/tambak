@@ -29,7 +29,7 @@ except ImportError as e:
     logger.error(f"Failed to import from tubuin-processor. Check the TUBUIN_PROCESSOR_PATH. Error: {e}")
     sys.exit(1)
 
-ASPECT_NAME = "damage_log" 
+ASPECT_NAME = "unit_positions" 
 MPK_FILE_PATH = pathlib.Path(f"./{ASPECT_NAME}.mpk")
 PHX_OUTPUT_PATH = pathlib.Path(f"./{ASPECT_NAME}.phx")
 PARQUET_OUTPUT_PATH = pathlib.Path(f"./{ASPECT_NAME}.parquet")
