@@ -132,7 +132,7 @@ def run_compression_test(test_name: str, original_array: pa.Array):
             raise ValueError(f"Unsupported pyarrow type for phoenix_cache: {type_name}")
 
         decompressed_array = phoenix_cache.decompress(
-            compressed_artifact_bytes, original_type_str
+            compressed_artifact_bytes
         )
 
         t3 = time.perf_counter()

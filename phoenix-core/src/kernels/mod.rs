@@ -9,11 +9,22 @@
 use serde_json::Value;
 use crate::error::PhoenixError;
 
+// Helper function to convert input bytes to a typed Vec<T>
+fn typed_vec_from_bytes<T: bytemuck::Pod>(input_bytes: &[u8]) -> Result<Vec<T>, PhoenixError> {
+    if input_bytes.len() % std::mem::size_of::<T>() != 0 {
+        return Err(PhoenixError::BufferMismatch(input_bytes.len(), std::mem::size_of::<T>()));
+    }
+    let slice: &[T] = bytemuck::try_cast_slice(input_bytes)
+        .map_err(|_| PhoenixError::BufferMismatch(input_bytes.len(), std::mem::size_of::<T>()))?;
+    Ok(slice.to_vec())
+}
+
 //==================================================================================
 // 1. Module Declarations
 //==================================================================================
 
 pub mod delta;
+pub mod xor_delta; // <-- NEW
 pub mod rle;
 pub mod zigzag;
 pub mod leb128;
@@ -60,9 +71,15 @@ pub fn dispatch_encode(
                 "UInt32" => safe_convert_and_exec!(u32, delta, output_buf, order),
                 "Int64" => safe_convert_and_exec!(i64, delta, output_buf, order),
                 "UInt64" => safe_convert_and_exec!(u64, delta, output_buf, order),
-                "Float32" => safe_convert_and_exec!(f32, delta, output_buf, order),
-                "Float64" => safe_convert_and_exec!(f64, delta, output_buf, order),
                 _ => Err(PhoenixError::UnsupportedType(type_str.to_string())),
+            }
+        },
+        // --- NEW DISPATCH ARM ---
+        "xor_delta" => {
+            match type_str {
+                "Int32" | "UInt32" => safe_convert_and_exec!(u32, xor_delta, output_buf),
+                "Int64" | "UInt64" => safe_convert_and_exec!(u64, xor_delta, output_buf),
+                _ => Err(PhoenixError::UnsupportedType(format!("XOR Delta not supported for {}", type_str))),
             }
         },
         "rle" => {
@@ -183,9 +200,15 @@ pub fn dispatch_decode(
                 "UInt32" => delta::decode::<u32>(input_bytes, output_buf, order),
                 "Int64" => delta::decode::<i64>(input_bytes, output_buf, order),
                 "UInt64" => delta::decode::<u64>(input_bytes, output_buf, order),
-                "Float32" => delta::decode::<f32>(input_bytes, output_buf, order),
-                "Float64" => delta::decode::<f64>(input_bytes, output_buf, order),
                 _ => Err(PhoenixError::UnsupportedType(type_str.to_string())),
+            }
+        },
+        // --- NEW DISPATCH ARM ---
+        "xor_delta" => {
+            match type_str {
+                "Int32" | "UInt32" => xor_delta::decode::<u32>(input_bytes, output_buf),
+                "Int64" | "UInt64" => xor_delta::decode::<u64>(input_bytes, output_buf),
+                _ => Err(PhoenixError::UnsupportedType(format!("XOR Delta not supported for {}", type_str))),
             }
         },
         "rle" => {
@@ -308,25 +331,6 @@ mod tests {
         dispatch_decode(&op_config, &compressed_buf, &mut decompressed_buf, "UInt32", original_data.len()).unwrap();
 
         assert_eq!(decompressed_buf, original_bytes);
-    }
-
-    #[test]
-    fn test_dispatch_float_to_delta_and_shuffle() {
-        let original_data: Vec<f64> = vec![10.0, 20.0, 5.0];
-        let original_bytes = typed_slice_to_bytes(&original_data);
-
-        // Test Delta
-        let delta_op = json!({"op": "delta", "params": {"order": 1}});
-        let mut delta_encoded = Vec::new();
-        dispatch_encode(&delta_op, &original_bytes, &mut delta_encoded, "Float64").unwrap();
-        assert!(!delta_encoded.is_empty());
-
-        // Test Shuffle
-        let shuffle_op = json!({"op": "shuffle"});
-        let mut shuffle_encoded = Vec::new();
-        dispatch_encode(&shuffle_op, &original_bytes, &mut shuffle_encoded, "Float64").unwrap();
-        assert!(!shuffle_encoded.is_empty());
-        assert_eq!(shuffle_encoded.len(), original_bytes.len());
     }
 
     #[test]
