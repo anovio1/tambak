@@ -37,3 +37,4 @@ phoenix-core/src-copy/**/*
 /*.mpk
 /*.zst
 /*.phx
+/*.parquet
