@@ -1,3 +1,4 @@
+import math
 import random
 import zstandard as zstd
 import pyarrow as pa
@@ -115,11 +116,25 @@ def run_compression_test(test_name: str, original_array: pa.Array):
         # The type string must match what the Rust dispatcher expects (e.g., "Int64")
         # We can derive this from the pyarrow type object.
         t2 = time.perf_counter()
-        original_type_str = str(original_array.type).capitalize().replace("t", "t")
+
+        RUST_TYPE_MAP = {
+            "int8": "Int8", "int16": "Int16", "int32": "Int32", "int64": "Int64",
+            "uint8": "UInt8", "uint16": "UInt16", "uint32": "UInt32", "uint64": "UInt64",
+            "float": "Float32",
+            "double": "Float64",
+            "bool": "Boolean",
+        }
+
+        type_name = str(original_array.type)
+        original_type_str = RUST_TYPE_MAP.get(type_name)
+
+        if original_type_str is None:
+            raise ValueError(f"Unsupported pyarrow type for phoenix_cache: {type_name}")
 
         decompressed_array = phoenix_cache.decompress(
             compressed_artifact_bytes, original_type_str
         )
+
         t3 = time.perf_counter()
         print("Decompression successful!")
         print(f"⏱ Decompression time: {(t3 - t2) * 1000:.2f} ms")
@@ -146,7 +161,7 @@ def run_compression_test(test_name: str, original_array: pa.Array):
 
         # Combine to compute max width
         all_strs = [str(val) for val in orig_values + decomp_values]
-        field_width = max(len(s) for s in all_strs)
+        field_width = max(len(s) for s in all_strs) if len(all_strs) > 0 else 5
 
         print("Original Array:")
         print(" ".join(f"{str(val):>{field_width}}" for val in orig_values))
@@ -233,3 +248,36 @@ if __name__ == "__main__":
     all_null_array = pa.array([None, None, None, None] * 100, type=pa.int16())
     run_compression_test("7_All-Null Array", all_null_array)
     run_zstd_only_test("ZSTD ONLY: 7_All-Null Array", small_array)
+
+    # --- Test Case 8: Smooth Float Time-Series (Ideal for Delta -> Shuffle) ---
+    # This data simulates sensor readings or stock prices. The values are highly
+    # correlated, so the deltas will be small. Shuffling the bytes of these small
+    # floats will create highly compressible streams.
+    N = 1_000_000
+    smooth_floats = [
+        None if i == 1000 or i == 500000 else
+        100.0 + math.sin(i / 50.0) * 10 + (random.random() - 0.5) * 0.1
+        for i in range(N)
+    ]
+    smooth_float_array = pa.array(smooth_floats, type=pa.float64())
+    run_compression_test("8_Smooth Float Time-Series (f64)", smooth_float_array)
+    run_zstd_only_test("ZSTD ONLY: 8_Smooth Float Time-Series (f64)", smooth_float_array)
+
+    # --- Test Case 9: Chaotic/Random Float Data (Pathological Case) ---
+    # This data has no correlation. The deltas will be large and random.
+    # We expect our pipeline to perform similarly to, or slightly worse than,
+    # raw Zstd, as our transforms won't find any structure to exploit.
+    chaotic_floats = [random.uniform(-1e6, 1e6) for _ in range(N)]
+    chaotic_float_array = pa.array(chaotic_floats, type=pa.float32())
+    run_compression_test("9_Chaotic Random Float Data (f32)", chaotic_float_array)
+    run_zstd_only_test("ZSTD ONLY: 9_Chaotic Random Float Data (f32)", chaotic_float_array)
+
+    # --- Test Case 10: Low Cardinality Float Data ---
+    # This tests how the pipeline handles data with very few unique values,
+    # such as categorical data represented as floats. The deltas will be mostly
+    # 0.0 or a few other constants, which should compress well after shuffling.
+    unique_float_values = [0.0, 100.5, -999.99, 42.42]
+    low_card_floats = [random.choice(unique_float_values) for _ in range(N)]
+    low_card_float_array = pa.array(low_card_floats, type=pa.float32())
+    run_compression_test("10_Low Cardinality Float Data (f32)", low_card_float_array)
+    run_zstd_only_test("ZSTD ONLY: 10_Low Cardinality Float Data (f32)", low_card_float_array)

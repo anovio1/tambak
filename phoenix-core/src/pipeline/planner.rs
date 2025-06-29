@@ -182,7 +182,19 @@ pub fn plan_pipeline(bytes: &[u8], original_type: &str) -> Result<String, Phoeni
         "Int16" => dispatch!(i16),
         "Int32" => dispatch!(i32),
         "Int64" => dispatch!(i64),
+        "Float32" | "Float64" => {
+            // For floats, we use a fixed, robust pipeline.
+            // No complex analysis is needed for our initial implementation.
+            let pipeline = vec![
+                json!({"op": "delta", "params": {"order": 1}}),
+                json!({"op": "shuffle"}),
+                json!({"op": "zstd", "params": {"level": 3}}),
+            ];
+            serde_json::to_string(&pipeline)
+                .map_err(|e| PhoenixError::UnsupportedType(e.to_string()))
+        },
         _ => {
+            // Fallback for Booleans, unsigned integers, etc.
             let pipeline = vec![json!({"op": "zstd", "params": {"level": 3}})];
             serde_json::to_string(&pipeline)
                 .map_err(|e| PhoenixError::UnsupportedType(e.to_string()))
@@ -286,6 +298,21 @@ mod tests {
             op_names,
             vec!["delta", "zigzag", "bitpack", "zstd"]
         );
+    }
+
+    fn test_plan_for_floats_is_delta_shuffle_zstd() {
+        let f64_data: Vec<f64> = vec![1.0, 2.0, 3.0];
+        let f64_bytes = typed_slice_to_bytes(&f64_data);
+        let f32_data: Vec<f32> = vec![1.0, 2.0, 3.0];
+        let f32_bytes = typed_slice_to_bytes(&f32_data);
+
+        let expected_ops = vec!["delta", "shuffle", "zstd"];
+
+        let f64_plan = plan_pipeline(&f64_bytes, "Float64").unwrap();
+        assert_eq!(get_op_names(&f64_plan), expected_ops);
+
+        let f32_plan = plan_pipeline(&f32_bytes, "Float32").unwrap();
+        assert_eq!(get_op_names(&f32_plan), expected_ops);
     }
 }
 // #[cfg(test)]

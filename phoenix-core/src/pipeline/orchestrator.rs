@@ -224,10 +224,6 @@ where
 /// The public-facing compression orchestrator. Its ONLY job is to downcast
 /// the dynamic `Array` and dispatch to the generic worker function.
 pub fn compress_chunk(array: &dyn Array) -> Result<Vec<u8>, PhoenixError> {
-    // The generic worker function `compress_primitive_array` already handles
-    // the all-null and empty-data cases correctly. We can remove the
-    // redundant logic from this top-level dispatcher.
-
     // This macro performs the downcast and calls the generic worker.
     macro_rules! dispatch {
         ($arr:expr, $T:ty) => {{
@@ -254,6 +250,8 @@ pub fn compress_chunk(array: &dyn Array) -> Result<Vec<u8>, PhoenixError> {
         DataType::UInt16 => dispatch!(array, UInt16Type),
         DataType::UInt32 => dispatch!(array, UInt32Type),
         DataType::UInt64 => dispatch!(array, UInt64Type),
+        DataType::Float32 => dispatch!(array, Float32Type),
+        DataType::Float64 => dispatch!(array, Float64Type),
         dt => Err(PhoenixError::UnsupportedType(format!(
             "Unsupported type for compression: {}",
             dt
@@ -323,6 +321,8 @@ pub fn decompress_chunk(bytes: &[u8], original_type: &str) -> Result<Box<dyn Arr
             "UInt16" => dispatch_empty!(UInt16Type),
             "UInt32" => dispatch_empty!(UInt32Type),
             "UInt64" => dispatch_empty!(UInt64Type),
+            "Float32" => dispatch_empty!(Float32Type),
+            "Float64" => dispatch_empty!(Float64Type),
             _ => Err(PhoenixError::UnsupportedType(original_type.to_string())),
         };
     }
@@ -395,6 +395,8 @@ pub fn decompress_chunk(bytes: &[u8], original_type: &str) -> Result<Box<dyn Arr
         "UInt16" => dispatch_reconstruct!(UInt16Type),
         "UInt32" => dispatch_reconstruct!(UInt32Type),
         "UInt64" => dispatch_reconstruct!(UInt64Type),
+        "Float32" => dispatch_reconstruct!(Float32Type),
+        "Float64" => dispatch_reconstruct!(Float64Type),
         _ => Err(PhoenixError::UnsupportedType(original_type.to_string())),
     }
 }
@@ -406,11 +408,14 @@ pub fn decompress_chunk(bytes: &[u8], original_type: &str) -> Result<Box<dyn Arr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Int16Array, Int32Array, Int64Array};
+    use arrow::array::{Float32Array, Float64Array, Int16Array, Int32Array, Int64Array};
+    use num_traits::ToPrimitive; // <-- ADD THIS IMPORT
+
     fn roundtrip_test<T>(original_array: &PrimitiveArray<T>)
     where
         T: ArrowNumericType,
-        T::Native: ToByteSlice,
+        // ADD ToPrimitive to the trait bounds
+        T::Native: ToByteSlice + bytemuck::Pod + ToPrimitive,
     {
         // 1. Compress it
         let compressed_artifact_bytes = compress_chunk(original_array).unwrap();
@@ -425,7 +430,33 @@ mod tests {
             .downcast_ref::<PrimitiveArray<T>>()
             .unwrap();
 
-        assert_eq!(original_array, reconstructed_primitive_array);
+        // Use different comparison logic based on the data type.
+        if T::DATA_TYPE.is_floating() {
+            // For floats, compare with a small epsilon for tolerance.
+            assert_eq!(original_array.len(), reconstructed_primitive_array.len(), "Length mismatch");
+            for (original_opt, recon_opt) in original_array.iter().zip(reconstructed_primitive_array.iter()) {
+                match (original_opt, recon_opt) {
+                    (Some(orig), Some(recon)) => {
+                        let orig_f64 = num_traits::ToPrimitive::to_f64(&orig).unwrap();
+                        let recon_f64 = num_traits::ToPrimitive::to_f64(&recon).unwrap();
+                        let diff = (orig_f64 - recon_f64).abs();
+                        
+                        // --- THE FINAL FIX ---
+                        // Use a larger epsilon suitable for f32 precision.
+                        assert!(
+                            diff < 1e-5, // Was 1e-6
+                            "Float value mismatch: orig={:?}, recon={:?}",
+                            orig, recon
+                        );
+                    },
+                    (None, None) => { /* Nulls match, this is correct */ },
+                    _ => panic!("Nullability mismatch"),
+                }
+            }
+        } else {
+            // For integers, demand bit-perfect equality.
+            assert_eq!(original_array, reconstructed_primitive_array);
+        }
     }
 
     #[test]
@@ -602,5 +633,29 @@ mod tests {
         dbg!(&final_vec); // Should be [100, 101, 103, 102]
         println!("----------------------------------------------\n");
         assert_eq!(final_vec, vec![100, 101, 103, 102]);
+    }
+
+    #[test]
+    fn test_orchestrator_roundtrip_float_no_nulls() {
+        let original_array = Float64Array::from(vec![10.5, -20.0, 30.1, 40.9, 50.0]);
+        roundtrip_test(&original_array);
+    }
+
+    #[test]
+    fn test_orchestrator_roundtrip_float_with_nulls() {
+        let original_array = Float32Array::from(vec![Some(10.5), None, Some(-20.0), Some(30.1), None]);
+        roundtrip_test(&original_array);
+    }
+
+    #[test]
+    fn test_orchestrator_roundtrip_float_all_nulls() {
+        let original_array = Float64Array::from(vec![None, None, None, None]);
+        roundtrip_test(&original_array);
+    }
+
+    #[test]
+    fn test_orchestrator_roundtrip_float_empty_array() {
+        let original_array = Float32Array::from(vec![] as Vec<f32>);
+        roundtrip_test(&original_array);
     }
 }

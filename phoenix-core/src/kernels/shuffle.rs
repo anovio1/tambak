@@ -5,7 +5,6 @@
 //! row-oriented byte stream into a column-oriented or "byte-plane" layout.
 //! This module is PURE RUST, panic-free, and uses `bytemuck` for safe casting.
 
-use num_traits::PrimInt;
 use bytemuck;
 
 use crate::error::PhoenixError;
@@ -17,15 +16,14 @@ use crate::error::PhoenixError;
 /// Performs byte-shuffling on a slice of primitive integers, writing to an output buffer.
 fn shuffle_slice<T>(input_slice: &[T], output_buf: &mut Vec<u8>) -> Result<(), PhoenixError>
 where
-    T: PrimInt + bytemuck::Pod,
+    // MODIFIED: Remove PrimInt, Pod is sufficient.
+    T: bytemuck::Pod,
 {
     let element_size = std::mem::size_of::<T>();
     if element_size <= 1 {
         output_buf.clear();
-        output_buf.reserve(input_slice.len());
-        for item in input_slice {
-            output_buf.extend_from_slice(bytemuck::bytes_of(item));
-        }
+        // Use bytemuck::cast_slice to safely convert the slice to bytes.
+        output_buf.extend_from_slice(bytemuck::cast_slice(input_slice));
         return Ok(());
     }
 
@@ -46,7 +44,8 @@ where
 /// Performs byte-unshuffling on a byte slice, writing to an output buffer.
 fn unshuffle_slice<T>(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), PhoenixError>
 where
-    T: PrimInt,
+    // MODIFIED: Remove PrimInt, Pod is sufficient and safer.
+    T: bytemuck::Pod,
 {
     let element_size = std::mem::size_of::<T>();
     if element_size <= 1 {
@@ -83,7 +82,8 @@ pub fn encode<T>(
     output_buf: &mut Vec<u8>,
 ) -> Result<(), PhoenixError>
 where
-    T: PrimInt + bytemuck::Pod,
+    // MODIFIED: Remove PrimInt.
+    T: bytemuck::Pod,
 {
     shuffle_slice(input_slice, output_buf)
 }
@@ -94,7 +94,8 @@ pub fn decode<T>(
     output_buf: &mut Vec<u8>,
 ) -> Result<(), PhoenixError>
 where
-    T: PrimInt,
+    // MODIFIED: Remove PrimInt.
+    T: bytemuck::Pod,
 {
     unshuffle_slice::<T>(input_bytes, output_buf)
 }
@@ -115,6 +116,7 @@ mod tests {
         let mut encoded_bytes = Vec::new();
         encode(&original, &mut encoded_bytes).unwrap();
 
+        // Assuming little-endian for test consistency
         let expected_encoded: Vec<u8> = vec![0x02, 0x04, 0x06, 0x01, 0x03, 0x05];
         assert_eq!(encoded_bytes, expected_encoded);
 
@@ -149,5 +151,25 @@ mod tests {
         if let Err(e) = result {
             assert!(matches!(e, PhoenixError::BufferMismatch(7, 2)));
         }
+    }
+
+    #[test]
+    fn test_shuffle_roundtrip_f32() {
+        let original: Vec<f32> = vec![10.0, 20.0]; // 0x41200000, 0x41a00000
+        let original_as_bytes = typed_slice_to_bytes(&original);
+
+        let mut encoded_bytes = Vec::new();
+        encode(&original, &mut encoded_bytes).unwrap();
+
+        // Manually calculated expected shuffle for little-endian
+        // [10.0f32].to_le_bytes() -> [00, 00, 20, 41]
+        // [20.0f32].to_le_bytes() -> [00, 00, a0, 41]
+        // Shuffled: [byte0s, byte1s, byte2s, byte3s]
+        let expected_encoded: Vec<u8> = vec![0x00, 0x00, 0x00, 0x00, 0x20, 0xa0, 0x41, 0x41];
+        assert_eq!(encoded_bytes, expected_encoded);
+
+        let mut decoded_bytes = Vec::new();
+        decode::<f32>(&encoded_bytes, &mut decoded_bytes).unwrap();
+        assert_eq!(decoded_bytes, original_as_bytes);
     }
 }
