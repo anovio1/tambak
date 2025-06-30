@@ -85,6 +85,9 @@ where
         let decoded_val = decode_val(value);
         output_buf.extend_from_slice(bytemuck::bytes_of(&decoded_val));
     }
+    
+    #[cfg(debug_assertions)]
+    println!("[ZIGZAG DECODE INPUT] First 5 values from shuffle: {:?}", &output_buf.get(0..5));
     Ok(())
 }
 

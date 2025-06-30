@@ -156,11 +156,12 @@ pub fn execute_compress_pipeline(
 ///
 /// This function is more complex than compression because it must reconstruct the
 /// type of the data at each stage of the reversed pipeline.
+
+// This function replaces the existing one in `src/pipeline/executor.rs`
+
 pub fn execute_decompress_pipeline(
     bytes: &[u8],
-    // This is the type of the data *before* the first decompression step.
-    // For floats, this will be UInt32/UInt64. For integers, it's the original type.
-    intermediate_type: &str,
+    intermediate_type: &str, // This is the type AFTER the last ENCODE op
     pipeline_json: &str,
     num_values: usize,
 ) -> Result<Vec<u8>, PhoenixError> {
@@ -171,46 +172,53 @@ pub fn execute_decompress_pipeline(
         return Ok(bytes.to_vec());
     }
 
-    // --- The Type Stack ---
-    // To decode in reverse, we must know the input type for each kernel.
-    // We reconstruct this by simulating the type transformations of the forward pass.
-    let mut type_stack: Vec<String> = Vec::with_capacity(pipeline.len());
-    let mut current_type = intermediate_type.to_string();
-    for op_config in pipeline.iter() {
-        type_stack.push(current_type.clone());
-        if let Some(op_name) = op_config["op"].as_str() {
-            if op_name == "zigzag" {
-                current_type = current_type.replace("UInt", "Int");
+    // --- START: Your Superior Two-Phase Type Stack Logic ---
+
+    // 1. Deduce the original, uncompressed data type by "undoing" the type changes.
+    let mut original_type = intermediate_type.to_string();
+    for op_config in pipeline.iter().rev() {
+        if let Some("zigzag") = op_config["op"].as_str() {
+            if original_type.starts_with("UInt") {
+                original_type = original_type.replace("UInt", "Int");
             }
         }
     }
+
+    // 2. Build the stack by simulating the FORWARD compression process from the correct start.
+    let mut type_stack: Vec<String> = Vec::with_capacity(pipeline.len());
+    let mut current_type = original_type;
+    for op_config in pipeline.iter() {
+        type_stack.push(current_type.clone());
+        if let Some("zigzag") = op_config["op"].as_str() {
+            if current_type.starts_with("Int") {
+                current_type = current_type.replace("Int", "UInt");
+            }
+        }
+    }
+    // The final `type_stack` now correctly represents the input type for each encoding stage.
+
+    // --- END: Two-Phase Type Stack Logic ---
 
     let mut buffer_a = bytes.to_vec();
     let mut buffer_b = Vec::with_capacity(bytes.len() * 2);
     let mut input_buf = &mut buffer_a;
     let mut output_buf = &mut buffer_b;
 
-    // Execute the pipeline in reverse.
+    // DECODE by walking the pipeline and type stack in reverse
     for op_config in pipeline.iter().rev() {
-        // Get the correct type for this stage from our pre-built stack.
         let type_for_decode = type_stack.pop().ok_or_else(|| {
             PhoenixError::InternalError("Type stack desync during decompression".to_string())
         })?;
 
         output_buf.clear();
-        kernels::dispatch_decode(
-            op_config,
-            input_buf,
-            output_buf,
-            &type_for_decode,
-            num_values,
-        )?;
+        // The `type_for_decode` is the type we want to get back, which is exactly
+        // what the dispatcher needs to select the correct generic implementation.
+        kernels::dispatch_decode(op_config, input_buf, output_buf, &type_for_decode, num_values)?;
         std::mem::swap(&mut input_buf, &mut output_buf);
     }
 
     Ok(input_buf.to_vec())
 }
-
 //==================================================================================
 // 2. Unit Tests
 //==================================================================================
@@ -311,7 +319,7 @@ mod tests {
 
         assert_eq!(result_vec, &[200, 2, 4, 1]);
     }
-    
+
     #[test]
     fn checkpoint_07_after_zigzag() {
         let data: Vec<i16> = vec![100, 1, 2, -1]; // Output from previous step
@@ -324,7 +332,7 @@ mod tests {
         println!("-----------------------------------\n");
         assert_eq!(result_vec, vec![200, 2, 4, 1]);
     }
-    
+
     #[test]
     fn checkpoint_09_after_bitpack() {
         // NOTE: Shuffle output is raw bytes, bitpack input is typed.

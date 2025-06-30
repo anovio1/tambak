@@ -77,7 +77,7 @@ pub fn encode<T: Eq + Hash + Clone + Pod>(
 /// # Returns
 /// An empty `Result` on success, or a `PhoenixError` if the buffer is corrupt
 /// or malformed.
-pub fn decode<T: Clone + Pod>(
+pub fn decode<T: Copy + Pod>( // Keep Copy trait bound for now
     input_bytes: &[u8],
     output_buf: &mut Vec<u8>,
     num_values: usize,
@@ -90,34 +90,55 @@ pub fn decode<T: Clone + Pod>(
     let element_size = std::mem::size_of::<T>();
     let u32_size = std::mem::size_of::<u32>();
 
-    // 1. Deserialize Dictionary Length
-    let dict_len_bytes = input_bytes.get(0..u32_size).ok_or_else(|| {
-        PhoenixError::DictionaryError("Truncated header: cannot read dictionary length".to_string())
-    })?;
-    let dict_len = u32::from_le_bytes(dict_len_bytes.try_into().unwrap()) as usize;
+    // --- Parsing Dictionary Length (This part is fine) ---
+    let mut cursor = 0;
+    let dict_len_bytes: [u8; 4] = input_bytes
+        .get(cursor..cursor + u32_size)
+        .and_then(|slice| slice.try_into().ok())
+        .ok_or_else(|| PhoenixError::DictionaryError("Truncated header: cannot read dictionary length".to_string()))?;
+    let dict_len = u32::from_le_bytes(dict_len_bytes) as usize;
+    cursor += u32_size;
 
-    // 2. Deserialize Dictionary
+    // --- DICTIONARY DESERIALIZATION: THE BULLETPROOF FIX ---
     let dict_bytes_len = dict_len * element_size;
-    let dict_start = u32_size;
-    let dict_end = dict_start + dict_bytes_len;
     let dict_bytes = input_bytes
-        .get(dict_start..dict_end)
+        .get(cursor..cursor + dict_bytes_len)
         .ok_or_else(|| PhoenixError::DictionaryError("Truncated dictionary data".to_string()))?;
+    cursor += dict_bytes_len;
 
-    // --- THIS IS THE FIX ---
-    // Replace the manual .chunks_exact().map(...) with a single, robust cast.
-    // This is the idiomatic and safe way to perform this conversion with bytemuck.
-    let dictionary: &[T] = try_cast_slice(dict_bytes)
-        .map_err(|e| PhoenixError::DictionaryError(format!("Corrupt dictionary data: {}", e)))?;
-    // --- END FIX ---
+    let mut dictionary = Vec::with_capacity(dict_len);
+    for chunk in dict_bytes.chunks_exact(element_size) {
+        // Create a default-initialized value of T on the stack.
+        // The stack is guaranteed to be aligned correctly for T.
+        let mut value = T::zeroed(); 
+        unsafe {
+            // Get a mutable pointer to our stack-allocated, aligned value.
+            let dest_ptr = &mut value as *mut T as *mut u8;
+            // Get a pointer to the (potentially unaligned) source bytes.
+            let src_ptr = chunk.as_ptr();
+            // Perform a raw, but safe, memory copy.
+            std::ptr::copy_nonoverlapping(src_ptr, dest_ptr, element_size);
+        }
+        dictionary.push(value);
+    }
 
-    // 3. Deserialize Indices
-    let indices_start = dict_end;
+    // --- INDICES DESERIALIZATION: THE BULLETPROOF FIX ---
     let indices_bytes = input_bytes
-        .get(indices_start..)
+        .get(cursor..)
         .ok_or_else(|| PhoenixError::DictionaryError("Missing indices data".to_string()))?;
-    let indices: &[u32] = bytemuck::try_cast_slice(indices_bytes)
-        .map_err(|e| PhoenixError::DictionaryError(format!("Corrupt indices data: {}", e)))?;
+    
+    if indices_bytes.len() % u32_size != 0 {
+        return Err(PhoenixError::DictionaryError(
+            "Corrupt indices data: length not a multiple of 4".to_string(),
+        ));
+    }
+    
+    let mut indices = Vec::with_capacity(indices_bytes.len() / u32_size);
+    for chunk in indices_bytes.chunks_exact(u32_size) {
+        let value = u32::from_le_bytes(chunk.try_into().unwrap());
+        indices.push(value);
+    }
+    // --- END FIX ---
 
     if indices.len() != num_values {
         return Err(PhoenixError::DictionaryError(format!(
@@ -127,9 +148,8 @@ pub fn decode<T: Clone + Pod>(
         )));
     }
 
-    // 4. Reconstruct Original Data
     output_buf.reserve(num_values * element_size);
-    for &index in indices {
+    for &index in &indices {
         let value = dictionary.get(index as usize).ok_or_else(|| {
             PhoenixError::DictionaryError(format!(
                 "Invalid dictionary index: {} (dictionary size is {})",

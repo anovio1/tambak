@@ -45,5 +45,6 @@ pub use self::planner::{
 };
 
 pub use self::profiler::{
-    PlannerHints
+    PlannerHints,
+    find_stride_by_autocorrelation
 };

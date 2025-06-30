@@ -11,6 +11,8 @@ use ndarray::{s, Array1};
 
 use crate::error::PhoenixError;
 use crate::log_metric;
+use crate::utils::{safe_bytes_to_typed_slice};
+use num_traits::ToPrimitive;
 
 /// A struct to hold user-provided hints that guide the planning process.
 #[derive(Debug, Clone)]
@@ -56,7 +58,7 @@ pub fn discover_structure(
         // We need a minimum amount of data for the analysis to be meaningful.
         const MIN_DATA_POINTS: usize = 100;
         if sample.len() > MIN_DATA_POINTS {
-            if let Some(stride) = find_stride_by_autocorrelation(&sample) {
+            if let Some(stride) = calculate_autocorrelation(&sample) {
                 // A stride of 1 is not a useful pattern, it's just normal correlation.
                 if stride > 1 {
                     log_metric!("event"="discover_structure", "outcome"="FixedStride", "stride"=&stride);
@@ -76,33 +78,79 @@ pub fn discover_structure(
 /// # Returns
 /// `Some(stride)` if a significant correlation is found for a specific lag,
 /// otherwise `None`.
-fn find_stride_by_autocorrelation(data: &[f64]) -> Option<usize> {
-    let n = data.len();
-    let data_arr = Array1::from_vec(data.to_vec());
-    let mean = data_arr.mean()?; // ndarray's mean returns None for empty data
-    let centered_data = data_arr - mean;
-
-    let variance = centered_data.dot(&centered_data);
-    if variance == 0.0 {
-        // Data is constant, no stride to be found.
-        return None;
+// This is the NEW public-facing function that the planner will call.
+pub fn find_stride_by_autocorrelation(
+    bytes: &[u8],
+    type_str: &str,
+) -> Result<usize, PhoenixError> {
+    // --- START: CORRECTED MACROS ---
+    // Helper macro for SIGNED integers
+    macro_rules! signed_to_f64_vec {
+        ($T:ty) => {{
+            safe_bytes_to_typed_slice::<$T>(bytes)?
+                .iter()
+                .map(|&x| x.to_i64().unwrap_or(0) as f64) // Step 1: to_i64, Step 2: as f64
+                .collect::<Vec<f64>>()
+        }};
     }
 
+    // Helper macro for UNSIGNED integers
+    macro_rules! unsigned_to_f64_vec {
+        ($T:ty) => {{
+            safe_bytes_to_typed_slice::<$T>(bytes)?
+                .iter()
+                .map(|&x| x.to_u64().unwrap_or(0) as f64) // Step 1: to_u64, Step 2: as f64
+                .collect::<Vec<f64>>()
+        }};
+    }
+    // --- END: CORRECTED MACROS ---
+
+    let data_f64 = match type_str {
+        "Int8" => signed_to_f64_vec!(i8),
+        "Int16" => signed_to_f64_vec!(i16),
+        "Int32" => signed_to_f64_vec!(i32),
+        "Int64" => signed_to_f64_vec!(i64),
+        "UInt8" => unsigned_to_f64_vec!(u8),
+        "UInt16" => unsigned_to_f64_vec!(u16),
+        "UInt32" => unsigned_to_f64_vec!(u32),
+        "UInt64" => unsigned_to_f64_vec!(u64),
+        // For floats, we can cast directly.
+        "Float32" => safe_bytes_to_typed_slice::<f32>(bytes)?
+            .iter()
+            .map(|&x| x as f64)
+            .collect(),
+        "Float64" => safe_bytes_to_typed_slice::<f64>(bytes)?.to_vec(),
+        _ => return Ok(1), // Default to stride 1 if type is not numeric
+    };
+
+    // Call the statistical engine and return its result, or a default stride of 1.
+    Ok(calculate_autocorrelation(&data_f64).unwrap_or(1))
+}
+
+// The private `calculate_autocorrelation` function remains unchanged.
+fn calculate_autocorrelation(data: &[f64]) -> Option<usize> {
+    // ... same implementation as before ...
+    let n = data.len();
+    if n < 8 {
+        return None;
+    }
+    let data_arr = Array1::from_vec(data.to_vec());
+    let mean = data_arr.mean()?;
+    let centered_data = data_arr - mean;
+    let variance = centered_data.dot(&centered_data);
+    if variance < 1e-9 {
+        return None;
+    }
     let mut best_lag = 0;
     let mut max_corr = -1.0;
-
-    // Check for lags from 2 up to a reasonable limit (e.g., n/4).
-    // A lag of 1 is trivial, so we start at 2.
-    for lag in 2..(n / 4).max(3) {
+    let upper_bound = (n / 4).max(3).min(256);
+    for lag in 2..upper_bound {
         let acf = centered_data.slice(s![..n - lag]).dot(&centered_data.slice(s![lag..]));
         if acf > max_corr {
             max_corr = acf;
             best_lag = lag;
         }
     }
-
-    // A simple threshold to determine if the correlation is significant enough
-    // to be considered a real pattern. This is a tunable heuristic.
     const CORRELATION_THRESHOLD: f64 = 0.25;
     if (max_corr / variance) > CORRELATION_THRESHOLD {
         Some(best_lag)

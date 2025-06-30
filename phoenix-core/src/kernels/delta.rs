@@ -63,6 +63,7 @@ where
     // MODIFIED: Propagate generalized trait bound.
     T: Copy + bytemuck::Pod + std::ops::Sub<Output = T>,
 {
+    output_buf.clear();
     // 1. Create a mutable copy. This is the one necessary allocation to enable
     //    the fast in-place algorithm while respecting the immutable input slice.
     let mut data_vec = input_slice.to_vec();
@@ -86,8 +87,12 @@ pub fn decode<T>(
 where
     T: Copy + bytemuck::Pod + std::ops::Add<Output = T>,
 {
+    output_buf.clear();
     if input_bytes.len() % std::mem::size_of::<T>() != 0 {
-        return Err(PhoenixError::BufferMismatch(input_bytes.len(), std::mem::size_of::<T>()));
+        return Err(PhoenixError::BufferMismatch(
+            input_bytes.len(),
+            std::mem::size_of::<T>(),
+        ));
     }
     let mut data_vec: Vec<T> = input_bytes
         .chunks_exact(std::mem::size_of::<T>())
