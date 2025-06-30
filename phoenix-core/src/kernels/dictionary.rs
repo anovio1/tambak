@@ -5,10 +5,10 @@
 //! creating a "dictionary" of the unique values and replacing the data itself
 //! with a much smaller stream of indices pointing to the dictionary entries.
 
-use bytemuck::{Pod, from_bytes, bytes_of};
+use crate::error::PhoenixError;
+use bytemuck::{bytes_of, from_bytes, try_cast_slice, Pod};
 use std::collections::HashMap;
 use std::hash::Hash;
-use crate::error::PhoenixError;
 
 /// Encodes a slice of primitive data using dictionary encoding.
 ///
@@ -91,41 +91,56 @@ pub fn decode<T: Clone + Pod>(
     let u32_size = std::mem::size_of::<u32>();
 
     // 1. Deserialize Dictionary Length
-    let dict_len_bytes = input_bytes.get(0..u32_size)
-        .ok_or_else(|| PhoenixError::DictionaryError("Truncated header: cannot read dictionary length".to_string()))?;
+    let dict_len_bytes = input_bytes.get(0..u32_size).ok_or_else(|| {
+        PhoenixError::DictionaryError("Truncated header: cannot read dictionary length".to_string())
+    })?;
     let dict_len = u32::from_le_bytes(dict_len_bytes.try_into().unwrap()) as usize;
 
     // 2. Deserialize Dictionary
     let dict_bytes_len = dict_len * element_size;
     let dict_start = u32_size;
     let dict_end = dict_start + dict_bytes_len;
-    let dict_bytes = input_bytes.get(dict_start..dict_end)
+    let dict_bytes = input_bytes
+        .get(dict_start..dict_end)
         .ok_or_else(|| PhoenixError::DictionaryError("Truncated dictionary data".to_string()))?;
-    
-    let dictionary: Vec<T> = dict_bytes.chunks_exact(element_size).map(|b| *from_bytes(b)).collect();
+
+    // --- THIS IS THE FIX ---
+    // Replace the manual .chunks_exact().map(...) with a single, robust cast.
+    // This is the idiomatic and safe way to perform this conversion with bytemuck.
+    let dictionary: &[T] = try_cast_slice(dict_bytes)
+        .map_err(|e| PhoenixError::DictionaryError(format!("Corrupt dictionary data: {}", e)))?;
+    // --- END FIX ---
 
     // 3. Deserialize Indices
     let indices_start = dict_end;
-    let indices_bytes = input_bytes.get(indices_start..)
+    let indices_bytes = input_bytes
+        .get(indices_start..)
         .ok_or_else(|| PhoenixError::DictionaryError("Missing indices data".to_string()))?;
     let indices: &[u32] = bytemuck::try_cast_slice(indices_bytes)
         .map_err(|e| PhoenixError::DictionaryError(format!("Corrupt indices data: {}", e)))?;
 
     if indices.len() != num_values {
-        return Err(PhoenixError::DictionaryError(format!("Expected {} values, but found {} indices", num_values, indices.len())));
+        return Err(PhoenixError::DictionaryError(format!(
+            "Expected {} values, but found {} indices",
+            num_values,
+            indices.len()
+        )));
     }
 
     // 4. Reconstruct Original Data
     output_buf.reserve(num_values * element_size);
     for &index in indices {
-        let value = dictionary.get(index as usize)
-            .ok_or_else(|| PhoenixError::DictionaryError(format!("Invalid dictionary index: {} (dictionary size is {})", index, dict_len)))?;
+        let value = dictionary.get(index as usize).ok_or_else(|| {
+            PhoenixError::DictionaryError(format!(
+                "Invalid dictionary index: {} (dictionary size is {})",
+                index, dict_len
+            ))
+        })?;
         output_buf.extend_from_slice(bytes_of(value));
     }
 
     Ok(())
 }
-
 
 //==================================================================================
 // 3. Unit Tests
@@ -219,7 +234,7 @@ mod tests {
         encode(&original, &mut encoded).unwrap();
         // Manually corrupt the index to be out of bounds
         let len = encoded.len();
-        encoded[len-4..].copy_from_slice(&5u32.to_le_bytes()); // Set index to 5
+        encoded[len - 4..].copy_from_slice(&5u32.to_le_bytes()); // Set index to 5
         let err = decode::<i32>(&encoded, &mut decoded_bytes, 1).unwrap_err();
         assert!(matches!(err, PhoenixError::DictionaryError(_)));
         assert!(err.to_string().contains("Invalid dictionary index: 5"));

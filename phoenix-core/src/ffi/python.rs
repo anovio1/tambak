@@ -4,10 +4,10 @@
 use arrow::array::{make_array, ArrayData, RecordBatch};
 use pyo3::prelude::*;
 // use polars::prelude::{Series, PolarsDataType};
-use arrow::pyarrow::FromPyArrow;
+use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 // use pyo3_polars::PyDataFrame
 use crate::error::PhoenixError;
-use crate::pipeline::{get_compressed_chunk_info, orchestrator, planner, PlannerHints};
+use crate::pipeline::{frame_orchestrator, get_compressed_chunk_info, orchestrator, planner, PlannerHints};
 use crate::utils;
 use pyo3::types::{PyBytes, PyDict, PyString};
 
@@ -101,7 +101,7 @@ pub fn compress_frame_py<'py>(
     };
 
     let compressed_vec = py.allow_threads(move || {
-        orchestrator::compress_frame(&rust_batch, &rust_hints)
+        frame_orchestrator::compress_frame(&rust_batch, &rust_hints)
     })?;
 
     Ok(PyBytes::new(py, &compressed_vec))
@@ -109,12 +109,12 @@ pub fn compress_frame_py<'py>(
 
 #[pyfunction]
 pub fn decompress_frame_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
-    let batch = py.allow_threads(move || orchestrator::decompress_frame(bytes))?;
+    let batch = py.allow_threads(move || frame_orchestrator::decompress_frame(bytes))?;
     batch.to_pyarrow(py)
 }
 
 #[pyfunction]
 pub fn get_frame_diagnostics_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
-    let diagnostics_json = orchestrator::get_frame_diagnostics(bytes)?;
+    let diagnostics_json = frame_orchestrator::get_frame_diagnostics(bytes)?;
     Ok(PyString::new(py, &diagnostics_json).into())
 }

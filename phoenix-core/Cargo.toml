@@ -38,6 +38,7 @@ zstd = "0.13"
 # This is still needed to solve a known low-level compilation error in polars-core v0.37.0
 chrono = "= 0.4.39"
 hashbrown = { version = "0.14", features = ["raw"] }
+rand = "0.9.1"
 
 [profile.release]
 panic = "abort"

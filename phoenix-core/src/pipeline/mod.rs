@@ -8,6 +8,8 @@
 // 1. Module Declarations
 //==================================================================================
 
+mod artifact;
+
 /// The "General Contractor": Manages the end-to-end workflow, including null handling.
 pub mod orchestrator;
 pub mod frame_orchestrator;
@@ -18,6 +20,7 @@ pub mod planner;
 /// The "Foreman": Executes a given compression/decompression plan.
 pub mod executor;
 
+pub mod relinearize;
 pub mod profiler;
 
 //==================================================================================
@@ -29,9 +32,12 @@ pub mod profiler;
 pub use self::orchestrator::{
     compress_chunk,
     decompress_chunk,
+    get_compressed_chunk_info,
+};
+
+pub use self::frame_orchestrator::{
     compress_frame,
     decompress_frame,
-    get_compressed_chunk_info,
 };
 
 pub use self::planner::{

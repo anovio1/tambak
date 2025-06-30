@@ -12,40 +12,33 @@ use crate::error::PhoenixError;
 use crate::kernels; // The executor's only dependency is the top-level kernels module.
 
 //==================================================================================
-// 1. Pipeline Execution Logic (REVISED - Type-Aware)
+// 1. Pipeline Execution Logic
 //==================================================================================
 
 /// Executes a compression pipeline using a memory-efficient buffer-swapping strategy.
 ///
 /// This function takes a raw byte buffer and a pipeline definition, then
-/// sequentially calls the `kernels::dispatch_encode` function for each step,
-/// swapping between two pre-allocated buffers to avoid allocations in the hot loop.
-///
-/// # Args
-/// * `bytes`: The raw, validity-stripped byte buffer of the original data.
-/// * `original_type`: The string representation of the data's type (e.g., "Int64").
-/// * `pipeline_json`: A JSON string representing a `List[PipelineOperation]`.
-///
-/// # Returns
-/// A `Result` containing the fully compressed byte vector.
+/// sequentially calls the `kernels::dispatch_encode` function for each step.
+/// It tracks the logical type of the data as it passes through the pipeline.
 pub fn execute_compress_pipeline(
     bytes: &[u8],
     original_type: &str,
     pipeline_json: &str,
 ) -> Result<Vec<u8>, PhoenixError> {
     let pipeline: Vec<Value> = serde_json::from_str(pipeline_json)
-        .map_err(|e| PhoenixError::UnsupportedType(format!("Invalid pipeline JSON: {}", e)))?;
+        .map_err(|e| PhoenixError::InternalError(format!("Invalid pipeline JSON: {}", e)))?;
 
     if pipeline.is_empty() {
         return Ok(bytes.to_vec());
     }
 
     let mut buffer_a = bytes.to_vec();
-    let mut buffer_b = Vec::with_capacity(buffer_a.len()); // Initial capacity
+    let mut buffer_b = Vec::with_capacity(buffer_a.len());
 
     let mut input_buf = &mut buffer_a;
     let mut output_buf = &mut buffer_b;
 
+    // This is the key to the v4.0 executor: tracking the data's logical type.
     let mut current_type = original_type.to_string();
 
     for op_config in pipeline.iter() {
@@ -126,25 +119,15 @@ pub fn execute_compress_pipeline(
 
         output_buf.clear();
 
-        // The executor's ONLY job is to call the dispatcher.
-        // The dispatcher handles all the type casting and kernel-specific logic.
         kernels::dispatch_encode(op_config, input_buf, output_buf, &current_type)?;
 
-        // --- THE FIX: Robust type transformation logic ---
         // After an operation, update the current type of the data in the buffer.
+        // This is critical for transforms that change the data's signedness.
         if let Some(op_name) = op_config["op"].as_str() {
-            match op_name {
-                // The orchestrator performs the Float->UInt conversion *before* the executor,
-                // so the executor starts with UInt32/UInt64 for floats.
-                // `xor_delta` and `delta` on unsigned types keep them unsigned.
-                "xor_delta" => { /* Type remains UInt* */ }
-                "delta" => { /* Type remains Int* or UInt* */ }
-                // `zigzag` is the only op that changes the signedness.
-                "zigzag" => {
-                    current_type = current_type.replace("Int", "UInt");
-                }
-                _ => { /* Other ops don't change the type */ }
+            if op_name == "zigzag" {
+                current_type = current_type.replace("Int", "UInt");
             }
+            // Other ops (delta, rle, etc.) do not change the fundamental type.
         }
 
         #[cfg(debug_assertions)]
@@ -170,31 +153,36 @@ pub fn execute_compress_pipeline(
 }
 
 /// Executes a decompression pipeline in reverse order using buffer-swapping.
+///
+/// This function is more complex than compression because it must reconstruct the
+/// type of the data at each stage of the reversed pipeline.
 pub fn execute_decompress_pipeline(
     bytes: &[u8],
-    // REVISED: This is now the INTERMEDIATE type (e.g., UInt32 for a Float32 artifact)
+    // This is the type of the data *before* the first decompression step.
+    // For floats, this will be UInt32/UInt64. For integers, it's the original type.
     intermediate_type: &str,
     pipeline_json: &str,
     num_values: usize,
 ) -> Result<Vec<u8>, PhoenixError> {
     let pipeline: Vec<Value> = serde_json::from_str(pipeline_json)
-        .map_err(|e| PhoenixError::UnsupportedType(format!("Invalid pipeline JSON: {}", e)))?;
+        .map_err(|e| PhoenixError::InternalError(format!("Invalid pipeline JSON: {}", e)))?;
 
     if pipeline.is_empty() {
         return Ok(bytes.to_vec());
     }
 
-    // --- THE FIX: Reconstruct the type stack by simulating the forward pass ---
-    let mut type_stack: Vec<String> = vec![intermediate_type.to_string()];
-    for op_config in pipeline.iter().take(pipeline.len().saturating_sub(1)) {
-        let last_type = type_stack.last().unwrap();
-        let mut next_type = last_type.clone();
+    // --- The Type Stack ---
+    // To decode in reverse, we must know the input type for each kernel.
+    // We reconstruct this by simulating the type transformations of the forward pass.
+    let mut type_stack: Vec<String> = Vec::with_capacity(pipeline.len());
+    let mut current_type = intermediate_type.to_string();
+    for op_config in pipeline.iter() {
+        type_stack.push(current_type.clone());
         if let Some(op_name) = op_config["op"].as_str() {
             if op_name == "zigzag" {
-                next_type = last_type.replace("Int", "UInt");
+                current_type = current_type.replace("UInt", "Int");
             }
         }
-        type_stack.push(next_type);
     }
 
     let mut buffer_a = bytes.to_vec();
@@ -202,7 +190,9 @@ pub fn execute_decompress_pipeline(
     let mut input_buf = &mut buffer_a;
     let mut output_buf = &mut buffer_b;
 
+    // Execute the pipeline in reverse.
     for op_config in pipeline.iter().rev() {
+        // Get the correct type for this stage from our pre-built stack.
         let type_for_decode = type_stack.pop().ok_or_else(|| {
             PhoenixError::InternalError("Type stack desync during decompression".to_string())
         })?;
@@ -237,7 +227,7 @@ mod tests {
         let original_type = "Int64";
         let num_values = original_data.len();
 
-        // A valid plan generated by our new planner for signed integers.
+        // A valid plan generated by our planner for signed integers.
         let pipeline_json = r#"[
             {"op": "delta", "params": {"order": 1}},
             {"op": "zigzag"},
@@ -248,11 +238,13 @@ mod tests {
         let compressed_bytes =
             execute_compress_pipeline(&original_bytes, original_type, pipeline_json).unwrap();
 
-        // For decompression, the intermediate type before the final zstd is UInt64
-        // because of the zigzag operation.
+        // 2. Decompress
+        // The intermediate type for decompression is the type *before* the first
+        // decode op (zstd), which is the type *after* the last encode op (shuffle).
+        // Our type stack logic correctly handles the transformations from there.
         let decompressed_bytes = execute_decompress_pipeline(
             &compressed_bytes,
-            "Int64", // The type stack logic starts with the original type
+            "UInt64", // The type after zigzag is unsigned.
             pipeline_json,
             num_values,
         )
@@ -260,37 +252,6 @@ mod tests {
 
         assert_eq!(original_bytes, decompressed_bytes);
     }
-
-    // Commented out: The test pipeline::executor::tests::test_executor_xor_delta_pipeline must be deleted from executor.rs. 
-    //  It is an invalid test that does not reflect a plan our system would ever generate.
-    // #[test]
-    // fn test_executor_xor_delta_pipeline() {
-    //     // Simulate the bit patterns of some floats
-    //     let original_data: Vec<u32> = vec![1078523331, 1078523332, 1078523335];
-    //     let original_bytes = typed_slice_to_bytes(&original_data);
-    //     let intermediate_type = "UInt32"; // This is what the orchestrator would pass
-    //     let num_values = original_data.len();
-
-    //     // A valid plan for this data
-    //     let pipeline_json = r#"[
-    //         {"op": "xor_delta"},
-    //         {"op": "bitpack", "params": {"bit_width": 2}},
-    //         {"op": "zstd", "params": {"level": 3}}
-    //     ]"#;
-
-    //     let compressed_bytes =
-    //         execute_compress_pipeline(&original_bytes, intermediate_type, pipeline_json).unwrap();
-
-    //     let decompressed_bytes = execute_decompress_pipeline(
-    //         &compressed_bytes,
-    //         intermediate_type,
-    //         pipeline_json,
-    //         num_values,
-    //     )
-    //     .unwrap();
-
-    //     assert_eq!(original_bytes, decompressed_bytes);
-    // }
 
     #[test]
     fn test_executor_empty_pipeline() {
@@ -308,7 +269,8 @@ mod tests {
         assert_eq!(decompressed_bytes, original_bytes);
     }
 
-    // Add to tests in `pipeline/executor.rs`
+    // These checkpoint tests are invaluable for debugging the flow of data
+    // and types between kernels.
     #[test]
     fn checkpoint_06_after_delta() {
         let data: Vec<i16> = vec![100, 101, 103, 102];
@@ -324,7 +286,32 @@ mod tests {
         assert_eq!(result_vec, vec![100, 1, 2, -1]);
     }
 
-    // Add to tests in `pipeline/executor.rs`
+    #[test]
+    fn checkpoint_after_delta() {
+        let data: Vec<i16> = vec![100, 101, 103, 102];
+        let bytes = bytemuck::cast_slice::<i16, u8>(&data);
+        let pipeline = r#"[{"op": "delta", "params": {"order": 1}}]"#;
+
+        let output_bytes = execute_compress_pipeline(bytes, "Int16", pipeline).unwrap();
+        let result_vec: &[i16] = bytemuck::cast_slice(&output_bytes);
+
+        assert_eq!(result_vec, &[100, 1, 2, -1]);
+    }
+
+    #[test]
+    fn checkpoint_after_zigzag() {
+        let data: Vec<i16> = vec![100, 1, 2, -1]; // Output from delta
+        let bytes = bytemuck::cast_slice::<i16, u8>(&data);
+        let pipeline = r#"[{"op": "zigzag"}]"#;
+
+        // The executor starts with Int16, and the zigzag op will change the
+        // internal `current_type` to UInt16.
+        let output_bytes = execute_compress_pipeline(bytes, "Int16", pipeline).unwrap();
+        let result_vec: &[u16] = bytemuck::cast_slice(&output_bytes);
+
+        assert_eq!(result_vec, &[200, 2, 4, 1]);
+    }
+    
     #[test]
     fn checkpoint_07_after_zigzag() {
         let data: Vec<i16> = vec![100, 1, 2, -1]; // Output from previous step
@@ -337,7 +324,7 @@ mod tests {
         println!("-----------------------------------\n");
         assert_eq!(result_vec, vec![200, 2, 4, 1]);
     }
-
+    
     #[test]
     fn checkpoint_09_after_bitpack() {
         // NOTE: Shuffle output is raw bytes, bitpack input is typed.
