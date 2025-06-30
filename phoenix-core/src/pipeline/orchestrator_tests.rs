@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 // This line is crucial. It imports all the public items from the parent module
 // (which will be orchestrator.rs).
 use super::*;
@@ -68,6 +70,36 @@ where
             );
             let original_val = original_array.value(i);
             let reconstructed_val = reconstructed_primitive_array.value(i);
+
+            
+            let type_id = TypeId::of::<T::Native>();
+            if type_id == TypeId::of::<f32>() {
+                // For f32, use transmute to f32 for comparison.
+                let original_as_f32: f32 = bytemuck::cast(original_val);
+                let reconstructed_as_f32: f32 = bytemuck::cast(reconstructed_val);
+                if original_as_f32.is_sign_negative() && original_as_f32 == 0.0 {
+                    assert!(
+                        !reconstructed_as_f32.is_sign_negative() && reconstructed_as_f32 == 0.0,
+                        "Canonicalization failed: expected -0.0 to become 0.0, but got {:?}",
+                        reconstructed_val
+                    );
+                    // Skip the bit-pattern check for this specific case.
+                    continue;
+                }
+            } else if type_id == TypeId::of::<f64>() {
+                // For f64, use transmute to f64 for comparison.
+                let original_as_f64: f64 = bytemuck::cast(original_val);
+                let reconstructed_as_f64: f64 = bytemuck::cast(reconstructed_val);
+                if original_as_f64.is_sign_negative() && original_as_f64 == 0.0 {
+                    assert!(
+                        !reconstructed_as_f64.is_sign_negative() && reconstructed_as_f64 == 0.0,
+                        "Canonicalization failed: expected -0.0 to become 0.0, but got {:?}",
+                        reconstructed_val
+                    );
+                    // Skip the bit-pattern check for this specific case.
+                    continue;
+                }
+            }
 
             // --- CORRECTED COMPARISON LOGIC ---
             // Use `bytemuck::bytes_of` to get a byte slice representation of the value.

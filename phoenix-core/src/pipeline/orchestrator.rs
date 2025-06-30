@@ -11,6 +11,7 @@ use crate::error::PhoenixError;
 use crate::null_handling::bitmap;
 use crate::pipeline::artifact::CompressedChunk;
 use crate::utils::typed_slice_to_bytes;
+use num_traits::{Float, Zero};
 
 //==================================================================================
 // 2. Generic Worker Functions (The DRY Core)
@@ -80,10 +81,13 @@ fn compress_float_array<T, U>(array: &PrimitiveArray<T>) -> Result<Vec<u8>, Phoe
 where
     T: ArrowNumericType,
     U: bytemuck::Pod,
-    T::Native: bytemuck::Pod,
+    // --- ADD THIS TRAIT BOUND ---
+    // T::Native must implement the Float trait for our canonicalization logic.
+    T::Native: bytemuck::Pod + Float,
 {
     // For all-null or empty arrays, the integer path is sufficient and correct.
     if array.null_count() == array.len() || array.is_empty() {
+        // This path is fine, as it doesn't involve bit-casting.
         return compress_integer_array(array);
     }
 
@@ -91,7 +95,8 @@ where
     let original_type = T::DATA_TYPE.to_string();
 
     // 1. Handle Nulls (same as integer path)
-    let valid_data_vec: Vec<T::Native> = bitmap::strip_valid_data_to_vec(array);
+    // --- MAKE THIS MUTABLE ---
+    let mut valid_data_vec: Vec<T::Native> = bitmap::strip_valid_data_to_vec(array);
     let validity_bytes_opt = array.nulls().map(|nb| nb.buffer().as_slice().to_vec());
     let compressed_nullmap = if let Some(validity_bytes) = validity_bytes_opt {
         zstd::stream::encode_all(validity_bytes.as_slice(), 19)
@@ -100,7 +105,19 @@ where
         Vec::new()
     };
 
-    // 2. The Core Float-to-Bits Transformation
+    // --- START: Canonicalization of -0.0 ---
+    // This is the critical fix. We must ensure that any negative zero is
+    // converted to a positive zero to guarantee its bit pattern is all zeros.
+    for val in &mut valid_data_vec {
+        // The most robust way to check for -0.0 in a generic float.
+        if val.is_sign_negative() && val.is_zero() {
+            println!("Canonicalizing -0.0 to +0.0");
+            *val = Zero::zero();
+        }
+    }
+    // --- END: Canonicalization of -0.0 ---
+
+    // 2. The Core Float-to-Bits Transformation (now operates on canonicalized data)
     let integer_bits_vec: Vec<U> = bytemuck::cast_slice::<T::Native, U>(&valid_data_vec).to_vec();
     let integer_bits_bytes = typed_slice_to_bytes(&integer_bits_vec);
     let integer_type_str = if std::mem::size_of::<U>() == 4 {
