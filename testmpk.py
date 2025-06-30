@@ -29,10 +29,7 @@ except ImportError as e:
     logger.error(f"Failed to import from tubuin-processor. Check the TUBUIN_PROCESSOR_PATH. Error: {e}")
     sys.exit(1)
 
-ASPECT_NAME = "unit_positions" 
-MPK_FILE_PATH = pathlib.Path(f"./{ASPECT_NAME}.mpk")
-PHX_OUTPUT_PATH = pathlib.Path(f"./{ASPECT_NAME}.phx")
-PARQUET_OUTPUT_PATH = pathlib.Path(f"./{ASPECT_NAME}.parquet")
+ASPECT_NAMES = ["unit_positions", "unit_events", "damage_log"]
 
 def write_phoenix_frame(output_path: pathlib.Path, compressed_columns: dict):
     # ... (function is correct and unchanged) ...
@@ -55,20 +52,23 @@ def write_phoenix_frame(output_path: pathlib.Path, compressed_columns: dict):
     logger.info(f"✅ Successfully wrote Phoenix frame to: {output_path}")
 
 
-def main():
+def main(aspect_name):
+    MPK_FILE_PATH = pathlib.Path(f"./{aspect_name}.mpk")
+    PHX_OUTPUT_PATH = pathlib.Path(f"./{aspect_name}.phx")
+    PARQUET_OUTPUT_PATH = pathlib.Path(f"./{aspect_name}.parquet")
     # ... (Loading and transforming data is the same) ...
     if not MPK_FILE_PATH.exists():
         logger.error(f"MPK file not found at '{MPK_FILE_PATH}'")
         return
 
-    logger.info(f"--- Starting MPK Compression Test for: {MPK_FILE_PATH.name} (Aspect: {ASPECT_NAME}) ---")
+    logger.info(f"--- Starting MPK Compression Test for: {MPK_FILE_PATH.name} (Aspect: {aspect_name}) ---")
     mpk_bytes = MPK_FILE_PATH.read_bytes()
     logger.info(f"  - Loaded {len(mpk_bytes):,} bytes from disk.")
     logger.info("  - Decoding and transforming records...")
     start_time = time.perf_counter()
     try:
-        raw_model_stream = stream_decode_aspect(ASPECT_NAME, mpk_bytes)
-        clean_model_stream = stream_transform_aspect(ASPECT_NAME, raw_model_stream, skip_on_error=True)
+        raw_model_stream = stream_decode_aspect(aspect_name, mpk_bytes)
+        clean_model_stream = stream_transform_aspect(aspect_name, raw_model_stream, skip_on_error=True)
         clean_data_list = [record.model_dump() for record in clean_model_stream]
     except Exception as e:
         logger.error(f"An error occurred during the decode/transform phase: {e}", exc_info=True)
@@ -151,6 +151,10 @@ def main():
 
     # --- FINAL REPORTING ---
     print("\n" + "="*80)
+    print(f"--- Phoenix 4.0 {aspect_name} ---".center(80))
+    print("="*80)
+
+    print("\n" + "="*80)
     print("--- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---".center(80))
     print("--- (The 'CEO' View: Which final file is smallest?) ---".center(80))
     print("="*80)
@@ -189,4 +193,5 @@ def main():
     print("*Parquet size is the on-disk compressed size for that column's data chunks.")
 
 if __name__ == "__main__":
-    main()
+    for aspect in ASPECT_NAMES:
+        main(aspect)

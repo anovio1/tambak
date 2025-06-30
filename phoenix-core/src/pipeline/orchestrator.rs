@@ -4,30 +4,77 @@
 use arrow::array::{Array, PrimitiveArray};
 use arrow::buffer::{BooleanBuffer, Buffer, NullBuffer};
 use arrow::datatypes::*;
-use std::io::{Cursor, Read, Write};
+use num_traits::{Float, PrimInt, Zero}; // <-- Import Float
 
 use super::{executor, planner};
 use crate::error::PhoenixError;
+use crate::kernels::sparsity;
 use crate::null_handling::bitmap;
 use crate::pipeline::artifact::CompressedChunk;
 use crate::utils::typed_slice_to_bytes;
-use num_traits::{Float, Zero};
 
 //==================================================================================
-// 2. Generic Worker Functions (The DRY Core)
+// 1. Private Helper Functions
+//==================================================================================
+
+/// A private helper to handle the complex orchestration of the Sparsity strategy.
+fn orchestrate_sparsity_strategy<T>(
+    data_vec: &[T],
+    original_type: &str,
+    intermediate_type: &str, // The type planner should use for the dense stream
+    total_rows: u64,
+    compressed_nullmap: Vec<u8>,
+) -> Result<Vec<u8>, PhoenixError>
+where
+    T: bytemuck::Pod + PrimInt + Zero,
+{
+    let (mask_vec, dense_data_vec) = sparsity::split_stream(data_vec)?;
+
+    let mask_plan_json = serde_json::to_string(&vec![
+        serde_json::json!({"op": "rle"}),
+        serde_json::json!({"op": "zstd", "params": {"level": 5}}),
+    ])
+    .map_err(|e| PhoenixError::InternalError(format!("Failed to serialize mask plan: {}", e)))?;
+    let mask_bytes: Vec<u8> = mask_vec.iter().map(|&b| b as u8).collect();
+    let compressed_mask =
+        executor::execute_compress_pipeline(&mask_bytes, "Boolean", &mask_plan_json)?;
+
+    let dense_data_bytes = typed_slice_to_bytes(&dense_data_vec);
+    let dense_pipeline_json = planner::plan_pipeline(&dense_data_bytes, intermediate_type)?;
+    let compressed_dense_data = executor::execute_compress_pipeline(
+        &dense_data_bytes,
+        intermediate_type,
+        &dense_pipeline_json,
+    )?;
+
+    CompressedChunk {
+        total_rows,
+        original_type: original_type.to_string(),
+        compressed_data: compressed_dense_data,
+        pipeline_json: dense_pipeline_json,
+        compressed_nullmap,
+        compressed_mask: Some(compressed_mask),
+        mask_pipeline_json: Some(mask_plan_json),
+    }
+    .to_bytes()
+}
+
+//==================================================================================
+// 2. Generic Worker Functions (Reverted to Two-Worker Design)
 //==================================================================================
 
 /// Generic worker for compressing any INTEGER array type.
 fn compress_integer_array<T>(array: &PrimitiveArray<T>) -> Result<Vec<u8>, PhoenixError>
 where
     T: ArrowNumericType,
-    T::Native: bytemuck::Pod,
+    T::Native: bytemuck::Pod + PrimInt + Zero,
 {
     let total_rows = array.len() as u64;
     let original_type = T::DATA_TYPE.to_string();
 
-    // Handle all-null or empty cases
-    if array.null_count() == array.len() || array.is_empty() {
+    if array.is_empty() || array.null_count() == array.len() {
+        // The existing logic for empty/all-null is correct.
+        // We just need to ensure we enter it.
         let validity_bytes = array
             .nulls()
             .map_or(Vec::new(), |nb| nb.buffer().as_slice().to_vec());
@@ -39,108 +86,240 @@ where
         };
         return CompressedChunk {
             total_rows,
-            compressed_nullmap,
+            original_type,
             compressed_data: Vec::new(),
             pipeline_json: "[]".to_string(),
-            original_type,
+            compressed_nullmap,
+            compressed_mask: None,
+            mask_pipeline_json: None,
         }
         .to_bytes();
     }
 
-    // 1. Deconstruct array into validity and data buffers
+    const SPARSITY_THRESHOLD: f32 = 0.75;
+    let zero_count = array
+        .iter()
+        .filter(|v| v.map_or(false, |x| x.is_zero()))
+        .count();
+    let sparse_ratio = (zero_count + array.null_count()) as f32 / array.len() as f32;
+
     let valid_data_vec: Vec<T::Native> = bitmap::strip_valid_data_to_vec(array);
-    let validity_bytes_opt = array.nulls().map(|nb| nb.buffer().as_slice().to_vec());
+    let compressed_nullmap = compress_nulls(array.nulls())?;
 
-    // 2. Compress validity buffer
-    let compressed_nullmap = if let Some(validity_bytes) = validity_bytes_opt {
-        zstd::stream::encode_all(validity_bytes.as_slice(), 19)
-            .map_err(|e| PhoenixError::ZstdError(e.to_string()))?
-    } else {
-        Vec::new()
-    };
+    if sparse_ratio > SPARSITY_THRESHOLD {
+        // --- ADD THIS BLOCK FOR ROBUSTNESS ---
+        if valid_data_vec.iter().all(|v| v.is_zero()) {
+            let rle_plan = serde_json::to_string(&vec![
+                serde_json::json!({"op": "rle"}),
+                serde_json::json!({"op": "zstd", "params": {"level": 5}}),
+            ])
+            .map_err(|e| {
+                PhoenixError::InternalError(format!("Failed to serialize mask plan: {}", e))
+            })?;
+            let compressed_data = executor::execute_compress_pipeline(
+                &typed_slice_to_bytes(&valid_data_vec),
+                &original_type,
+                &rle_plan,
+            )?;
+            return CompressedChunk::dense(
+                total_rows,
+                original_type,
+                compressed_data,
+                rle_plan,
+                compressed_nullmap,
+            );
+        }
+        // --- END ADDITION ---
 
-    // 3. Plan and compress the main data buffer
-    let valid_data_bytes = typed_slice_to_bytes(&valid_data_vec);
-    let pipeline_json = planner::plan_pipeline(&valid_data_bytes, &original_type)?;
+        return orchestrate_sparsity_strategy(
+            &valid_data_vec,
+            &original_type,
+            &original_type,
+            total_rows,
+            compressed_nullmap,
+        );
+    }
+
+    let data_bytes = typed_slice_to_bytes(&valid_data_vec);
+    let pipeline_json = planner::plan_pipeline(&data_bytes, &original_type)?;
     let compressed_data =
-        executor::execute_compress_pipeline(&valid_data_bytes, &original_type, &pipeline_json)?;
+        executor::execute_compress_pipeline(&data_bytes, &original_type, &pipeline_json)?;
 
-    // 4. Package the final artifact
-    CompressedChunk {
+    CompressedChunk::dense(
         total_rows,
-        compressed_nullmap,
+        original_type,
         compressed_data,
         pipeline_json,
-        original_type,
-    }
-    .to_bytes()
+        compressed_nullmap,
+    )
 }
 
 /// Generic worker for compressing any FLOAT array type.
 fn compress_float_array<T, U>(array: &PrimitiveArray<T>) -> Result<Vec<u8>, PhoenixError>
 where
     T: ArrowNumericType,
-    U: bytemuck::Pod,
-    // --- ADD THIS TRAIT BOUND ---
-    // T::Native must implement the Float trait for our canonicalization logic.
     T::Native: bytemuck::Pod + Float,
+    U: bytemuck::Pod + PrimInt + Zero,
 {
-    // For all-null or empty arrays, the integer path is sufficient and correct.
-    if array.null_count() == array.len() || array.is_empty() {
-        // This path is fine, as it doesn't involve bit-casting.
-        return compress_integer_array(array);
-    }
-
     let total_rows = array.len() as u64;
     let original_type = T::DATA_TYPE.to_string();
 
-    // 1. Handle Nulls (same as integer path)
-    // --- MAKE THIS MUTABLE ---
-    let mut valid_data_vec: Vec<T::Native> = bitmap::strip_valid_data_to_vec(array);
-    let validity_bytes_opt = array.nulls().map(|nb| nb.buffer().as_slice().to_vec());
-    let compressed_nullmap = if let Some(validity_bytes) = validity_bytes_opt {
-        zstd::stream::encode_all(validity_bytes.as_slice(), 19)
-            .map_err(|e| PhoenixError::ZstdError(e.to_string()))?
-    } else {
-        Vec::new()
-    };
+    if array.is_empty() || array.null_count() == array.len() {
+        // The existing logic for empty/all-null is correct.
+        // We just need to ensure we enter it.
+        let validity_bytes = array
+            .nulls()
+            .map_or(Vec::new(), |nb| nb.buffer().as_slice().to_vec());
+        let compressed_nullmap = if validity_bytes.is_empty() {
+            Vec::new()
+        } else {
+            zstd::stream::encode_all(validity_bytes.as_slice(), 19)
+                .map_err(|e| PhoenixError::ZstdError(e.to_string()))?
+        };
+        return CompressedChunk {
+            total_rows,
+            original_type,
+            compressed_data: Vec::new(),
+            pipeline_json: "[]".to_string(),
+            compressed_nullmap,
+            compressed_mask: None,
+            mask_pipeline_json: None,
+        }
+        .to_bytes();
+    }
 
-    // --- START: Canonicalization of -0.0 ---
-    // This is the critical fix. We must ensure that any negative zero is
-    // converted to a positive zero to guarantee its bit pattern is all zeros.
+    // --- START: THE FINAL, CORRECTED ARCHITECTURE ---
+
+    // 1. Get valid data and handle nulls first.
+    let mut valid_data_vec: Vec<T::Native> = bitmap::strip_valid_data_to_vec(array);
+    let compressed_nullmap = compress_nulls(array.nulls())?;
+
+    // 2. Canonicalize -0.0 to 0.0 on the float data.
     for val in &mut valid_data_vec {
-        // The most robust way to check for -0.0 in a generic float.
         if val.is_sign_negative() && val.is_zero() {
-            println!("Canonicalizing -0.0 to +0.0");
-            *val = Zero::zero();
+            *val = T::Native::zero();
         }
     }
-    // --- END: Canonicalization of -0.0 ---
 
-    // 2. The Core Float-to-Bits Transformation (now operates on canonicalized data)
-    let integer_bits_vec: Vec<U> = bytemuck::cast_slice::<T::Native, U>(&valid_data_vec).to_vec();
-    let integer_bits_bytes = typed_slice_to_bytes(&integer_bits_vec);
+    // 3. Bit-cast the canonicalized float data to its integer representation.
+    let integer_bits_vec: Vec<U> = bytemuck::cast_slice(&valid_data_vec).to_vec();
     let integer_type_str = if std::mem::size_of::<U>() == 4 {
         "UInt32"
     } else {
         "UInt64"
     };
 
-    // 3. Plan and Compress the INTEGER bits
-    let pipeline_json = planner::plan_pipeline(&integer_bits_bytes, integer_type_str)?;
-    let compressed_data =
-        executor::execute_compress_pipeline(&integer_bits_bytes, integer_type_str, &pipeline_json)?;
+    // 4. Perform the sparsity check on the FINAL integer representation.
+    // This is the one and only "source of truth" for sparsity.
+    const SPARSITY_THRESHOLD: f32 = 0.75;
+    // We must now count nulls and zeros from different sources.
+    let zero_count = integer_bits_vec.iter().filter(|&&v| v.is_zero()).count();
+    let sparse_ratio = (zero_count + array.null_count()) as f32 / array.len() as f32;
 
-    // 4. Package the final artifact
-    CompressedChunk {
-        total_rows,
-        compressed_nullmap,
-        compressed_data,
-        pipeline_json,
-        original_type,
+    // 5. Dispatch to the correct strategy.
+    if sparse_ratio > SPARSITY_THRESHOLD {
+        // --- SPARSITY STRATEGY ---
+        // Handle the edge case where the dense vector is empty.
+        if integer_bits_vec.iter().all(|v| v.is_zero()) {
+            // All valid values were zero. The dense stream is empty.
+            // The most efficient representation is a simple RLE of the original data.
+            let rle_plan = serde_json::to_string(&vec![
+                serde_json::json!({"op": "rle"}),
+                serde_json::json!({"op": "zstd", "params": {"level": 5}}),
+            ])
+            .map_err(|e| {
+                PhoenixError::InternalError(format!("Failed to serialize mask plan: {}", e))
+            })?;
+            let compressed_data = executor::execute_compress_pipeline(
+                &typed_slice_to_bytes(&integer_bits_vec),
+                integer_type_str,
+                &rle_plan,
+            )?;
+            return CompressedChunk::dense(
+                total_rows,
+                original_type,
+                compressed_data,
+                rle_plan,
+                compressed_nullmap,
+            );
+        }
+
+        return orchestrate_sparsity_strategy(
+            &integer_bits_vec,
+            &original_type,
+            integer_type_str,
+            total_rows,
+            compressed_nullmap,
+        );
+    } else {
+        // --- DENSE STRATEGY ---
+        let data_bytes = typed_slice_to_bytes(&integer_bits_vec);
+        let pipeline_json = planner::plan_pipeline(&data_bytes, integer_type_str)?;
+        let compressed_data =
+            executor::execute_compress_pipeline(&data_bytes, integer_type_str, &pipeline_json)?;
+
+        CompressedChunk::dense(
+            total_rows,
+            original_type,
+            compressed_data,
+            pipeline_json,
+            compressed_nullmap,
+        )
     }
-    .to_bytes()
+    // --- END: THE FINAL, CORRECTED ARCHITECTURE ---
 }
+
+// Helper to reduce duplication in the empty/all-null path
+fn compress_nulls(nulls: Option<&NullBuffer>) -> Result<Vec<u8>, PhoenixError> {
+    nulls.map_or(Ok(Vec::new()), |nb| {
+        zstd::stream::encode_all(nb.buffer().as_slice(), 19)
+            .map_err(|e| PhoenixError::ZstdError(e.to_string()))
+    })
+}
+
+// Add helpers to CompressedChunk to reduce boilerplate
+impl CompressedChunk {
+    fn empty(
+        total_rows: u64,
+        original_type: String,
+        nulls: Option<&NullBuffer>,
+    ) -> Result<Vec<u8>, PhoenixError> {
+        let compressed_nullmap = compress_nulls(nulls)?;
+        Self {
+            total_rows,
+            original_type,
+            compressed_data: Vec::new(),
+            pipeline_json: "[]".to_string(),
+            compressed_nullmap,
+            compressed_mask: None,
+            mask_pipeline_json: None,
+        }
+        .to_bytes()
+    }
+
+    fn dense(
+        total_rows: u64,
+        original_type: String,
+        compressed_data: Vec<u8>,
+        pipeline_json: String,
+        compressed_nullmap: Vec<u8>,
+    ) -> Result<Vec<u8>, PhoenixError> {
+        Self {
+            total_rows,
+            original_type,
+            compressed_data,
+            pipeline_json,
+            compressed_nullmap,
+            compressed_mask: None,
+            mask_pipeline_json: None,
+        }
+        .to_bytes()
+    }
+}
+
+//==================================================================================
+// 3. Public-Facing Dispatchers
+//==================================================================================
 
 //==================================================================================
 // 3. Public-Facing Dispatchers
@@ -186,6 +365,7 @@ pub fn decompress_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
     let artifact = CompressedChunk::from_bytes(bytes)?;
     let original_type = &artifact.original_type;
 
+    // 1. Handle Nulls (This logic is shared by both sparse and dense paths)
     let null_buffer = if !artifact.compressed_nullmap.is_empty() {
         let validity_bytes = zstd::stream::decode_all(artifact.compressed_nullmap.as_slice())
             .map_err(|e| PhoenixError::ZstdError(e.to_string()))?;
@@ -199,51 +379,134 @@ pub fn decompress_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
         None
     };
 
-    let num_valid_rows = null_buffer
-        .as_ref()
-        .map_or(artifact.total_rows as usize, |nb| {
-            nb.len() - nb.null_count()
-        });
+    // 2. Branch based on whether this is a sparse artifact
+    if let (Some(compressed_mask), Some(mask_pipeline_json)) =
+        (artifact.compressed_mask, artifact.mask_pipeline_json)
+    {
+        // --- SPARSE DECOMPRESSION PATH ---
 
-    let decompressed_data_bytes = if !artifact.compressed_data.is_empty() {
+        // 2a. Decompress the mask
+        let decompressed_mask_bytes = executor::execute_decompress_pipeline(
+            &compressed_mask,
+            "Boolean",
+            &mask_pipeline_json,
+            artifact.total_rows as usize,
+        )?;
+        let mask_vec: Vec<bool> = decompressed_mask_bytes.iter().map(|&b| b != 0).collect();
+        let num_non_zero = mask_vec.iter().filter(|&&b| b).count();
+
+        // 2b. Decompress the dense data
         let intermediate_type = match original_type.as_str() {
             "Float32" => "UInt32",
             "Float64" => "UInt64",
             _ => original_type,
         };
-        executor::execute_decompress_pipeline(
+        let decompressed_dense_bytes = executor::execute_decompress_pipeline(
             &artifact.compressed_data,
             intermediate_type,
             &artifact.pipeline_json,
-            num_valid_rows,
-        )?
+            num_non_zero,
+        )?;
+
+        // 2c. Reconstruct the final array using a DRY macro
+        macro_rules! reconstruct_and_finalize {
+            // Arm for integer types
+            ($T:ty, $TN:ty) => {{
+                let dense_slice = bytemuck::cast_slice::<u8, $TN>(&decompressed_dense_bytes);
+                let sparse_vec = sparsity::reconstruct_stream(
+                    &mask_vec,
+                    dense_slice,
+                    artifact.total_rows as usize,
+                )?;
+                let final_array = bitmap::reapply_bitmap_from_vec::<$T>(
+                    sparse_vec,
+                    null_buffer,
+                    artifact.total_rows as usize,
+                )?;
+                Ok(Box::new(final_array) as Box<dyn Array>)
+            }};
+            // Arm for float types (handles the extra bit-cast)
+            ($T:ty, $TN:ty, $U:ty) => {{
+                let dense_int_slice = bytemuck::cast_slice::<u8, $U>(&decompressed_dense_bytes);
+                let sparse_int_vec = sparsity::reconstruct_stream(
+                    &mask_vec,
+                    dense_int_slice,
+                    artifact.total_rows as usize,
+                )?;
+                let final_typed_vec: Vec<$TN> = bytemuck::cast_slice(&sparse_int_vec).to_vec();
+                let final_array = bitmap::reapply_bitmap_from_vec::<$T>(
+                    final_typed_vec,
+                    null_buffer,
+                    artifact.total_rows as usize,
+                )?;
+                Ok(Box::new(final_array) as Box<dyn Array>)
+            }};
+        }
+
+        // The match statement is now clean, readable, and maintainable.
+        match original_type.as_str() {
+            "Int8" => reconstruct_and_finalize!(Int8Type, i8),
+            "Int16" => reconstruct_and_finalize!(Int16Type, i16),
+            "Int32" => reconstruct_and_finalize!(Int32Type, i32),
+            "Int64" => reconstruct_and_finalize!(Int64Type, i64),
+            "UInt8" => reconstruct_and_finalize!(UInt8Type, u8),
+            "UInt16" => reconstruct_and_finalize!(UInt16Type, u16),
+            "UInt32" => reconstruct_and_finalize!(UInt32Type, u32),
+            "UInt64" => reconstruct_and_finalize!(UInt64Type, u64),
+            "Float32" => reconstruct_and_finalize!(Float32Type, f32, u32),
+            "Float64" => reconstruct_and_finalize!(Float64Type, f64, u64),
+            _ => Err(PhoenixError::UnsupportedType(original_type.to_string())),
+        }
     } else {
-        Vec::new()
-    };
+        // --- DENSE DECOMPRESSION PATH ---
 
-    macro_rules! reconstruct_array {
-        ($T:ty) => {{
-            let array = bitmap::reapply_bitmap::<$T>(
-                decompressed_data_bytes,
-                null_buffer,
-                artifact.total_rows as usize,
-            )?;
-            Ok(Box::new(array) as Box<dyn Array>)
-        }};
-    }
+        let num_valid_rows = null_buffer
+            .as_ref()
+            .map_or(artifact.total_rows as usize, |nb| {
+                nb.len() - nb.null_count()
+            });
 
-    match original_type.as_str() {
-        "Int8" => reconstruct_array!(Int8Type),
-        "Int16" => reconstruct_array!(Int16Type),
-        "Int32" => reconstruct_array!(Int32Type),
-        "Int64" => reconstruct_array!(Int64Type),
-        "UInt8" => reconstruct_array!(UInt8Type),
-        "UInt16" => reconstruct_array!(UInt16Type),
-        "UInt32" => reconstruct_array!(UInt32Type),
-        "UInt64" => reconstruct_array!(UInt64Type),
-        "Float32" => reconstruct_array!(Float32Type),
-        "Float64" => reconstruct_array!(Float64Type),
-        _ => Err(PhoenixError::UnsupportedType(original_type.to_string())),
+        let decompressed_data_bytes = if !artifact.compressed_data.is_empty() {
+            let intermediate_type = match original_type.as_str() {
+                "Float32" => "UInt32",
+                "Float64" => "UInt64",
+                _ => original_type,
+            };
+            executor::execute_decompress_pipeline(
+                &artifact.compressed_data,
+                intermediate_type,
+                &artifact.pipeline_json,
+                num_valid_rows,
+            )?
+        } else {
+            Vec::new()
+        };
+
+        macro_rules! reconstruct_dense_array {
+            ($T:ty) => {{
+                let array = bitmap::reapply_bitmap::<$T>(
+                    decompressed_data_bytes,
+                    null_buffer,
+                    artifact.total_rows as usize,
+                )?;
+                Ok(Box::new(array) as Box<dyn Array>)
+            }};
+        }
+
+        // This path was already fairly DRY, but the macro makes it consistent.
+        match original_type.as_str() {
+            "Int8" => reconstruct_dense_array!(Int8Type),
+            "Int16" => reconstruct_dense_array!(Int16Type),
+            "Int32" => reconstruct_dense_array!(Int32Type),
+            "Int64" => reconstruct_dense_array!(Int64Type),
+            "UInt8" => reconstruct_dense_array!(UInt8Type),
+            "UInt16" => reconstruct_dense_array!(UInt16Type),
+            "UInt32" => reconstruct_dense_array!(UInt32Type),
+            "UInt64" => reconstruct_dense_array!(UInt64Type),
+            "Float32" => reconstruct_dense_array!(Float32Type),
+            "Float64" => reconstruct_dense_array!(Float64Type),
+            _ => Err(PhoenixError::UnsupportedType(original_type.to_string())),
+        }
     }
 }
 
@@ -263,7 +526,7 @@ pub fn get_compressed_chunk_info(
 }
 
 //==================================================================================
-// 3. Unit Tests (REVISED - Authoritative & Correct)
+// 3. Unit Tests
 //==================================================================================
 
 #[cfg(test)]

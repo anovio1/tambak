@@ -57,6 +57,9 @@ pub enum PhoenixError {
 
     #[error("Frame serialization/deserialization failed: {0}")]
     FrameFormatError(String),
+
+    #[error("Sparsity transform failed: {0}")]
+    SparsityError(String),
 }
 
 // --- FFI Conversion (Unchanged) ---

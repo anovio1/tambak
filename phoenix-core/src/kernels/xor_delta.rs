@@ -41,10 +41,7 @@ where
 }
 
 /// The public-facing, generic encode function for this module.
-pub fn encode<T>(
-    input_slice: &[T],
-    output_buf: &mut Vec<u8>,
-) -> Result<(), PhoenixError>
+pub fn encode<T>(input_slice: &[T], output_buf: &mut Vec<u8>) -> Result<(), PhoenixError>
 where
     T: Copy + bytemuck::Pod + BitXor<Output = T>,
 {
@@ -56,10 +53,7 @@ where
 }
 
 /// The public-facing, generic decode function for this module.
-pub fn decode<T>(
-    input_bytes: &[u8],
-    output_buf: &mut Vec<u8>,
-) -> Result<(), PhoenixError>
+pub fn decode<T>(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), PhoenixError>
 where
     T: Copy + bytemuck::Pod + BitXor<Output = T>,
 {
@@ -68,7 +62,10 @@ where
         return Ok(());
     }
     if input_bytes.len() % std::mem::size_of::<T>() != 0 {
-        return Err(PhoenixError::BufferMismatch(input_bytes.len(), std::mem::size_of::<T>()));
+        return Err(PhoenixError::BufferMismatch(
+            input_bytes.len(),
+            std::mem::size_of::<T>(),
+        ));
     }
     // bytemuck::cast_slice is zero-copy, so .to_vec() is the first allocation.
     let mut data_vec: Vec<T> = bytemuck::cast_slice(input_bytes).to_vec();
@@ -106,7 +103,7 @@ mod tests {
     #[test]
     fn test_xor_delta_roundtrip_u64() {
         let original: Vec<u64> = vec![100, 200, 150, 250, 50];
-        
+
         let mut encoded_bytes = Vec::new();
         encode(&original, &mut encoded_bytes).unwrap();
 

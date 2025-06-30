@@ -71,7 +71,6 @@ where
             let original_val = original_array.value(i);
             let reconstructed_val = reconstructed_primitive_array.value(i);
 
-            
             let type_id = TypeId::of::<T::Native>();
             if type_id == TypeId::of::<f32>() {
                 // For f32, use transmute to f32 for comparison.
@@ -215,4 +214,50 @@ fn test_roundtrip_constant_integers_triggers_rle() {
     // This data is constant and should trigger the simple RLE pipeline.
     let array = Int64Array::from(vec![Some(777), Some(777), Some(777), None, Some(777)]);
     roundtrip_test(&array);
+}
+
+//==============================================================================
+// 3.5 Sparsity Strategy Test
+//==============================================================================
+
+#[test]
+fn test_sparsity_strategy_is_triggered_and_correct() {
+    // Create a sparse array: 80% of the values are either 0 or NULL.
+    // 5 zeros + 3 nulls = 8 sparse values out of 10 total.
+    let original_array = Int32Array::from(vec![
+        Some(0),
+        Some(100),
+        None,
+        Some(0),
+        Some(0),
+        None,
+        Some(200),
+        Some(0),
+        Some(0),
+        None,
+    ]);
+
+    // 1. Compress the array.
+    let compressed_artifact_bytes =
+        compress_chunk(&original_array).expect("Sparsity compression failed");
+
+    // 2. Verify that the sparsity path was taken by inspecting the artifact.
+    // We don't need to decompress the whole thing, just parse the artifact header.
+    let artifact =
+        CompressedChunk::from_bytes(&compressed_artifact_bytes).expect("Failed to parse artifact");
+
+    // THIS IS THE KEY ASSERTION:
+    // If the sparsity path was taken, the artifact will have a compressed_mask.
+    assert!(
+        artifact.compressed_mask.is_some(),
+        "Sparsity strategy was not triggered: compressed_mask is None"
+    );
+    assert!(
+        artifact.mask_pipeline_json.is_some(),
+        "Sparsity strategy was not triggered: mask_pipeline_json is None"
+    );
+
+    // 3. Verify the roundtrip correctness.
+    // This ensures that even if the sparse path was taken, the data is reconstructed perfectly.
+    roundtrip_test(&original_array);
 }

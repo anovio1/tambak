@@ -1,0 +1,137 @@
+INFO:__main__:--- Starting MPK Compression Test for: unit_positions.mpk (Aspect: unit_positions) ---
+INFO:__main__:  - Loaded 6,641,915 bytes from disk.   
+INFO:__main__:  - Decoding and transforming records...
+INFO:__main__:  - Transformation complete in 1.55s. Found 231,231 records.
+INFO:__main__:  - Creating PyArrow Table...
+INFO:__main__:  - Running all benchmarks...
+INFO:__main__:✅ Successfully wrote Phoenix frame to: unit_positions.phx
+
+================================================================================
+                       --- Phoenix 3.9 unit_positions ---
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---
+            --- (The 'CEO' View: Which final file is smallest?) ---
+================================================================================
+  - Original MPK File:               6,641,915 bytes (100.00%)
+  - Zstd on original MPK:            3,804,423 bytes ( 57.28%)
+  - Parquet (Zstd) File:             3,305,379 bytes ( 49.77%)
+  - Phoenix Frame File (.phx):       4,680,032 bytes ( 70.46%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---
+         --- (The 'Engineering' View: How effective is our logic?) ---
+================================================================================
+  - Parquet Columnar Data:           3,303,041 bytes (100.00%)
+  - Zstd-per-Column Data:            3,966,937 bytes (120.10%)
+  - Phoenix Columnar Data:           4,679,388 bytes (141.67%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                       2,182        2,799        3,393 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"leb128"},{"op":"zstd","params":{"level":3}}]
+unit_id                   142,755      145,697      219,116 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"bitpack","params":{"bit_width":16}},{"op":"zstd","params":{"level":3}}]
+unit_def_id                97,023      197,427      130,232 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+team_id                    57,824      112,822       70,709 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+x                         402,104      521,282      392,225 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"bitpack","params":{"bit_width":14}},{"op":"zstd","params":{"level":3}}]
+y                         232,633      330,718      246,887 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+z                         384,547      539,865      424,956 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+vx                      1,029,907      584,752      465,141 [{"op":"xor_delta"},{"op":"bitpack","params":{"bit_width":64}},{"op":"zstd","params":{"level":3}}]
+vy                        633,170      376,247      292,851 [{"op":"xor_delta"},{"op":"bitpack","params":{"bit_width":64}},{"op":"zstd","params":{"level":3}}]
+vz                        986,181      553,464      447,776 [{"op":"xor_delta"},{"op":"bitpack","params":{"bit_width":64}},{"op":"zstd","params":{"level":3}}]
+heading                   711,062      601,864      609,755 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.
+
+
+
+================================================================================
+                        --- Phoenix 3.9 unit_events ---
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---
+            --- (The 'CEO' View: Which final file is smallest?) ---
+================================================================================
+  - Original MPK File:               2,499,651 bytes (100.00%)
+  - Zstd on original MPK:              778,603 bytes ( 31.15%)
+  - Parquet (Zstd) File:             1,044,567 bytes ( 41.79%)
+  - Phoenix Frame File (.phx):         823,461 bytes ( 32.94%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---
+         --- (The 'Engineering' View: How effective is our logic?) ---
+================================================================================
+  - Parquet Columnar Data:           1,041,139 bytes (100.00%)
+  - Zstd-per-Column Data:            1,036,406 bytes ( 99.55%)
+  - Phoenix Columnar Data:             822,514 bytes ( 79.00%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                      31,772       60,226      162,483 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"leb128"},{"op":"zstd","params":{"level":3}}]
+unit_id                   177,214      185,304      229,917 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+unit_def_id                74,638       90,883       57,292 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+unit_team_id               42,966       44,104       41,409 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+x                         141,030      183,609      160,794 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+y                          68,057       82,560       84,252 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+z                         159,790      178,438      166,613 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"leb128"},{"op":"zstd","params":{"level":3}}]
+attacker_unit_id           27,257       41,415       31,179 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+attacker_unit_def_id       15,180       35,113       19,039 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+attacker_team_id           11,049       29,089       14,336 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+event_type                 28,162       26,865       27,727 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+old_team_id                   363          832          404 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+new_team_id                   372          816          413 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+builder_id                 34,189       49,606       29,879 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+factory_queue_len          10,475       27,546       15,402 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.
+
+
+================================================================================
+                         --- Phoenix 3.9 damage_log ---
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---
+            --- (The 'CEO' View: Which final file is smallest?) ---
+================================================================================
+  - Original MPK File:               6,531,861 bytes (100.00%)
+  - Zstd on original MPK:            2,011,629 bytes ( 30.80%)
+  - Parquet (Zstd) File:             2,699,725 bytes ( 41.33%)
+  - Phoenix Frame File (.phx):       2,597,089 bytes ( 39.76%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---
+         --- (The 'Engineering' View: How effective is our logic?) ---
+================================================================================
+  - Parquet Columnar Data:           2,696,435 bytes (100.00%)
+  - Zstd-per-Column Data:            2,652,788 bytes ( 98.38%)
+  - Phoenix Columnar Data:           2,596,219 bytes ( 96.28%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                      41,009       86,950      207,551 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"leb128"},{"op":"zstd","params":{"level":3}}]
+victim_team_id             75,675       93,024       81,508 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+attacker_team_id           72,359       97,166       76,898 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+victim_unit_id            307,217      214,330      314,756 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"bitpack","params":{"bit_width":16}},{"op":"zstd","params":{"level":3}}]
+victim_def_id             132,786      149,775       95,822 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+attacker_unit_id          316,079      212,341      300,152 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+attacker_def_id           120,782      147,696      129,584 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+weapon_def_id             144,953      153,573       94,723 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+projectile_id             222,169      225,732      223,854 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"leb128"},{"op":"zstd","params":{"level":3}}]
+damage                    445,881      433,364      338,792 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
+is_paralyzer                  N/A        2,897        2,943 Failed
+victim_pos_x              292,064      332,516      334,050 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"leb128"},{"op":"zstd","params":{"level":3}}]
+victim_pos_y              145,250      163,957      160,036 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"leb128"},{"op":"zstd","params":{"level":3}}]
+victim_pos_z              279,995      339,467      335,766 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"leb128"},{"op":"zstd","params":{"level":3}}]
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.

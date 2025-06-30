@@ -161,10 +161,11 @@ pub fn execute_compress_pipeline(
 
 pub fn execute_decompress_pipeline(
     bytes: &[u8],
-    intermediate_type: &str, // This is the type AFTER the last ENCODE op
+    intermediate_type: &str,
     pipeline_json: &str,
     num_values: usize,
 ) -> Result<Vec<u8>, PhoenixError> {
+    // THIS IS THE FIX: Manually map the serde_json::Error to our PhoenixError.
     let pipeline: Vec<Value> = serde_json::from_str(pipeline_json)
         .map_err(|e| PhoenixError::InternalError(format!("Invalid pipeline JSON: {}", e)))?;
 
@@ -172,9 +173,6 @@ pub fn execute_decompress_pipeline(
         return Ok(bytes.to_vec());
     }
 
-    // --- START: Your Superior Two-Phase Type Stack Logic ---
-
-    // 1. Deduce the original, uncompressed data type by "undoing" the type changes.
     let mut original_type = intermediate_type.to_string();
     for op_config in pipeline.iter().rev() {
         if let Some("zigzag") = op_config["op"].as_str() {
@@ -184,7 +182,6 @@ pub fn execute_decompress_pipeline(
         }
     }
 
-    // 2. Build the stack by simulating the FORWARD compression process from the correct start.
     let mut type_stack: Vec<String> = Vec::with_capacity(pipeline.len());
     let mut current_type = original_type;
     for op_config in pipeline.iter() {
@@ -195,25 +192,25 @@ pub fn execute_decompress_pipeline(
             }
         }
     }
-    // The final `type_stack` now correctly represents the input type for each encoding stage.
-
-    // --- END: Two-Phase Type Stack Logic ---
 
     let mut buffer_a = bytes.to_vec();
     let mut buffer_b = Vec::with_capacity(bytes.len() * 2);
     let mut input_buf = &mut buffer_a;
     let mut output_buf = &mut buffer_b;
 
-    // DECODE by walking the pipeline and type stack in reverse
     for op_config in pipeline.iter().rev() {
         let type_for_decode = type_stack.pop().ok_or_else(|| {
             PhoenixError::InternalError("Type stack desync during decompression".to_string())
         })?;
 
         output_buf.clear();
-        // The `type_for_decode` is the type we want to get back, which is exactly
-        // what the dispatcher needs to select the correct generic implementation.
-        kernels::dispatch_decode(op_config, input_buf, output_buf, &type_for_decode, num_values)?;
+        kernels::dispatch_decode(
+            op_config,
+            input_buf,
+            output_buf,
+            &type_for_decode,
+            num_values,
+        )?;
         std::mem::swap(&mut input_buf, &mut output_buf);
     }
 

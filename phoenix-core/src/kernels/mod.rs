@@ -33,9 +33,13 @@ pub mod dictionary;
 pub mod leb128;
 pub mod rle;
 pub mod shuffle;
+pub mod sparsity;
 pub mod xor_delta;
 pub mod zigzag;
 pub mod zstd;
+
+// NOTE: Sparsity is a meta-op handled by the executor, so it does NOT get an
+// arm in the dispatchers. This is intentional.
 
 //==================================================================================
 // 2. Public API (Unified Dispatchers - FINAL, CORRECTED VERSION)

@@ -8,13 +8,13 @@
 use arrow::array::Array;
 use arrow::record_batch::RecordBatch;
 use hashbrown::HashSet;
-use num_traits::{PrimInt, Signed, ToPrimitive, Unsigned, WrappingSub};
+use num_traits::{PrimInt, Signed, ToPrimitive, Unsigned, WrappingSub, Zero};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::ops::{BitXor, Shl, Shr};
 
 use crate::error::PhoenixError;
-use crate::kernels::zigzag;
+use crate::kernels::{sparsity, zigzag};
 use crate::pipeline::{executor, profiler, relinearize};
 use crate::traits::HasUnsigned;
 use crate::utils::{safe_bytes_to_typed_slice, typed_slice_to_bytes};
@@ -129,7 +129,6 @@ fn generate_candidate_pipelines(
     stride: usize,
     is_signed: bool,
 ) -> Vec<Vec<Value>> {
-    
     #[cfg(debug_assertions)]
     println!("[PLANNER] generate_candidate_pipelines");
 
@@ -222,17 +221,35 @@ fn find_best_pipeline_by_trial(
 }
 
 fn plan_bytes(bytes: &[u8], type_str: &str, stride: usize) -> Result<String, PhoenixError> {
-    #[cfg(debug_assertions)]
-    println!("[PLANNER] plan_bytes");
-    // --- START: THE FIX ---
-    // Define the sample size here, at the top level.
-    const SAMPLE_SIZE_BYTES: usize = 4096;
+
+    if bytes.is_empty() {
+        return Ok("[]".to_string());
+    }
+
+    const SAMPLE_SIZE_BYTES: usize = 65536;
     let sample_bytes = &bytes[..bytes.len().min(SAMPLE_SIZE_BYTES)];
 
-    // The analysis functions now run on the SAME sample that the trial will use.
+    const SPARSITY_THRESHOLD: f32 = 0.75;
+
+    // SCAFFOLD: This is the correct two-macro pattern.
+    // The sparsity check is duplicated, which is necessary to satisfy the compiler's type checker.
+
     macro_rules! plan_for_signed {
         ($T:ty) => {{
-            let p = analyze_signed_data(safe_bytes_to_typed_slice::<$T>(sample_bytes)?, stride);
+            // 1. Sparsity Check
+            let sample_slice = safe_bytes_to_typed_slice::<$T>(sample_bytes)?;
+            let zero_count = sample_slice.iter().filter(|&&v| v.is_zero()).count();
+            let zero_ratio = if sample_slice.is_empty() { 0.0 } else { zero_count as f32 / sample_slice.len() as f32 };
+
+            if zero_ratio > SPARSITY_THRESHOLD {
+                log_metric!("event"="plan_strategy", "outcome"="Sparsity", "zero_ratio"=&zero_ratio);
+                return Ok(serde_json::to_string(&vec![json!({"op": "sparsity"})]).unwrap());
+            }
+
+            // 2. Dense Strategy
+            let full_slice = safe_bytes_to_typed_slice::<$T>(bytes)?;
+            let p = analyze_signed_data(full_slice, stride);
+
             if p.is_constant {
                 Ok(serde_json::to_string(&vec![json!({"op": "rle"}), json!({"op": "zstd"})]).unwrap())
             } else {
@@ -240,9 +257,23 @@ fn plan_bytes(bytes: &[u8], type_str: &str, stride: usize) -> Result<String, Pho
             }
         }};
     }
+
     macro_rules! plan_for_unsigned {
         ($T:ty) => {{
-            let p = analyze_unsigned_data(safe_bytes_to_typed_slice::<$T>(sample_bytes)?, stride);
+            // 1. Sparsity Check
+            let sample_slice = safe_bytes_to_typed_slice::<$T>(sample_bytes)?;
+            let zero_count = sample_slice.iter().filter(|&&v| v.is_zero()).count();
+            let zero_ratio = if sample_slice.is_empty() { 0.0 } else { zero_count as f32 / sample_slice.len() as f32 };
+
+            if zero_ratio > SPARSITY_THRESHOLD {
+                log_metric!("event"="plan_strategy", "outcome"="Sparsity", "zero_ratio"=&zero_ratio);
+                return Ok(serde_json::to_string(&vec![json!({"op": "sparsity"})]).unwrap());
+            }
+
+            // 2. Dense Strategy
+            let full_slice = safe_bytes_to_typed_slice::<$T>(bytes)?;
+            let p = analyze_unsigned_data(full_slice, stride);
+
             if p.is_constant {
                 Ok(serde_json::to_string(&vec![json!({"op": "rle"}), json!({"op": "zstd"})]).unwrap())
             } else {
@@ -250,7 +281,6 @@ fn plan_bytes(bytes: &[u8], type_str: &str, stride: usize) -> Result<String, Pho
             }
         }};
     }
-    // --- END: THE FIX ---
 
     match type_str {
         "Int8" => plan_for_signed!(i8),
@@ -259,6 +289,7 @@ fn plan_bytes(bytes: &[u8], type_str: &str, stride: usize) -> Result<String, Pho
         "Int64" => plan_for_signed!(i64),
         "UInt32" => plan_for_unsigned!(u32),
         "UInt64" => plan_for_unsigned!(u64),
+        // Add other unsigned types if needed, e.g., UInt8, UInt16
         _ => Ok(serde_json::to_string(&vec![json!({"op": "zstd"})]).unwrap()),
     }
 }
@@ -353,7 +384,8 @@ pub fn plan_chunk(
 pub fn plan_pipeline(bytes: &[u8], type_str: &str) -> Result<String, PhoenixError> {
     #[cfg(debug_assertions)]
     println!("[PLANNER] plan_pipeline");
-    plan_bytes(bytes, type_str, 1)
+    let stride = profiler::find_stride_by_autocorrelation(bytes, type_str)?;
+    plan_bytes(bytes, type_str, stride)
 }
 
 //==================================================================================
@@ -436,5 +468,19 @@ mod tests {
             json!({"op": "zstd", "params": {"level": 3}}),
         ];
         assert_planner_is_optimal(&bytes, "UInt64", expected_best_plan);
+    }
+    #[test]
+
+    fn test_planner_chooses_sparsity_strategy() {
+        // 8 out of 10 values are zero (80% sparsity)
+        let data: Vec<i64> = vec![0, 0, 100, 0, 0, 0, 250, 0, 0, 0];
+        let bytes = typed_slice_to_bytes(&data);
+
+        let plan_json = plan_pipeline(&bytes, "Int64").unwrap();
+        let plan: Vec<Value> = serde_json::from_str(&plan_json).unwrap();
+
+        // Assert that the plan is the simple "sparsity" signal
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0]["op"], "sparsity");
     }
 }

@@ -4,7 +4,7 @@
 //! nullability, built correctly for the Arrow v55 API. It uses generics and the
 //! official `NullBuffer` and non-generic `Buffer` types.
 
-use arrow::array::{ArrayData, PrimitiveArray, PrimitiveBuilder};
+use arrow::array::{ArrayBuilder, ArrayData, PrimitiveArray, PrimitiveBuilder};
 use arrow::buffer::{Buffer, NullBuffer, ScalarBuffer};
 use arrow::datatypes::{ArrowNumericType, ToByteSlice}; // ToByteSlice is needed for tests
 
@@ -24,9 +24,7 @@ use crate::error::PhoenixError;
 ///
 /// # Returns
 /// A byte `Buffer` containing only the valid data values.
-pub fn strip_valid_data_to_buffer<T: ArrowNumericType>(
-    array: &PrimitiveArray<T>,
-) -> Buffer
+pub fn strip_valid_data_to_buffer<T: ArrowNumericType>(array: &PrimitiveArray<T>) -> Buffer
 where
     T::Native: ToByteSlice, // Ensure the native type can be viewed as bytes
 {
@@ -38,58 +36,67 @@ where
     Buffer::from(valid_data.to_byte_slice())
 }
 
-pub fn strip_valid_data_to_vec<T: ArrowNumericType>(
-    array: &PrimitiveArray<T>,
-) -> Vec<T::Native> {
+pub fn strip_valid_data_to_vec<T: ArrowNumericType>(array: &PrimitiveArray<T>) -> Vec<T::Native> {
     // The iterator on PrimitiveArray yields Option<T::Native>.
     // filter_map is the most idiomatic and efficient way to collect non-null values.
     array.iter().filter_map(|val| val).collect()
 }
 
-
 /// Re-applies a `NullBuffer` to a byte `Buffer` of valid data to reconstruct
-/// the original Arrow `PrimitiveArray`. This is a zero-copy operation.
-///
-/// # Args
-/// * `valid_data_buffer`: A non-generic Arrow `Buffer` containing the contiguous valid data as bytes.
-/// * `null_buffer`: An `Option<NullBuffer>`. `None` signifies an array with no nulls.
-///
-/// # Returns
-/// A new Arrow `PrimitiveArray<T>` with nulls correctly reinstated.
+/// the original Arrow `PrimitiveArray`.
+/// This is the primary helper for the DENSE data path.
 pub fn reapply_bitmap<T: ArrowNumericType>(
     valid_data_bytes: Vec<u8>,
     null_buffer: Option<NullBuffer>,
     num_rows: usize,
 ) -> Result<PrimitiveArray<T>, PhoenixError>
 where
-    T::Native: bytemuck::Pod, // Required for the safe cast
+    T::Native: bytemuck::Pod,
 {
-    let mut builder = PrimitiveBuilder::<T>::with_capacity(num_rows);
-
-    // --- THIS IS THE FIX ---
-    // If there are no valid values, we can just append nulls and finish early.
+    // THIS IS THE FIX for empty/all-null inputs.
     if valid_data_bytes.is_empty() {
+        let mut builder = PrimitiveBuilder::<T>::with_capacity(num_rows);
         for _ in 0..num_rows {
             builder.append_null();
         }
         return Ok(builder.finish());
     }
-    // --- END FIX ---
+    let valid_data: Vec<T::Native> = bytemuck::cast_slice(&valid_data_bytes).to_vec();
+    reapply_bitmap_from_vec(valid_data, null_buffer, num_rows)
+}
+
+/// Re-applies a `NullBuffer` to an already-reconstructed vector of typed data.
+pub fn reapply_bitmap_from_vec<T: ArrowNumericType>(
+    data_vec: Vec<T::Native>, // This should be the DENSE data (only non-null values)
+    null_buffer: Option<NullBuffer>,
+    num_rows: usize,
+) -> Result<PrimitiveArray<T>, PhoenixError> {
+    let mut builder = PrimitiveBuilder::<T>::with_capacity(num_rows);
 
     if let Some(nb) = null_buffer {
-        let valid_data: &[T::Native] = bytemuck::cast_slice(&valid_data_bytes);
-        let mut valid_data_iter = valid_data.iter();
-
-        for is_valid in nb.iter() {
-            if is_valid {
-                builder.append_value(*valid_data_iter.next().unwrap());
+        let mut data_iter = data_vec.iter();
+        for _ in 0..num_rows {
+            // THIS IS THE FIX: Check the validity bit FIRST.
+            if nb.is_valid(builder.len()) {
+                if let Some(&value) = data_iter.next() {
+                    builder.append_value(value);
+                } else {
+                    return Err(PhoenixError::InternalError(
+                        "Null bitmap indicates more valid values than data provided".to_string(),
+                    ));
+                }
             } else {
                 builder.append_null();
             }
         }
     } else {
-        let valid_data: &[T::Native] = bytemuck::cast_slice(&valid_data_bytes);
-        for &val in valid_data {
+        if data_vec.len() != num_rows {
+            return Err(PhoenixError::InternalError(format!(
+                "Data vector length ({}) does not match total rows ({}) when no null buffer is present",
+                data_vec.len(), num_rows
+            )));
+        }
+        for &val in &data_vec {
             builder.append_value(val);
         }
     }
@@ -148,6 +155,38 @@ mod tests {
         let reconstructed_array = reapply_bitmap::<Int32Type>(
             valid_data_bytes, // Pass the correct byte vector
             None,             // No nulls
+            total_rows,
+        )
+        .unwrap();
+
+        let expected_array = Int32Array::from(vec![10, 20, 30]);
+        assert_eq!(reconstructed_array, expected_array);
+    }
+    #[test]
+    fn test_reapply_bitmap_from_vec_with_nulls() {
+        // THIS IS THE FIX: Pass the DENSE data, not the sparse data.
+        let dense_vec: Vec<i32> = vec![10, 30, 50];
+        let null_buffer = NullBuffer::from(vec![true, false, true, false, true]);
+        let total_rows = 5;
+
+        let reconstructed_array = reapply_bitmap_from_vec::<Int32Type>(
+            dense_vec, // Pass the dense vector
+            Some(null_buffer),
+            total_rows,
+        )
+        .unwrap();
+
+        let expected_array = Int32Array::from(vec![Some(10), None, Some(30), None, Some(50)]);
+        assert_eq!(reconstructed_array, expected_array);
+    }
+
+    #[test]
+    fn test_reapply_bitmap_from_vec_no_nulls() {
+        let data_vec: Vec<i32> = vec![10, 20, 30];
+        let total_rows = 3;
+
+        let reconstructed_array = reapply_bitmap_from_vec::<Int32Type>(
+            data_vec, None, // No nulls
             total_rows,
         )
         .unwrap();
