@@ -8,9 +8,7 @@
 //==================================================================================
 // 1. Module Declarations
 //==================================================================================
-
 /// Contains all logic for interfacing with the Python/CPython ecosystem,
-/// primarily using the `pyo3` and `pyarrow` crates.
 pub mod python;
 
 //==================================================================================
@@ -23,4 +21,7 @@ pub use self::python::{
     compress_analyze_py,
     decompress_py,
     plan_py,
+    compress_frame_py,
+    decompress_frame_py,
+    get_frame_diagnostics_py,
 };

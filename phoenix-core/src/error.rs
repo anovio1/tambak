@@ -1,21 +1,17 @@
 //! This module defines the single, unified error type for the entire Phoenix
 //! library.
-//!
-//! By using a single error enum, we can easily propagate errors from any kernel
-//! or pipeline stage all the way up to the FFI boundary, where it can be
-//! cleanly translated into a Python exception. The `thiserror` crate is used
-//! to reduce boilerplate.
+//! For v4.0, we add new variants to cover failures in the new,
+//! more complex pipeline stages.
 
 use pyo3::PyErr;
 use thiserror::Error;
-use pyo3::exceptions::PyException;
 
 #[derive(Error, Debug)]
 pub enum PhoenixError {
     #[error("Unsupported data type for this operation: {0}")]
     UnsupportedType(String),
 
-    #[error("Buffer length mismatch: expected {0}, got {1}")]
+    #[error("Buffer length mismatch: expected a multiple of {0}, got {1}")]
     BufferMismatch(usize, usize),
 
     #[error("Zstd operation failed: {0}")]
@@ -39,14 +35,31 @@ pub enum PhoenixError {
         #[source]
         source: Box<PhoenixError>,
     },
-
-    // RENAMED: This is for errors that come from the Python/FFI boundary.
+    
     #[error("FFI operation failed: {0}")]
     FfiError(String),
 
     #[error("Internal logic error (this is a bug): {0}")]
     InternalError(String),
+
+    // --- NEW V4.0 ERRORS ---
+    #[error("Structure discovery failed: {0}")]
+    StructureDiscoveryError(String),
+
+    #[error("Time-series relinearization failed: {0}")]
+    RelinearizationError(String),
+
+    #[error("Dictionary encoding/decoding failed: {0}")]
+    DictionaryError(String),
+
+    #[error("ANS encoding/decoding failed: {0}")]
+    AnsError(String),
+
+    #[error("Frame serialization/deserialization failed: {0}")]
+    FrameFormatError(String),
 }
+
+// --- FFI Conversion (Unchanged) ---
 
 impl From<PyErr> for PhoenixError {
     fn from(err: PyErr) -> Self {
@@ -54,10 +67,9 @@ impl From<PyErr> for PhoenixError {
     }
 }
 
-// This part for converting our error back to a PyErr is still correct.
 impl From<PhoenixError> for PyErr {
     fn from(err: PhoenixError) -> PyErr {
+        // We can add more specific Python exception types later if needed.
         pyo3::exceptions::PyValueError::new_err(err.to_string())
     }
 }
-

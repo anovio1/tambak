@@ -1,15 +1,15 @@
 //! This module is the FFI "Anti-Corruption Layer" for the Phoenix library.
 // ... (module description is unchanged) ...
 
-use arrow::array::{make_array, ArrayData};
+use arrow::array::{make_array, ArrayData, RecordBatch};
 use pyo3::prelude::*;
 // use polars::prelude::{Series, PolarsDataType};
 use arrow::pyarrow::FromPyArrow;
 // use pyo3_polars::PyDataFrame
 use crate::error::PhoenixError;
-use crate::pipeline::{orchestrator, planner, get_compressed_chunk_info};
+use crate::pipeline::{get_compressed_chunk_info, orchestrator, planner, PlannerHints};
 use crate::utils;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyBytes, PyDict, PyString};
 
 //==================================================================================
 // 1. Public Python Functions (Final Version)
@@ -65,8 +65,6 @@ pub fn compress_analyze_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
 
 #[pyfunction]
 #[pyo3(name = "decompress")]
-// --- THIS IS THE MODIFIED FUNCTION ---
-// The `original_type: &str` parameter has been removed.
 pub fn decompress_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
     // The call to `decompress_chunk` now only takes the bytes, as the
     // artifact is self-describing.
@@ -84,22 +82,39 @@ pub fn plan_py(py: Python, bytes: &[u8], original_type: &str) -> PyResult<String
     py.allow_threads(move || planner::plan_pipeline(bytes, original_type).map_err(PhoenixError::into))
 }
 
-// // --- DataFrame Functions ---
+#[pyfunction]
+#[pyo3(name = "compress_frame", signature = (batch_py, hints = None))]
+pub fn compress_frame_py<'py>(
+    py: Python<'py>,
+    batch_py: &PyAny,
+    hints: Option<&PyDict>,
+) -> PyResult<&'py PyBytes> {
+    let rust_batch = RecordBatch::from_pyarrow(batch_py)?;
 
-// #[pyfunction]
-// #[pyo3(name = "compress_frame")]
-// pub fn compress_frame_py(py: Python, dataframe_py: &PyAny) -> PyResult<Vec<u8>> {
-//     let df = dataframe_py.extract::<PyDataFrame>()?.into();
-//     py.allow_threads(move || {
-//         frame_orchestrator::compress_frame(&df).map_err(PhoenixError::into)
-//     })
-// }
+    let rust_hints = if let Some(hints_dict) = hints {
+        Some(PlannerHints {
+            stream_id_column: hints_dict.get_item("stream_id_column")?.map(|v| v.extract()).transpose()?,
+            timestamp_column: hints_dict.get_item("timestamp_column")?.map(|v| v.extract()).transpose()?,
+        })
+    } else {
+        None
+    };
 
-// #[pyfunction]
-// #[pyo3(name = "decompress_frame")]
-// pub fn decompress_frame_py(py: Python, bytes: &[u8]) -> PyResult<PyDataFrame> {
-//     py.allow_threads(move || {
-//         let df = frame_orchestrator::decompress_frame(bytes)?;
-//         Ok(PyDataFrame(df))
-//     })
-// }
+    let compressed_vec = py.allow_threads(move || {
+        orchestrator::compress_frame(&rust_batch, &rust_hints)
+    })?;
+
+    Ok(PyBytes::new(py, &compressed_vec))
+}
+
+#[pyfunction]
+pub fn decompress_frame_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
+    let batch = py.allow_threads(move || orchestrator::decompress_frame(bytes))?;
+    batch.to_pyarrow(py)
+}
+
+#[pyfunction]
+pub fn get_frame_diagnostics_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
+    let diagnostics_json = orchestrator::get_frame_diagnostics(bytes)?;
+    Ok(PyString::new(py, &diagnostics_json).into())
+}

@@ -9,51 +9,37 @@
 //==================================================================================
 // 1. Module Declarations
 //==================================================================================
-// This section tells the compiler about the other files and directories in `src/`.
-// The order does not matter, but alphabetical is conventional.
+#[macro_use]
+mod observability; // Make macros available throughout the crate
 
 mod error;
 mod ffi;
 mod kernels;
 mod null_handling;
 mod pipeline;
-pub mod traits;
+mod traits;
 mod utils;
 
 //==================================================================================
 // 2. Python Module Definition
 //==================================================================================
-// This is the core of the FFI integration. The `#[pymodule]` macro generates
-// the necessary boilerplate to create a Python-importable module.
-
 use pyo3::prelude::*;
 
-/// Defines the `phoenix_cache` Python module.
-///
-/// This function is called by the Python interpreter when a user runs
-/// `import phoenix_cache`. Its only job is to add our public-facing
-
-/// functions (which live in the `ffi` module) to the module's namespace.
+/// The `phoenix_cache` Python module, containing all exposed Rust functions.
 #[pymodule]
 fn phoenix_cache(py: Python, m: &PyModule) -> PyResult<()> {
-    // Add the core functions from our FFI layer.
-    // We use the `_py` suffix in Rust to be clear these are the FFI entry points,
-    // but the `#[pyo3(name = "...")]` attribute in `ffi/python.rs` gives them
-    // a clean name in Python.
-    m.add_function(wrap_pyfunction!(ffi::python::compress_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ffi::python::decompress_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ffi::python::plan_py, m)?)?;
+    // --- V4.0 Frame-level API ---
+    m.add_function(wrap_pyfunction!(ffi::compress_frame_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ffi::decompress_frame_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ffi::get_frame_diagnostics_py, m)?)?;
 
-    //  Returns header size as well as plan
-    m.add_function(wrap_pyfunction!(ffi::python::compress_analyze_py, m)?)?;
+    // --- V3.9 Legacy Chunk-level API ---
+    m.add_function(wrap_pyfunction!(ffi::compress_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ffi::decompress_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ffi::plan_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ffi::compress_analyze_py, m)?)?;
 
-    // //  data frame
-    // m.add_function(wrap_pyfunction!(ffi::python::compress_frame_py, m)?)?;
-    // m.add_function(wrap_pyfunction!(ffi::python::decompress_frame_py, m)?)?;
-
-    // As a best practice, we can also expose a standard Python exception type
-    // for error handling in Python code. If you want a custom exception,
-    // you must define it with #[pyclass] and #[pymethods] in a separate module.
+    // --- Expose the custom error type ---
     m.add(
         "PhoenixError",
         py.get_type::<pyo3::exceptions::PyValueError>(),

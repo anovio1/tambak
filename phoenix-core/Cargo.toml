@@ -1,7 +1,7 @@
 # This is the manifest for the Rust core of the Phoenix library.
 [package]
 name = "phoenix-core"
-version = "3.9.0"
+version = "4.0.0"
 edition = "2021"
 authors = ["anovio1 <anastace.novio@gmail.com>"]
 description = "Core Rust library for the Phoenix high-performance compression protocol."
@@ -14,14 +14,14 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # --- FFI & Python Integration ---
-pyo3 = { version = "0.20", features = ["extension-module"] }
+pyo3 = { version = "0.21.2", features = ["extension-module"] }
 
 # --- DataFrames & Arrow Integration ---
 # We only depend on polars. It re-exports the correct, compatible version of arrow.
 # polars = { version = "0.37.0", features = ["dtype-full", "dtype-struct"] }
 # polars-arrow = { version = "0.37.0" }
 # pyo3-polars = "0.10.0"
-arrow = {version = "50.0", features = ["pyarrow"]}
+arrow = {version = "52.0", features = ["pyarrow"]}
 
 # --- Core Utilities ---
 thiserror = "1.0"
@@ -29,6 +29,7 @@ bytemuck = { version = "1.14", features = ["derive"] }
 bitvec = "1.0"
 num-traits = "0.2"
 serde_json = "1.0"
+ndarray = {version = "0.16.1"}
 
 # --- Compression Kernels ---
 zstd = "0.13"

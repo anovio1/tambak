@@ -18,6 +18,8 @@ pub mod planner;
 /// The "Foreman": Executes a given compression/decompression plan.
 pub mod executor;
 
+pub mod profiler;
+
 //==================================================================================
 // 2. Public API Re-exports
 //==================================================================================
@@ -27,5 +29,15 @@ pub mod executor;
 pub use self::orchestrator::{
     compress_chunk,
     decompress_chunk,
+    compress_frame,
+    decompress_frame,
     get_compressed_chunk_info,
+};
+
+pub use self::planner::{
+    plan_pipeline
+};
+
+pub use self::profiler::{
+    PlannerHints
 };
