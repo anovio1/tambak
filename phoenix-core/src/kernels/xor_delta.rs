@@ -6,7 +6,6 @@
 //! isolate bit-flips in slowly changing data.
 
 use bytemuck;
-use num_traits::PrimInt;
 use std::ops::BitXor;
 
 use crate::error::PhoenixError;

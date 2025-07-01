@@ -7,6 +7,7 @@
 //! much more effectively by subsequent pipeline stages.
 
 use crate::error::PhoenixError;
+use bytemuck::Pod;
 use num_traits::{PrimInt, Zero};
 
 /// Splits a sparse data stream into a boolean mask and a dense data vector.
@@ -17,7 +18,7 @@ use num_traits::{PrimInt, Zero};
 /// 2.  A `Vec<T>` containing only the non-zero values from the input.
 pub fn split_stream<T>(data: &[T]) -> Result<(Vec<bool>, Vec<T>), PhoenixError>
 where
-    T: PrimInt + Zero,
+    T: Pod + Zero,
 {
     let mut mask = Vec::with_capacity(data.len());
     let mut dense_data = Vec::with_capacity(data.len() / 2); // Pre-allocate assuming 50% sparsity
@@ -48,7 +49,7 @@ pub fn reconstruct_stream<T>(
     total_len: usize,
 ) -> Result<Vec<T>, PhoenixError>
 where
-    T: PrimInt + Zero,
+    T: Pod + Zero,
 {
     if mask.len() != total_len {
         return Err(PhoenixError::SparsityError(format!(

@@ -35,7 +35,7 @@ pub enum PhoenixError {
         #[source]
         source: Box<PhoenixError>,
     },
-    
+
     #[error("FFI operation failed: {0}")]
     FfiError(String),
 
@@ -62,7 +62,7 @@ pub enum PhoenixError {
     SparsityError(String),
 }
 
-// --- FFI Conversion (Unchanged) ---
+// --- FFI Conversion ---
 
 impl From<PyErr> for PhoenixError {
     fn from(err: PyErr) -> Self {
@@ -72,7 +72,20 @@ impl From<PyErr> for PhoenixError {
 
 impl From<PhoenixError> for PyErr {
     fn from(err: PhoenixError) -> PyErr {
-        // We can add more specific Python exception types later if needed.
         pyo3::exceptions::PyValueError::new_err(err.to_string())
+    }
+}
+
+// --- THIS IS THE FIX for the `?` operator ---
+
+impl From<serde_json::Error> for PhoenixError {
+    fn from(err: serde_json::Error) -> Self {
+        PhoenixError::InternalError(format!("JSON serialization/deserialization error: {}", err))
+    }
+}
+
+impl From<bytemuck::PodCastError> for PhoenixError {
+    fn from(err: bytemuck::PodCastError) -> Self {
+        PhoenixError::InternalError(format!("Byte slice casting error: {}", err))
     }
 }

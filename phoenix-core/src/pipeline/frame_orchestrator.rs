@@ -2,7 +2,7 @@
 //! decompressing entire RecordBatches ("Frames").
 //!
 //! It acts as a higher-level orchestrator that uses the single-column
-//! `orchestrator` and `executor` as building blocks. Its primary responsibilities are
+//! `orchestrator` as a building block. Its primary responsibilities are
 //! multi-column coordination and handling of batch-level structural hints.
 
 use arrow::array::{Array, RecordBatch};
@@ -11,8 +11,7 @@ use serde_json::{json, Value};
 use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
-// Use aliases for clarity, as we now interact with both chunk-level modules.
-use super::executor as chunk_executor;
+// Use an alias for clarity, as we now interact with the chunk-level orchestrator.
 use super::orchestrator as chunk_orchestrator;
 use crate::error::PhoenixError;
 use crate::pipeline::artifact::CompressedChunk;
@@ -25,7 +24,7 @@ const MAGIC_NUMBER: &[u8] = b"PHNX";
 const FRAME_VERSION: u16 = 1;
 
 //==================================================================================
-// 2. Frame Orchestration Logic (v4.1 Refactored)
+// 2. Frame Orchestration Logic (v4.2 Corrected)
 //==================================================================================
 
 /// Compresses an entire RecordBatch into a Phoenix Frame artifact.
@@ -46,20 +45,13 @@ pub fn compress_frame(
         .write_all(&(batch.num_columns() as u32).to_le_bytes())
         .map_err(|e| PhoenixError::FrameFormatError(e.to_string()))?;
 
-    // TODO: Here is where batch-level pre-computation, like relinearization, would be called.
-
     // 2. Compress each column into a chunk and append it to the frame.
     for i in 0..batch.num_columns() {
         let array = batch.column(i);
-        let col_name = batch.schema().field(i).name();
 
-        // THE NEW, REFACTORED FLOW
-        // a. The Orchestrator creates the plan for the column.
-        let plan_json = chunk_orchestrator::create_plan(array.as_ref())?;
-        // b. The Executor executes that plan to get the compressed chunk bytes.
-        let chunk_bytes = chunk_executor::execute_plan(array.as_ref(), &plan_json)?;
+        // CORRECTED: A single, high-level call to the chunk orchestrator.
+        let chunk_bytes = chunk_orchestrator::compress_chunk(array.as_ref())?;
 
-        // c. Write the resulting chunk to the frame buffer.
         final_buffer
             .write_all(&(chunk_bytes.len() as u64).to_le_bytes())
             .map_err(|e| PhoenixError::FrameFormatError(e.to_string()))?;
@@ -121,9 +113,8 @@ pub fn decompress_frame(bytes: &[u8]) -> Result<RecordBatch, PhoenixError> {
             PhoenixError::FrameFormatError(format!("Chunk data out of bounds for column {}", i))
         })?;
 
-        // THE NEW, REFACTORED CALL
-        // The executor's decompress_plan function is now the entry point.
-        let array = chunk_executor::decompress_plan(chunk_bytes)?;
+        // CORRECTED: A single, high-level call to the chunk orchestrator.
+        let array = chunk_orchestrator::decompress_chunk(chunk_bytes)?;
 
         fields.push(Field::new(
             format!("col_{}", i),
@@ -168,17 +159,19 @@ pub fn get_frame_diagnostics(bytes: &[u8]) -> Result<String, PhoenixError> {
             PhoenixError::FrameFormatError(format!("Chunk data out of bounds for column {}", i))
         })?;
 
-        // Parse the chunk to get its plan
+        // CORRECTED: Parse the chunk artifact to get its plan and other metadata.
         let chunk_artifact = CompressedChunk::from_bytes(chunk_bytes)?;
         let plan_value: Value = serde_json::from_str(&chunk_artifact.plan_json).map_err(|e| {
             PhoenixError::InternalError(format!("Failed to parse plan_json: {}", e))
         })?;
+
         let col_diag = json!({
             "column_index": i,
             "original_type": chunk_artifact.original_type,
             "total_rows": chunk_artifact.total_rows,
             "plan": plan_value,
             "compressed_size": chunk_bytes.len(),
+            "streams": chunk_artifact.compressed_streams.iter().map(|(k, v)| (k.clone(), v.len().into())).collect::<serde_json::Map<String, Value>>(),
         });
         all_diagnostics.push(col_diag);
 
@@ -227,6 +220,16 @@ mod tests {
         let original_batch = create_test_batch();
         let hints = None;
 
+        // --- CHECKPOINT ---
+        // Let's inspect the plans generated for each column before compression.
+        println!("\n--- CHECKPOINT: test_frame_roundtrip_basic ---");
+        let plan_col_a = chunk_orchestrator::create_plan(original_batch.column(0)).unwrap();
+        let plan_col_b = chunk_orchestrator::create_plan(original_batch.column(1)).unwrap();
+        println!("  - Plan for Column A (Int32): {}", plan_col_a);
+        println!("  - Plan for Column B (Float64): {}", plan_col_b);
+        println!("---------------------------------------------\n");
+        // --- END CHECKPOINT ---
+
         // 1. Compress
         let compressed_bytes = compress_frame(&original_batch, &hints).expect("Compression failed");
         assert!(!compressed_bytes.is_empty());
@@ -269,6 +272,17 @@ mod tests {
     #[test]
     fn test_get_frame_diagnostics_is_valid_json() {
         let original_batch = create_test_batch();
+
+        // --- CHECKPOINT ---
+        println!("\n--- CHECKPOINT: test_get_frame_diagnostics_is_valid_json ---");
+        let plan_col_b = chunk_orchestrator::create_plan(original_batch.column(1)).unwrap();
+        println!(
+            "  - Pre-compression Plan for Column B (Float64): {}",
+            plan_col_b
+        );
+        println!("-------------------------------------------------------------\n");
+        // --- END CHECKPOINT ---
+
         let compressed_bytes = compress_frame(&original_batch, &None).unwrap();
 
         let diagnostics_json = get_frame_diagnostics(&compressed_bytes).unwrap();
@@ -279,5 +293,6 @@ mod tests {
         assert_eq!(diagnostics_array.len(), 2); // Two columns
         assert_eq!(diagnostics_array[0]["column_index"], 0);
         assert_eq!(diagnostics_array[1]["original_type"], "Float64");
+        assert!(diagnostics_array[1]["streams"].is_object());
     }
 }

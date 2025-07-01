@@ -38,6 +38,7 @@ pub use self::orchestrator::{
 pub use self::frame_orchestrator::{
     compress_frame,
     decompress_frame,
+    get_frame_diagnostics,
 };
 
 pub use self::planner::{
@@ -48,3 +49,6 @@ pub use self::profiler::{
     PlannerHints,
     find_stride_by_autocorrelation
 };
+
+#[cfg(test)]
+mod orchestrator_tests;

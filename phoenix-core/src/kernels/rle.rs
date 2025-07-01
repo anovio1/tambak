@@ -24,7 +24,7 @@ pub fn encode<T>(
     output_buf: &mut Vec<u8>,
 ) -> Result<(), PhoenixError>
 where
-    T: PrimInt + PartialEq + bytemuck::Pod,
+    T: PrimInt + PartialEq + bytemuck::Pod + std::fmt::Debug,
 {
     output_buf.clear();
 
@@ -46,6 +46,8 @@ where
         }
     }
 
+
+
     output_buf.extend_from_slice(bytemuck::bytes_of(&current_val));
     leb128::encode_one(run_count, output_buf)?;
 
@@ -63,7 +65,7 @@ where
 {
     output_buf.clear();
     output_buf.reserve(num_values * std::mem::size_of::<T>());
-
+    
     let mut cursor = Cursor::new(input_bytes);
     let element_size = std::mem::size_of::<T>();
 

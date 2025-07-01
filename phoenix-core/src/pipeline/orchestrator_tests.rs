@@ -1,13 +1,17 @@
 use std::any::TypeId;
 
+// Add this import to bring CompressedChunk into scope
+use crate::pipeline::artifact::CompressedChunk;
+
 // This line is crucial. It imports all the public items from the parent module
 // (which will be orchestrator.rs).
 use super::*;
 
 // We also need to bring in any external test dependencies.
-use arrow::array::{Float32Array, Float64Array, Int32Array, Int64Array, PrimitiveArray};
-use arrow::datatypes::{ArrowNumericType, Float32Type, Float64Type, Int32Type, Int64Type};
+use arrow::array::{Array, Float32Array, Float64Array, Int32Array, Int64Array, PrimitiveArray};
+use arrow::datatypes::{ArrowNumericType};
 use bytemuck::Pod;
+use serde_json::{Value};
 
 //==============================================================================
 // 3.1 The Authoritative Roundtrip Test Helper
@@ -217,7 +221,7 @@ fn test_roundtrip_constant_integers_triggers_rle() {
 }
 
 //==============================================================================
-// 3.5 Sparsity Strategy Test
+// 3.5 NEW v4.2 ARCHITECTURE VALIDATION TESTS (NON-OVERLAPPING)
 //==============================================================================
 
 #[test]
@@ -241,23 +245,74 @@ fn test_sparsity_strategy_is_triggered_and_correct() {
     let compressed_artifact_bytes =
         compress_chunk(&original_array).expect("Sparsity compression failed");
 
-    // 2. Verify that the sparsity path was taken by inspecting the artifact.
-    // We don't need to decompress the whole thing, just parse the artifact header.
+    // 2. Verify the intermediate artifact and plan, which existing tests do not.
     let artifact =
         CompressedChunk::from_bytes(&compressed_artifact_bytes).expect("Failed to parse artifact");
+    let plan: Vec<Value> = serde_json::from_str(&artifact.plan_json).unwrap();
+    #[cfg(debug_assertions)]
+    println!("[CHECKPOINT] sparsity_strategy_is_triggered plan: {}", serde_json::to_string(&plan).unwrap());
 
-    // THIS IS THE KEY ASSERTION:
-    // If the sparsity path was taken, the artifact will have a compressed_mask.
+    // THIS IS THE KEY NON-OVERLAPPING ASSERTION:
+    // We verify that the *correct architectural path* was chosen by the planner.
+    let sparsify_op = plan.iter().find(|op| op["op"] == "Sparsify");
     assert!(
-        artifact.compressed_mask.is_some(),
-        "Sparsity strategy was not triggered: compressed_mask is None"
+        sparsify_op.is_some(),
+        "Sparsity strategy was not triggered: 'Sparsify' op is missing from the plan"
+    );
+
+    // We also verify the artifact has the correct multi-stream shape.
+    assert!(
+        artifact.compressed_streams.contains_key("main"),
+        "Artifact missing 'main' stream"
     );
     assert!(
-        artifact.mask_pipeline_json.is_some(),
-        "Sparsity strategy was not triggered: mask_pipeline_json is None"
+        artifact.compressed_streams.contains_key("null_mask"),
+        "Artifact missing 'null_mask' stream"
+    );
+    assert!(
+        artifact.compressed_streams.contains_key("sparsity_mask"),
+        "Artifact missing 'sparsity_mask' stream"
     );
 
-    // 3. Verify the roundtrip correctness.
-    // This ensures that even if the sparse path was taken, the data is reconstructed perfectly.
+    // 3. Verify the roundtrip correctness using the existing helper.
+    roundtrip_test(&original_array);
+}
+
+#[test]
+fn test_dense_strategy_is_correctly_chosen() {
+    // This array is dense and should not trigger the sparsity strategy.
+    let original_array = Int64Array::from(vec![
+        Some(100),
+        Some(101),
+        Some(102),
+        Some(103),
+        None,
+        Some(105),
+    ]);
+
+    // 1. Compress the array.
+    let compressed_artifact_bytes = compress_chunk(&original_array).unwrap();
+
+    // 2. Verify the intermediate artifact and plan.
+    let artifact = CompressedChunk::from_bytes(&compressed_artifact_bytes).unwrap();
+    let plan: Vec<Value> = serde_json::from_str(&artifact.plan_json).unwrap();
+
+    // THIS IS THE KEY NON-OVERLAPPING ASSERTION:
+    // We verify that the Sparsity path was *not* taken.
+    let sparsify_op = plan.iter().find(|op| op["op"] == "Sparsify");
+    assert!(
+        sparsify_op.is_none(),
+        "Sparsity strategy was incorrectly triggered for dense data"
+    );
+
+    // We also verify the artifact has the correct dense shape.
+    assert!(artifact.compressed_streams.contains_key("main"));
+    assert!(artifact.compressed_streams.contains_key("null_mask"));
+    assert!(
+        !artifact.compressed_streams.contains_key("sparsity_mask"),
+        "Artifact should not have a 'sparsity_mask' stream for dense data"
+    );
+
+    // 3. Verify the roundtrip correctness using the existing helper.
     roundtrip_test(&original_array);
 }

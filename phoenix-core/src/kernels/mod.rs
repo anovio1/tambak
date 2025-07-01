@@ -6,7 +6,8 @@
 //! point for the `pipeline::executor`. It takes an operation definition from the
 //! pipeline plan and calls the appropriate generic kernel implementation.
 
-use crate::{error::PhoenixError};
+use crate::error::PhoenixError;
+use crate::utils::typed_slice_to_bytes;
 use serde_json::Value;
 
 // Helper function to convert input bytes to a typed Vec<T>
@@ -27,7 +28,9 @@ fn typed_vec_from_bytes<T: bytemuck::Pod>(input_bytes: &[u8]) -> Result<Vec<T>, 
 //==================================================================================
 
 pub mod ans;
+pub mod bitcast;
 pub mod bitpack;
+pub mod canonicalize;
 pub mod delta;
 pub mod dictionary;
 pub mod leb128;
@@ -37,8 +40,6 @@ pub mod sparsity;
 pub mod xor_delta;
 pub mod zigzag;
 pub mod zstd;
-pub mod canonicalize;
-pub mod bitcast;
 
 // NOTE: Sparsity is a meta-op handled by the executor, so it does NOT get an
 // arm in the dispatchers. This is intentional.
@@ -200,7 +201,7 @@ pub fn dispatch_encode(
         "ans" => {
             // This follows the established pattern for raw byte-stream kernels like zstd.
             ans::encode(input_bytes, output_buf)
-        },
+        }
         "CanonicalizeZeros" => match type_str {
             "Float32" => safe_convert_and_exec!(f32, canonicalize, output_buf),
             "Float64" => safe_convert_and_exec!(f64, canonicalize, output_buf),
@@ -210,7 +211,18 @@ pub fn dispatch_encode(
             ))),
         },
         "BitCast" => {
-            let to_type = params["to_type"].as_str().ok_or_else(|| {
+            // --- CHECKPOINT: BitCast Dispatch ---
+            #[cfg(debug_assertions)]
+            {
+                println!("\n[CHECKPOINT] KERNEL DISPATCH: BitCast");
+                println!("  - op_config: {}", op_config.to_string());
+                println!("  - type_str (from): {}", type_str);
+                println!("  - input_bytes.len(): {}", input_bytes.len());
+                println!("[CHECKPOINT DEBUG] params: {}", params);
+            }
+            // --- END CHECKPOINT ---\n");
+
+            let to_type = op_config["to_type"].as_str().ok_or_else(|| {
                 PhoenixError::UnsupportedType("BitCast requires a 'to_type' param".to_string())
             })?;
             match (type_str, to_type) {
@@ -222,7 +234,7 @@ pub fn dispatch_encode(
                     type_str, to_type
                 ))),
             }
-        },
+        }
         _ => Err(PhoenixError::UnsupportedType(format!(
             "Unsupported encode op: {}",
             op
@@ -396,16 +408,16 @@ pub fn dispatch_decode(
         "ans" => {
             // This follows the established pattern for raw byte-stream kernels like zstd.
             ans::decode(input_bytes, output_buf, num_values)
-        },
+        }
         "CanonicalizeZeros" => {
             // This is a one-way transform, so decode is a no-op.
             canonicalize::decode(input_bytes, output_buf)
-        },
+        }
         "BitCast" => {
             // The "to_type" in the plan was for the *encode* direction.
             // For decode, we must infer the reverse cast from the `type_str`
             // that the executor is tracking.
-            let from_type = params["to_type"].as_str().ok_or_else(|| {
+            let from_type = op_config["to_type"].as_str().ok_or_else(|| {
                 PhoenixError::UnsupportedType("BitCast requires a 'to_type' param".to_string())
             })?;
             match (from_type, type_str) {
@@ -417,7 +429,7 @@ pub fn dispatch_decode(
                     from_type, type_str
                 ))),
             }
-        },
+        }
         _ => Err(PhoenixError::UnsupportedType(format!(
             "Unsupported decode op: {}",
             op
@@ -554,5 +566,67 @@ mod tests {
         .unwrap();
 
         assert_eq!(decompressed_buf, original_data);
+    }
+}
+
+// --- NEW SPARSITY DISPATCHERS ---
+
+/// Dispatches a `split_stream` call to the correct typed kernel.
+pub fn dispatch_split_stream(
+    input_bytes: &[u8],
+    type_str: &str,
+) -> Result<(Vec<bool>, Vec<u8>), PhoenixError> {
+    macro_rules! handle_sparsity_split {
+        ($T:ty) => {{
+            let typed_slice: &[$T] = bytemuck::try_cast_slice(input_bytes)?;
+            let (mask, dense_vec) = sparsity::split_stream(typed_slice)?;
+            Ok((mask, typed_slice_to_bytes(&dense_vec)))
+        }};
+    }
+    match type_str {
+        "Int8" => handle_sparsity_split!(i8),
+        "Int16" => handle_sparsity_split!(i16),
+        "Int32" => handle_sparsity_split!(i32),
+        "Int64" => handle_sparsity_split!(i64),
+        "UInt8" => handle_sparsity_split!(u8),
+        "UInt16" => handle_sparsity_split!(u16),
+        "UInt32" => handle_sparsity_split!(u32),
+        "UInt64" => handle_sparsity_split!(u64),
+        _ => Err(PhoenixError::UnsupportedType(format!(
+            "Sparsify is not supported for type {}",
+            type_str
+        ))),
+    }
+}
+
+/// Dispatches a `reconstruct_stream` call to the correct typed kernel.
+pub fn dispatch_reconstruct_stream(
+    mask: &[bool],
+    dense_data_bytes: &[u8],
+    type_str: &str,
+    total_len: usize,
+) -> Result<Vec<u8>, PhoenixError> {
+    macro_rules! handle_sparsity_reconstruct {
+        ($T:ty) => {{
+            let typed_values: &[$T] = bytemuck::try_cast_slice(dense_data_bytes)?;
+            let reconstructed_vec = sparsity::reconstruct_stream(mask, typed_values, total_len)?;
+            Ok(typed_slice_to_bytes(&reconstructed_vec))
+        }};
+    }
+    match type_str {
+        "Int8" => handle_sparsity_reconstruct!(i8),
+        "Int16" => handle_sparsity_reconstruct!(i16),
+        "Int32" => handle_sparsity_reconstruct!(i32),
+        "Int64" => handle_sparsity_reconstruct!(i64),
+        "UInt8" => handle_sparsity_reconstruct!(u8),
+        "UInt16" => handle_sparsity_reconstruct!(u16),
+        "UInt32" => handle_sparsity_reconstruct!(u32),
+        "UInt64" => handle_sparsity_reconstruct!(u64),
+        "Float32" => handle_sparsity_reconstruct!(f32),
+        "Float64" => handle_sparsity_reconstruct!(f64),
+        _ => Err(PhoenixError::UnsupportedType(format!(
+            "Desparsify is not supported for type {}",
+            type_str
+        ))),
     }
 }

@@ -19,6 +19,11 @@ where
     I: Pod,
     O: Pod,
 {
+    if input_bytes.is_empty() {
+        output_buf.clear();
+        return Ok(());
+    }
+
     // Critical safety check: The types must be the same size for a bit-cast.
     if std::mem::size_of::<I>() != std::mem::size_of::<O>() {
         return Err(PhoenixError::InternalError(format!(
@@ -54,7 +59,31 @@ where
     I: Pod,
     O: Pod,
 {
-    bitcast_internal::<I, O>(input_bytes, output_buf)
+    // --- CHECKPOINT: BitCast Kernel Execution ---
+    #[cfg(debug_assertions)]
+    {
+        println!("[CHECKPOINT] KERNEL EXECUTION: bitcast::encode");
+        println!("  - Casting from I: {}", std::any::type_name::<I>());
+        println!("  - Casting to   O: {}", std::any::type_name::<O>());
+        println!("  - input_bytes.len(): {}", input_bytes.len());
+    }
+    // --- END CHECKPOINT ---
+
+    let result = bitcast_internal::<I, O>(input_bytes, output_buf);
+
+    // --- CHECKPOINT: BitCast Kernel Result ---
+    #[cfg(debug_assertions)]
+    {
+        if result.is_ok() {
+            println!("  - SUCCESS: output_buf.len() = {}", output_buf.len());
+        } else {
+            println!("  - FAILURE: {:?}", result);
+        }
+        println!("[CHECKPOINT] KERNEL EXECUTION: bitcast::encode FINISHED\n");
+    }
+    // --- END CHECKPOINT ---
+
+    result
 }
 
 /// The public-facing decode function. Casts from type `I` back to type `O`.

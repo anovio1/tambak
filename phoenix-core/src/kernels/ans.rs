@@ -24,7 +24,7 @@ struct AnsSymbol {
 fn build_normalized_symbols(
     input_bytes: &[u8],
 ) -> Result<([AnsSymbol; 256], Vec<(u8, u16)>), PhoenixError> {
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(feature = "dans")))]
     println!(
         "[ANS DEBUG] Entering build_normalized_symbols for {} bytes.",
         input_bytes.len()
@@ -42,7 +42,7 @@ fn build_normalized_symbols(
     }
 
     let unique_symbol_count = freqs.iter().filter(|&&c| c > 0).count();
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(feature = "dans")))]
     println!(
         "[ANS DEBUG]   Found {} unique symbols.",
         unique_symbol_count
@@ -65,7 +65,7 @@ fn build_normalized_symbols(
         total_norm_freq += freq;
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(feature = "dans")))]
     {
         println!(
             "[ANS DEBUG]   Normalized Frequencies (first 5): {:?}",
@@ -82,7 +82,7 @@ fn build_normalized_symbols(
         *freq = freq.saturating_add(remainder as u16);
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(feature = "dans")))]
     println!(
         "[ANS DEBUG]   Remainder added to last symbol: {}",
         remainder
@@ -103,7 +103,7 @@ fn build_normalized_symbols(
 
 /// Encodes a byte slice using a range Asymmetric Numeral Systems model.
 pub fn encode(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), PhoenixError> {
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(feature = "dans")))]
     println!(
         "\n[ANS DEBUG] === ANS ENCODE START ({} bytes) ===",
         input_bytes.len()
@@ -111,7 +111,7 @@ pub fn encode(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), Phoeni
 
     output_buf.clear();
     if input_bytes.is_empty() {
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, not(feature = "dans")))]
         println!("[ANS DEBUG] Input is empty, returning Ok.");
         return Ok(());
     }
@@ -130,7 +130,7 @@ pub fn encode(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), Phoeni
         output_buf.extend_from_slice(&freq.to_le_bytes());
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(feature = "dans")))]
     println!(
         "[ANS DEBUG] Serialized Header ({} bytes): {:?}",
         output_buf.len(),
@@ -142,7 +142,7 @@ pub fn encode(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), Phoeni
 
     for (i, &byte) in input_bytes.iter().rev().enumerate() {
         let symbol = encode_table[byte as usize];
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, not(feature = "dans")))]
         if i < 5 || i > input_bytes.len() - 5 {
             println!(
                 "[ANS DEBUG]   Encoding byte '{}' (0x{:02X}) | state_in: 0x{:X}",
@@ -151,7 +151,7 @@ pub fn encode(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), Phoeni
         }
 
         while state >= symbol.freq * (ANS_STATE_MIN >> 4) {
-            #[cfg(debug_assertions)]
+            #[cfg(all(debug_assertions, not(feature = "dans")))]
             if i < 5 || i > input_bytes.len() - 5 {
                 println!(
                     "[ANS DEBUG]     Renormalizing state... writing byte 0x{:02X}",
@@ -165,7 +165,7 @@ pub fn encode(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), Phoeni
             + (state % symbol.freq)
             + symbol.cum_freq;
 
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, not(feature = "dans")))]
         if i < 5 || i > input_bytes.len() - 5 {
             println!(
                 "[ANS DEBUG]   Encoded byte '{}' (0x{:02X}) | state_out: 0x{:X}",
@@ -174,7 +174,7 @@ pub fn encode(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), Phoeni
         }
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(feature = "dans")))]
     {
         println!(
             "[ANS DEBUG] Final encode state to be written: 0x{:X}",
@@ -189,7 +189,7 @@ pub fn encode(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), Phoeni
     output_buf.extend_from_slice(&state.to_le_bytes());
     output_buf.extend(encoded_data.iter().rev());
 
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(feature = "dans")))]
     println!(
         "[ANS DEBUG] === ANS ENCODE END (Total size: {}) ===\n",
         output_buf.len()
@@ -204,7 +204,7 @@ pub fn decode(
     output_buf: &mut Vec<u8>,
     num_values: usize,
 ) -> Result<(), PhoenixError> {
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(feature = "dans")))]
     println!(
         "\n[ANS DEBUG] === ANS DECODE START ({} bytes, expecting {} values) ===",
         input_bytes.len(),
@@ -213,7 +213,7 @@ pub fn decode(
 
     output_buf.clear();
     if num_values == 0 {
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, not(feature = "dans")))]
         println!("[ANS DEBUG] Expecting 0 values, returning Ok.");
         return Ok(());
     }
@@ -322,7 +322,7 @@ pub fn decode(
     // output_buf.reverse();
     // --- END FIX ---
 
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(feature = "dans")))]
     println!(
         "[ANS DEBUG] === ANS DECODE END (Decoded {} bytes) ===\n",
         output_buf.len()
