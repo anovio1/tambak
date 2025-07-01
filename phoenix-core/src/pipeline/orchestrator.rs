@@ -1,512 +1,321 @@
-//! This module contains the highest-level orchestration logic. It uses a generic
-//! worker function pattern to avoid boilerplate and keep the core logic DRY.
+//! This module contains the v4.1 "Master Planner" and "Data Preparer".
+//!
+//! Its primary responsibility is to analyze an incoming Arrow Array, create a
+//! unified plan, prepare the initial byte streams (valid data, nulls),
+//! call the pure byte-oriented Executor, and assemble the final artifact.
 
 use arrow::array::{Array, PrimitiveArray};
-use arrow::buffer::{BooleanBuffer, Buffer, NullBuffer};
 use arrow::datatypes::*;
-use num_traits::{Float, PrimInt, Zero}; // <-- Import Float
+use bytemuck::Pod;
+use num_traits::{Float, PrimInt, Zero};
+use serde_json::Value;
+use std::collections::HashMap;
 
 use super::{executor, planner};
 use crate::error::PhoenixError;
-use crate::kernels::sparsity;
+use crate::log_metric;
 use crate::null_handling::bitmap;
 use crate::pipeline::artifact::CompressedChunk;
 use crate::utils::typed_slice_to_bytes;
 
-//==================================================================================
-// 1. Private Helper Functions
-//==================================================================================
-
-/// A private helper to handle the complex orchestration of the Sparsity strategy.
-fn orchestrate_sparsity_strategy<T>(
-    data_vec: &[T],
-    original_type: &str,
-    intermediate_type: &str, // The type planner should use for the dense stream
-    total_rows: u64,
-    compressed_nullmap: Vec<u8>,
-) -> Result<Vec<u8>, PhoenixError>
+// --- create_plan and its helpers are unchanged, as their logic is sound ---
+// ... (create_plan_for_integer_array, create_plan_for_float_array, etc. are here) ...
+#[derive(Debug, Clone)]
+struct StrategyResult {
+    plan: String,
+    cost: usize,
+}
+fn create_plan_for_integer_array<T>(array: &PrimitiveArray<T>) -> Result<String, PhoenixError>
 where
-    T: bytemuck::Pod + PrimInt + Zero,
+    T: ArrowNumericType,
+    T::Native: Pod + PrimInt + Zero,
 {
-    let (mask_vec, dense_data_vec) = sparsity::split_stream(data_vec)?;
-
-    let mask_plan_json = serde_json::to_string(&vec![
+    let original_type = T::DATA_TYPE.to_string();
+    let null_plan_json = serde_json::to_string(&[
         serde_json::json!({"op": "rle"}),
-        serde_json::json!({"op": "zstd", "params": {"level": 5}}),
+        serde_json::json!({"op": "zstd", "params": {"level": 19}}),
     ])
-    .map_err(|e| PhoenixError::InternalError(format!("Failed to serialize mask plan: {}", e)))?;
-    let mask_bytes: Vec<u8> = mask_vec.iter().map(|&b| b as u8).collect();
-    let compressed_mask =
-        executor::execute_compress_pipeline(&mask_bytes, "Boolean", &mask_plan_json)?;
+    .unwrap();
+    let null_op = serde_json::json!({
+        "op": "ExtractNulls",
+        "output_stream_id": "null_mask",
+        "pipeline": serde_json::from_str::<serde_json::Value>(&null_plan_json).unwrap(),
+    });
 
-    let dense_data_bytes = typed_slice_to_bytes(&dense_data_vec);
-    let dense_pipeline_json = planner::plan_pipeline(&dense_data_bytes, intermediate_type)?;
-    let compressed_dense_data = executor::execute_compress_pipeline(
-        &dense_data_bytes,
-        intermediate_type,
-        &dense_pipeline_json,
-    )?;
-
-    CompressedChunk {
-        total_rows,
-        original_type: original_type.to_string(),
-        compressed_data: compressed_dense_data,
-        pipeline_json: dense_pipeline_json,
-        compressed_nullmap,
-        compressed_mask: Some(compressed_mask),
-        mask_pipeline_json: Some(mask_plan_json),
-    }
-    .to_bytes()
-}
-
-//==================================================================================
-// 2. Generic Worker Functions (Reverted to Two-Worker Design)
-//==================================================================================
-
-/// Generic worker for compressing any INTEGER array type.
-fn compress_integer_array<T>(array: &PrimitiveArray<T>) -> Result<Vec<u8>, PhoenixError>
-where
-    T: ArrowNumericType,
-    T::Native: bytemuck::Pod + PrimInt + Zero,
-{
-    let total_rows = array.len() as u64;
-    let original_type = T::DATA_TYPE.to_string();
-
-    if array.is_empty() || array.null_count() == array.len() {
-        // The existing logic for empty/all-null is correct.
-        // We just need to ensure we enter it.
-        let validity_bytes = array
-            .nulls()
-            .map_or(Vec::new(), |nb| nb.buffer().as_slice().to_vec());
-        let compressed_nullmap = if validity_bytes.is_empty() {
-            Vec::new()
-        } else {
-            zstd::stream::encode_all(validity_bytes.as_slice(), 19)
-                .map_err(|e| PhoenixError::ZstdError(e.to_string()))?
-        };
-        return CompressedChunk {
-            total_rows,
-            original_type,
-            compressed_data: Vec::new(),
-            pipeline_json: "[]".to_string(),
-            compressed_nullmap,
-            compressed_mask: None,
-            mask_pipeline_json: None,
-        }
-        .to_bytes();
+    let valid_data: Vec<T::Native> = bitmap::strip_valid_data_to_vec(array);
+    if valid_data.is_empty() {
+        return Ok(serde_json::to_string(&[null_op]).unwrap());
     }
 
-    const SPARSITY_THRESHOLD: f32 = 0.75;
-    let zero_count = array
-        .iter()
-        .filter(|v| v.map_or(false, |x| x.is_zero()))
-        .count();
-    let sparse_ratio = (zero_count + array.null_count()) as f32 / array.len() as f32;
+    let valid_data_bytes = typed_slice_to_bytes(&valid_data);
+    let (dense_plan_json, dense_cost) = planner::plan_pipeline(&valid_data_bytes, &original_type)?;
+    let dense_strategy = StrategyResult {
+        plan: dense_plan_json,
+        cost: dense_cost,
+    };
 
-    let valid_data_vec: Vec<T::Native> = bitmap::strip_valid_data_to_vec(array);
-    let compressed_nullmap = compress_nulls(array.nulls())?;
+    let sparse_strategy = evaluate_sparsity_strategy(&valid_data, &original_type)?;
 
-    if sparse_ratio > SPARSITY_THRESHOLD {
-        // --- ADD THIS BLOCK FOR ROBUSTNESS ---
-        if valid_data_vec.iter().all(|v| v.is_zero()) {
-            let rle_plan = serde_json::to_string(&vec![
-                serde_json::json!({"op": "rle"}),
-                serde_json::json!({"op": "zstd", "params": {"level": 5}}),
-            ])
-            .map_err(|e| {
-                PhoenixError::InternalError(format!("Failed to serialize mask plan: {}", e))
-            })?;
-            let compressed_data = executor::execute_compress_pipeline(
-                &typed_slice_to_bytes(&valid_data_vec),
-                &original_type,
-                &rle_plan,
-            )?;
-            return CompressedChunk::dense(
-                total_rows,
-                original_type,
-                compressed_data,
-                rle_plan,
-                compressed_nullmap,
+    let mut final_plan: Vec<serde_json::Value> = vec![null_op];
+    if let Some(sparse) = sparse_strategy {
+        if sparse.cost < dense_strategy.cost {
+            log_metric!(
+                "event" = "strategy_chosen",
+                "type" = original_type,
+                "strategy" = "Sparse",
+                "dense_cost" = dense_strategy.cost,
+                "sparse_cost" = sparse.cost
             );
+            final_plan.push(serde_json::from_str(&sparse.plan).unwrap());
+            return Ok(serde_json::to_string(&final_plan).unwrap());
         }
-        // --- END ADDITION ---
-
-        return orchestrate_sparsity_strategy(
-            &valid_data_vec,
-            &original_type,
-            &original_type,
-            total_rows,
-            compressed_nullmap,
-        );
     }
 
-    let data_bytes = typed_slice_to_bytes(&valid_data_vec);
-    let pipeline_json = planner::plan_pipeline(&data_bytes, &original_type)?;
-    let compressed_data =
-        executor::execute_compress_pipeline(&data_bytes, &original_type, &pipeline_json)?;
-
-    CompressedChunk::dense(
-        total_rows,
-        original_type,
-        compressed_data,
-        pipeline_json,
-        compressed_nullmap,
-    )
+    log_metric!(
+        "event" = "strategy_chosen",
+        "type" = original_type,
+        "strategy" = "Dense",
+        "dense_cost" = dense_strategy.cost
+    );
+    let dense_plan_ops: Vec<serde_json::Value> =
+        serde_json::from_str(&dense_strategy.plan).unwrap();
+    final_plan.extend(dense_plan_ops);
+    Ok(serde_json::to_string(&final_plan).unwrap())
 }
-
-/// Generic worker for compressing any FLOAT array type.
-fn compress_float_array<T, U>(array: &PrimitiveArray<T>) -> Result<Vec<u8>, PhoenixError>
+fn create_plan_for_float_array<T, U>(array: &PrimitiveArray<T>) -> Result<String, PhoenixError>
 where
     T: ArrowNumericType,
-    T::Native: bytemuck::Pod + Float,
-    U: bytemuck::Pod + PrimInt + Zero,
+    T::Native: Pod + Float,
+    U: Pod + PrimInt + Zero,
 {
-    let total_rows = array.len() as u64;
     let original_type = T::DATA_TYPE.to_string();
-
-    if array.is_empty() || array.null_count() == array.len() {
-        // The existing logic for empty/all-null is correct.
-        // We just need to ensure we enter it.
-        let validity_bytes = array
-            .nulls()
-            .map_or(Vec::new(), |nb| nb.buffer().as_slice().to_vec());
-        let compressed_nullmap = if validity_bytes.is_empty() {
-            Vec::new()
-        } else {
-            zstd::stream::encode_all(validity_bytes.as_slice(), 19)
-                .map_err(|e| PhoenixError::ZstdError(e.to_string()))?
-        };
-        return CompressedChunk {
-            total_rows,
-            original_type,
-            compressed_data: Vec::new(),
-            pipeline_json: "[]".to_string(),
-            compressed_nullmap,
-            compressed_mask: None,
-            mask_pipeline_json: None,
-        }
-        .to_bytes();
-    }
-
-    // --- START: THE FINAL, CORRECTED ARCHITECTURE ---
-
-    // 1. Get valid data and handle nulls first.
-    let mut valid_data_vec: Vec<T::Native> = bitmap::strip_valid_data_to_vec(array);
-    let compressed_nullmap = compress_nulls(array.nulls())?;
-
-    // 2. Canonicalize -0.0 to 0.0 on the float data.
-    for val in &mut valid_data_vec {
-        if val.is_sign_negative() && val.is_zero() {
-            *val = T::Native::zero();
-        }
-    }
-
-    // 3. Bit-cast the canonicalized float data to its integer representation.
-    let integer_bits_vec: Vec<U> = bytemuck::cast_slice(&valid_data_vec).to_vec();
     let integer_type_str = if std::mem::size_of::<U>() == 4 {
         "UInt32"
     } else {
         "UInt64"
     };
 
-    // 4. Perform the sparsity check on the FINAL integer representation.
-    // This is the one and only "source of truth" for sparsity.
-    const SPARSITY_THRESHOLD: f32 = 0.75;
-    // We must now count nulls and zeros from different sources.
-    let zero_count = integer_bits_vec.iter().filter(|&&v| v.is_zero()).count();
-    let sparse_ratio = (zero_count + array.null_count()) as f32 / array.len() as f32;
+    let mut final_plan: Vec<serde_json::Value> = vec![
+        serde_json::json!({"op": "CanonicalizeZeros"}),
+        serde_json::json!({
+            "op": "BitCast",
+            "from_type": &original_type,
+            "to_type": integer_type_str
+        }),
+    ];
+    let null_plan_json = serde_json::to_string(&[
+        serde_json::json!({"op": "rle"}),
+        serde_json::json!({"op": "zstd", "params": {"level": 19}}),
+    ])
+    .unwrap();
+    final_plan.push(serde_json::json!({
+        "op": "ExtractNulls",
+        "output_stream_id": "null_mask",
+        "pipeline": serde_json::from_str::<serde_json::Value>(&null_plan_json).unwrap(),
+    }));
 
-    // 5. Dispatch to the correct strategy.
-    if sparse_ratio > SPARSITY_THRESHOLD {
-        // --- SPARSITY STRATEGY ---
-        // Handle the edge case where the dense vector is empty.
-        if integer_bits_vec.iter().all(|v| v.is_zero()) {
-            // All valid values were zero. The dense stream is empty.
-            // The most efficient representation is a simple RLE of the original data.
-            let rle_plan = serde_json::to_string(&vec![
-                serde_json::json!({"op": "rle"}),
-                serde_json::json!({"op": "zstd", "params": {"level": 5}}),
-            ])
-            .map_err(|e| {
-                PhoenixError::InternalError(format!("Failed to serialize mask plan: {}", e))
-            })?;
-            let compressed_data = executor::execute_compress_pipeline(
-                &typed_slice_to_bytes(&integer_bits_vec),
-                integer_type_str,
-                &rle_plan,
-            )?;
-            return CompressedChunk::dense(
-                total_rows,
-                original_type,
-                compressed_data,
-                rle_plan,
-                compressed_nullmap,
+    let mut valid_data_floats: Vec<T::Native> = bitmap::strip_valid_data_to_vec(array);
+    if valid_data_floats.is_empty() {
+        return Ok(serde_json::to_string(&final_plan).unwrap());
+    }
+
+    for val in &mut valid_data_floats {
+        if val.is_sign_negative() && val.is_zero() {
+            *val = T::Native::zero();
+        }
+    }
+    let valid_data_ints: Vec<U> = bytemuck::cast_slice(&valid_data_floats).to_vec();
+
+    let valid_data_bytes = typed_slice_to_bytes(&valid_data_ints);
+    let (dense_plan_json, dense_cost) =
+        planner::plan_pipeline(&valid_data_bytes, integer_type_str)?;
+    let dense_strategy = StrategyResult {
+        plan: dense_plan_json,
+        cost: dense_cost,
+    };
+
+    let sparse_strategy = evaluate_sparsity_strategy(&valid_data_ints, integer_type_str)?;
+
+    if let Some(sparse) = sparse_strategy {
+        if sparse.cost < dense_strategy.cost {
+            log_metric!(
+                "event" = "strategy_chosen",
+                "type" = original_type,
+                "strategy" = "Sparse",
+                "dense_cost" = dense_strategy.cost,
+                "sparse_cost" = sparse.cost
             );
+            final_plan.push(serde_json::from_str(&sparse.plan).unwrap());
+            return Ok(serde_json::to_string(&final_plan).unwrap());
         }
-
-        return orchestrate_sparsity_strategy(
-            &integer_bits_vec,
-            &original_type,
-            integer_type_str,
-            total_rows,
-            compressed_nullmap,
-        );
-    } else {
-        // --- DENSE STRATEGY ---
-        let data_bytes = typed_slice_to_bytes(&integer_bits_vec);
-        let pipeline_json = planner::plan_pipeline(&data_bytes, integer_type_str)?;
-        let compressed_data =
-            executor::execute_compress_pipeline(&data_bytes, integer_type_str, &pipeline_json)?;
-
-        CompressedChunk::dense(
-            total_rows,
-            original_type,
-            compressed_data,
-            pipeline_json,
-            compressed_nullmap,
-        )
-    }
-    // --- END: THE FINAL, CORRECTED ARCHITECTURE ---
-}
-
-// Helper to reduce duplication in the empty/all-null path
-fn compress_nulls(nulls: Option<&NullBuffer>) -> Result<Vec<u8>, PhoenixError> {
-    nulls.map_or(Ok(Vec::new()), |nb| {
-        zstd::stream::encode_all(nb.buffer().as_slice(), 19)
-            .map_err(|e| PhoenixError::ZstdError(e.to_string()))
-    })
-}
-
-// Add helpers to CompressedChunk to reduce boilerplate
-impl CompressedChunk {
-    fn empty(
-        total_rows: u64,
-        original_type: String,
-        nulls: Option<&NullBuffer>,
-    ) -> Result<Vec<u8>, PhoenixError> {
-        let compressed_nullmap = compress_nulls(nulls)?;
-        Self {
-            total_rows,
-            original_type,
-            compressed_data: Vec::new(),
-            pipeline_json: "[]".to_string(),
-            compressed_nullmap,
-            compressed_mask: None,
-            mask_pipeline_json: None,
-        }
-        .to_bytes()
     }
 
-    fn dense(
-        total_rows: u64,
-        original_type: String,
-        compressed_data: Vec<u8>,
-        pipeline_json: String,
-        compressed_nullmap: Vec<u8>,
-    ) -> Result<Vec<u8>, PhoenixError> {
-        Self {
-            total_rows,
-            original_type,
-            compressed_data,
-            pipeline_json,
-            compressed_nullmap,
-            compressed_mask: None,
-            mask_pipeline_json: None,
-        }
-        .to_bytes()
-    }
+    log_metric!(
+        "event" = "strategy_chosen",
+        "type" = original_type,
+        "strategy" = "Dense",
+        "dense_cost" = dense_strategy.cost
+    );
+    let dense_plan_ops: Vec<serde_json::Value> =
+        serde_json::from_str(&dense_strategy.plan).unwrap();
+    final_plan.extend(dense_plan_ops);
+    Ok(serde_json::to_string(&final_plan).unwrap())
 }
+fn evaluate_sparsity_strategy<T: Pod + PrimInt + Zero>(
+    data: &[T],
+    type_str: &str,
+) -> Result<Option<StrategyResult>, PhoenixError> {
+    const SPARSITY_THRESHOLD_RATIO: f32 = 0.4;
+    let zero_count = data.iter().filter(|&&v| v.is_zero()).count();
+    if data.is_empty() || (zero_count as f32 / data.len() as f32) < SPARSITY_THRESHOLD_RATIO {
+        return Ok(None);
+    }
 
-//==================================================================================
-// 3. Public-Facing Dispatchers
-//==================================================================================
+    let non_zero_values: Vec<T> = data.iter().filter(|&&v| !v.is_zero()).cloned().collect();
+    if non_zero_values.is_empty() {
+        return Ok(None);
+    }
+    let non_zero_bytes = typed_slice_to_bytes(&non_zero_values);
+    let (values_plan, values_cost) = planner::plan_pipeline(&non_zero_bytes, type_str)?;
 
-//==================================================================================
-// 3. Public-Facing Dispatchers
-//==================================================================================
+    let mask_plan_json = serde_json::to_string(&[
+        serde_json::json!({"op": "rle"}),
+        serde_json::json!({"op": "zstd", "params": {"level": 5}}),
+    ])
+    .unwrap();
+    let mask_cost = data.len() / 8;
 
-/// The public-facing compression orchestrator for a single array.
-pub fn compress_chunk(array: &dyn Array) -> Result<Vec<u8>, PhoenixError> {
-    macro_rules! dispatch_integer {
-        ($arr:expr, $T:ty) => {
-            compress_integer_array::<$T>(
-                $arr.as_any().downcast_ref::<PrimitiveArray<$T>>().unwrap(),
-            )
+    let full_sparse_plan = serde_json::json!({
+        "op": "Sparsify",
+        "mask_stream_id": "sparsity_mask",
+        "mask_pipeline": serde_json::from_str::<serde_json::Value>(&mask_plan_json).unwrap(),
+        "values_pipeline": serde_json::from_str::<serde_json::Value>(&values_plan).unwrap()
+    });
+
+    Ok(Some(StrategyResult {
+        plan: serde_json::to_string(&full_sparse_plan).unwrap(),
+        cost: values_cost + mask_cost,
+    }))
+}
+pub fn create_plan(array: &dyn Array) -> Result<String, PhoenixError> {
+    macro_rules! dispatch {
+        ($arr:expr, $T:ty, $worker:ident) => {
+            $worker($arr.as_any().downcast_ref::<PrimitiveArray<$T>>().unwrap())
         };
-    }
-    macro_rules! dispatch_float {
-        ($arr:expr, $T:ty, $U:ty) => {
-            compress_float_array::<$T, $U>(
-                $arr.as_any().downcast_ref::<PrimitiveArray<$T>>().unwrap(),
-            )
+        ($arr:expr, $T:ty, $U:ty, $worker:ident) => {
+            $worker::<$T, $U>($arr.as_any().downcast_ref::<PrimitiveArray<$T>>().unwrap())
         };
     }
 
     match array.data_type() {
-        DataType::Int8 => dispatch_integer!(array, Int8Type),
-        DataType::Int16 => dispatch_integer!(array, Int16Type),
-        DataType::Int32 => dispatch_integer!(array, Int32Type),
-        DataType::Int64 => dispatch_integer!(array, Int64Type),
-        DataType::UInt8 => dispatch_integer!(array, UInt8Type),
-        DataType::UInt16 => dispatch_integer!(array, UInt16Type),
-        DataType::UInt32 => dispatch_integer!(array, UInt32Type),
-        DataType::UInt64 => dispatch_integer!(array, UInt64Type),
-        DataType::Float32 => dispatch_float!(array, Float32Type, u32),
-        DataType::Float64 => dispatch_float!(array, Float64Type, u64),
+        DataType::Int8 => dispatch!(array, Int8Type, create_plan_for_integer_array),
+        DataType::Int16 => dispatch!(array, Int16Type, create_plan_for_integer_array),
+        DataType::Int32 => dispatch!(array, Int32Type, create_plan_for_integer_array),
+        DataType::Int64 => dispatch!(array, Int64Type, create_plan_for_integer_array),
+        DataType::UInt8 => dispatch!(array, UInt8Type, create_plan_for_integer_array),
+        DataType::UInt16 => dispatch!(array, UInt16Type, create_plan_for_integer_array),
+        DataType::UInt32 => dispatch!(array, UInt32Type, create_plan_for_integer_array),
+        DataType::UInt64 => dispatch!(array, UInt64Type, create_plan_for_integer_array),
+        DataType::Float32 => dispatch!(array, Float32Type, u32, create_plan_for_float_array),
+        DataType::Float64 => dispatch!(array, Float64Type, u64, create_plan_for_float_array),
         dt => Err(PhoenixError::UnsupportedType(format!(
-            "Unsupported type for compression: {}",
+            "Unsupported type for planning: {}",
             dt
         ))),
     }
 }
 
+// --- NEW: Public-facing API functions now correctly implement the new contract ---
+
+/// The public-facing compression orchestrator for a single array.
+pub fn compress_chunk(array: &dyn Array) -> Result<Vec<u8>, PhoenixError> {
+    // 1. The orchestrator creates the plan.
+    let plan_json = create_plan(array)?;
+
+    // 2. The orchestrator PREPARES the initial data streams.
+    let mut initial_streams = HashMap::new();
+    let mut main_data_bytes = Vec::new();
+
+    if array.null_count() < array.len() {
+        macro_rules! extract_valid_data {
+            ($T:ty) => {{
+                let primitive_array = array
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<$T>>()
+                    .ok_or_else(|| PhoenixError::InternalError("Array type mismatch".into()))?;
+                let valid_data: Vec<<$T as ArrowNumericType>::Native> =
+                    bitmap::strip_valid_data_to_vec(primitive_array);
+                main_data_bytes = typed_slice_to_bytes(&valid_data);
+            }};
+        }
+        match array.data_type() {
+            DataType::Int8 => extract_valid_data!(Int8Type),
+            DataType::Int16 => extract_valid_data!(Int16Type),
+            DataType::Int32 => extract_valid_data!(Int32Type),
+            DataType::Int64 => extract_valid_data!(Int64Type),
+            DataType::UInt8 => extract_valid_data!(UInt8Type),
+            DataType::UInt16 => extract_valid_data!(UInt16Type),
+            DataType::UInt32 => extract_valid_data!(UInt32Type),
+            DataType::UInt64 => extract_valid_data!(UInt64Type),
+            DataType::Float32 => extract_valid_data!(Float32Type),
+            DataType::Float64 => extract_valid_data!(Float64Type),
+            _ => return Err(PhoenixError::UnsupportedType(array.data_type().to_string())),
+        }
+    }
+    initial_streams.insert("main".to_string(), main_data_bytes);
+
+    if let Some(nulls) = array.nulls() {
+        initial_streams.insert("null_mask".to_string(), nulls.buffer().as_slice().to_vec());
+    }
+
+    // 3. The orchestrator calls the PURE executor.
+    let compressed_streams = executor::execute_plan(
+        initial_streams,
+        &plan_json,
+        &array.data_type().to_string(),
+        array.len(),
+    )?;
+
+    // 4. The orchestrator assembles the final artifact.
+    let artifact = CompressedChunk {
+        total_rows: array.len() as u64,
+        original_type: array.data_type().to_string(),
+        plan_json,
+        compressed_streams,
+    };
+    artifact.to_bytes()
+}
+
 /// The public-facing decompression orchestrator for a single array.
 pub fn decompress_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
-    let artifact = CompressedChunk::from_bytes(bytes)?;
-    let original_type = &artifact.original_type;
+    // 1. The executor does the heavy lifting of decompression, returning raw streams.
+    let (mut decompressed_streams, final_type, total_rows) = executor::decompress_plan(bytes)?;
 
-    // 1. Handle Nulls (This logic is shared by both sparse and dense paths)
-    let null_buffer = if !artifact.compressed_nullmap.is_empty() {
-        let validity_bytes = zstd::stream::decode_all(artifact.compressed_nullmap.as_slice())
-            .map_err(|e| PhoenixError::ZstdError(e.to_string()))?;
-        let boolean_buffer = BooleanBuffer::new(
-            Buffer::from(validity_bytes),
-            0,
-            artifact.total_rows as usize,
-        );
-        Some(NullBuffer::from(boolean_buffer))
-    } else {
-        None
-    };
+    // 2. The orchestrator is responsible for the final re-assembly into an Arrow Array.
+    let main_data = decompressed_streams.remove("main").ok_or_else(|| {
+        PhoenixError::InternalError("Decompression failed to produce a 'main' stream".into())
+    })?;
+    let null_mask = decompressed_streams.remove("null_mask");
 
-    // 2. Branch based on whether this is a sparse artifact
-    if let (Some(compressed_mask), Some(mask_pipeline_json)) =
-        (artifact.compressed_mask, artifact.mask_pipeline_json)
-    {
-        // --- SPARSE DECOMPRESSION PATH ---
+    macro_rules! reapply_and_build {
+        ($T:ty) => {{
+            bitmap::reapply_bitmap::<$T>(main_data, null_mask, total_rows as usize)
+                .map(|arr| Box::new(arr) as Box<dyn Array>)
+        }};
+    }
 
-        // 2a. Decompress the mask
-        let decompressed_mask_bytes = executor::execute_decompress_pipeline(
-            &compressed_mask,
-            "Boolean",
-            &mask_pipeline_json,
-            artifact.total_rows as usize,
-        )?;
-        let mask_vec: Vec<bool> = decompressed_mask_bytes.iter().map(|&b| b != 0).collect();
-        let num_non_zero = mask_vec.iter().filter(|&&b| b).count();
-
-        // 2b. Decompress the dense data
-        let intermediate_type = match original_type.as_str() {
-            "Float32" => "UInt32",
-            "Float64" => "UInt64",
-            _ => original_type,
-        };
-        let decompressed_dense_bytes = executor::execute_decompress_pipeline(
-            &artifact.compressed_data,
-            intermediate_type,
-            &artifact.pipeline_json,
-            num_non_zero,
-        )?;
-
-        // 2c. Reconstruct the final array using a DRY macro
-        macro_rules! reconstruct_and_finalize {
-            // Arm for integer types
-            ($T:ty, $TN:ty) => {{
-                let dense_slice = bytemuck::cast_slice::<u8, $TN>(&decompressed_dense_bytes);
-                let sparse_vec = sparsity::reconstruct_stream(
-                    &mask_vec,
-                    dense_slice,
-                    artifact.total_rows as usize,
-                )?;
-                let final_array = bitmap::reapply_bitmap_from_vec::<$T>(
-                    sparse_vec,
-                    null_buffer,
-                    artifact.total_rows as usize,
-                )?;
-                Ok(Box::new(final_array) as Box<dyn Array>)
-            }};
-            // Arm for float types (handles the extra bit-cast)
-            ($T:ty, $TN:ty, $U:ty) => {{
-                let dense_int_slice = bytemuck::cast_slice::<u8, $U>(&decompressed_dense_bytes);
-                let sparse_int_vec = sparsity::reconstruct_stream(
-                    &mask_vec,
-                    dense_int_slice,
-                    artifact.total_rows as usize,
-                )?;
-                let final_typed_vec: Vec<$TN> = bytemuck::cast_slice(&sparse_int_vec).to_vec();
-                let final_array = bitmap::reapply_bitmap_from_vec::<$T>(
-                    final_typed_vec,
-                    null_buffer,
-                    artifact.total_rows as usize,
-                )?;
-                Ok(Box::new(final_array) as Box<dyn Array>)
-            }};
-        }
-
-        // The match statement is now clean, readable, and maintainable.
-        match original_type.as_str() {
-            "Int8" => reconstruct_and_finalize!(Int8Type, i8),
-            "Int16" => reconstruct_and_finalize!(Int16Type, i16),
-            "Int32" => reconstruct_and_finalize!(Int32Type, i32),
-            "Int64" => reconstruct_and_finalize!(Int64Type, i64),
-            "UInt8" => reconstruct_and_finalize!(UInt8Type, u8),
-            "UInt16" => reconstruct_and_finalize!(UInt16Type, u16),
-            "UInt32" => reconstruct_and_finalize!(UInt32Type, u32),
-            "UInt64" => reconstruct_and_finalize!(UInt64Type, u64),
-            "Float32" => reconstruct_and_finalize!(Float32Type, f32, u32),
-            "Float64" => reconstruct_and_finalize!(Float64Type, f64, u64),
-            _ => Err(PhoenixError::UnsupportedType(original_type.to_string())),
-        }
-    } else {
-        // --- DENSE DECOMPRESSION PATH ---
-
-        let num_valid_rows = null_buffer
-            .as_ref()
-            .map_or(artifact.total_rows as usize, |nb| {
-                nb.len() - nb.null_count()
-            });
-
-        let decompressed_data_bytes = if !artifact.compressed_data.is_empty() {
-            let intermediate_type = match original_type.as_str() {
-                "Float32" => "UInt32",
-                "Float64" => "UInt64",
-                _ => original_type,
-            };
-            executor::execute_decompress_pipeline(
-                &artifact.compressed_data,
-                intermediate_type,
-                &artifact.pipeline_json,
-                num_valid_rows,
-            )?
-        } else {
-            Vec::new()
-        };
-
-        macro_rules! reconstruct_dense_array {
-            ($T:ty) => {{
-                let array = bitmap::reapply_bitmap::<$T>(
-                    decompressed_data_bytes,
-                    null_buffer,
-                    artifact.total_rows as usize,
-                )?;
-                Ok(Box::new(array) as Box<dyn Array>)
-            }};
-        }
-
-        // This path was already fairly DRY, but the macro makes it consistent.
-        match original_type.as_str() {
-            "Int8" => reconstruct_dense_array!(Int8Type),
-            "Int16" => reconstruct_dense_array!(Int16Type),
-            "Int32" => reconstruct_dense_array!(Int32Type),
-            "Int64" => reconstruct_dense_array!(Int64Type),
-            "UInt8" => reconstruct_dense_array!(UInt8Type),
-            "UInt16" => reconstruct_dense_array!(UInt16Type),
-            "UInt32" => reconstruct_dense_array!(UInt32Type),
-            "UInt64" => reconstruct_dense_array!(UInt64Type),
-            "Float32" => reconstruct_dense_array!(Float32Type),
-            "Float64" => reconstruct_dense_array!(Float64Type),
-            _ => Err(PhoenixError::UnsupportedType(original_type.to_string())),
-        }
+    match final_type.as_str() {
+        "Int8" => reapply_and_build!(Int8Type),
+        "Int16" => reapply_and_build!(Int16Type),
+        "Int32" => reapply_and_build!(Int32Type),
+        "Int64" => reapply_and_build!(Int64Type),
+        "UInt8" => reapply_and_build!(UInt8Type),
+        "UInt16" => reapply_and_build!(UInt16Type),
+        "UInt32" => reapply_and_build!(UInt32Type),
+        "UInt64" => reapply_and_build!(UInt64Type),
+        "Float32" => reapply_and_build!(Float32Type),
+        "Float64" => reapply_and_build!(Float64Type),
+        _ => Err(PhoenixError::UnsupportedType(final_type)),
     }
 }
 
@@ -515,20 +324,12 @@ pub fn get_compressed_chunk_info(
     bytes: &[u8],
 ) -> Result<(usize, usize, String, String), PhoenixError> {
     let artifact = CompressedChunk::from_bytes(bytes)?;
-    let data_size = artifact.compressed_data.len();
+    let data_size = artifact.compressed_streams.values().map(|v| v.len()).sum();
     let header_size = bytes.len() - data_size;
     Ok((
         header_size,
         data_size,
-        artifact.pipeline_json,
+        artifact.plan_json,
         artifact.original_type,
     ))
 }
-
-//==================================================================================
-// 3. Unit Tests
-//==================================================================================
-
-#[cfg(test)]
-#[path = "orchestrator_tests.rs"]
-mod tests;

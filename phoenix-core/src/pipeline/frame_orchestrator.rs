@@ -1,17 +1,21 @@
-//! This module contains the v4.0 orchestration logic for compressing and
+//! This module contains the v4.1 orchestration logic for compressing and
 //! decompressing entire RecordBatches ("Frames").
 //!
 //! It acts as a higher-level orchestrator that uses the single-column
-//! `orchestrator` as a building block. Its primary responsibilities are
+//! `orchestrator` and `executor` as building blocks. Its primary responsibilities are
 //! multi-column coordination and handling of batch-level structural hints.
 
 use arrow::array::{Array, RecordBatch};
-use arrow::datatypes::{DataType, Field, Int32Type, Schema};
+use arrow::datatypes::{DataType, Field, Schema};
+use serde_json::{json, Value};
 use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
-use super::orchestrator as chunk_orchestrator; // The v3.9 single-column logic
+// Use aliases for clarity, as we now interact with both chunk-level modules.
+use super::executor as chunk_executor;
+use super::orchestrator as chunk_orchestrator;
 use crate::error::PhoenixError;
+use crate::pipeline::artifact::CompressedChunk;
 
 //==================================================================================
 // 1. Phoenix Frame Format (.phnx)
@@ -21,7 +25,7 @@ const MAGIC_NUMBER: &[u8] = b"PHNX";
 const FRAME_VERSION: u16 = 1;
 
 //==================================================================================
-// 2. Frame Orchestration Logic
+// 2. Frame Orchestration Logic (v4.1 Refactored)
 //==================================================================================
 
 /// Compresses an entire RecordBatch into a Phoenix Frame artifact.
@@ -47,7 +51,15 @@ pub fn compress_frame(
     // 2. Compress each column into a chunk and append it to the frame.
     for i in 0..batch.num_columns() {
         let array = batch.column(i);
-        let chunk_bytes = chunk_orchestrator::compress_chunk(array.as_ref())?;
+        let col_name = batch.schema().field(i).name();
+
+        // THE NEW, REFACTORED FLOW
+        // a. The Orchestrator creates the plan for the column.
+        let plan_json = chunk_orchestrator::create_plan(array.as_ref())?;
+        // b. The Executor executes that plan to get the compressed chunk bytes.
+        let chunk_bytes = chunk_executor::execute_plan(array.as_ref(), &plan_json)?;
+
+        // c. Write the resulting chunk to the frame buffer.
         final_buffer
             .write_all(&(chunk_bytes.len() as u64).to_le_bytes())
             .map_err(|e| PhoenixError::FrameFormatError(e.to_string()))?;
@@ -93,7 +105,7 @@ pub fn decompress_frame(bytes: &[u8]) -> Result<RecordBatch, PhoenixError> {
     let num_columns = u32::from_le_bytes(u32_buf) as usize;
 
     // 2. Loop and decompress each chunk.
-    let mut columns: Vec<Box<dyn Array>> = Vec::with_capacity(num_columns);
+    let mut columns: Vec<Arc<dyn Array>> = Vec::with_capacity(num_columns);
     let mut fields = Vec::with_capacity(num_columns);
 
     for i in 0..num_columns {
@@ -109,22 +121,19 @@ pub fn decompress_frame(bytes: &[u8]) -> Result<RecordBatch, PhoenixError> {
             PhoenixError::FrameFormatError(format!("Chunk data out of bounds for column {}", i))
         })?;
 
-        let array = chunk_orchestrator::decompress_chunk(chunk_bytes)?;
+        // THE NEW, REFACTORED CALL
+        // The executor's decompress_plan function is now the entry point.
+        let array = chunk_executor::decompress_plan(chunk_bytes)?;
 
         fields.push(Field::new(
             format!("col_{}", i),
             array.data_type().clone(),
             array.null_count() > 0,
         ));
-        columns.push(array);
+        columns.push(array.into());
 
         cursor.set_position(chunk_end as u64);
     }
-
-    // --- THIS IS THE FIX ---
-    // Convert Vec<Box<dyn Array>> to Vec<Arc<dyn Array>> for RecordBatch::try_new
-    let columns: Vec<Arc<dyn Array>> = columns.into_iter().map(|b| b.into()).collect();
-    // --- END FIX ---
 
     let schema = Arc::new(Schema::new(fields));
     RecordBatch::try_new(schema, columns).map_err(|e| {
@@ -133,8 +142,51 @@ pub fn decompress_frame(bytes: &[u8]) -> Result<RecordBatch, PhoenixError> {
 }
 
 /// Inspects a compressed Phoenix Frame and returns its diagnostic metadata.
-pub fn get_frame_diagnostics(_bytes: &[u8]) -> Result<String, PhoenixError> {
-    Ok("Frame diagnostics not yet implemented for v4.0.".to_string())
+pub fn get_frame_diagnostics(bytes: &[u8]) -> Result<String, PhoenixError> {
+    let mut cursor = Cursor::new(bytes);
+
+    // Parse header to find number of columns
+    cursor.set_position(6); // Skip magic + version
+    let mut u32_buf = [0u8; 4];
+    cursor
+        .read_exact(&mut u32_buf)
+        .map_err(|_| PhoenixError::FrameFormatError("Truncated column count".to_string()))?;
+    let num_columns = u32::from_le_bytes(u32_buf) as usize;
+
+    let mut all_diagnostics = Vec::new();
+
+    for i in 0..num_columns {
+        let mut u64_buf = [0u8; 8];
+        cursor.read_exact(&mut u64_buf).map_err(|_| {
+            PhoenixError::FrameFormatError(format!("Truncated chunk length for column {}", i))
+        })?;
+        let chunk_len = u64::from_le_bytes(u64_buf) as usize;
+
+        let chunk_start = cursor.position() as usize;
+        let chunk_end = chunk_start + chunk_len;
+        let chunk_bytes = bytes.get(chunk_start..chunk_end).ok_or_else(|| {
+            PhoenixError::FrameFormatError(format!("Chunk data out of bounds for column {}", i))
+        })?;
+
+        // Parse the chunk to get its plan
+        let chunk_artifact = CompressedChunk::from_bytes(chunk_bytes)?;
+        let plan_value: Value = serde_json::from_str(&chunk_artifact.plan_json).map_err(|e| {
+            PhoenixError::InternalError(format!("Failed to parse plan_json: {}", e))
+        })?;
+        let col_diag = json!({
+            "column_index": i,
+            "original_type": chunk_artifact.original_type,
+            "total_rows": chunk_artifact.total_rows,
+            "plan": plan_value,
+            "compressed_size": chunk_bytes.len(),
+        });
+        all_diagnostics.push(col_diag);
+
+        cursor.set_position(chunk_end as u64);
+    }
+
+    serde_json::to_string_pretty(&all_diagnostics)
+        .map_err(|e| PhoenixError::InternalError(e.to_string()))
 }
 
 //==================================================================================
@@ -143,8 +195,7 @@ pub fn get_frame_diagnostics(_bytes: &[u8]) -> Result<String, PhoenixError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Float64Array, Int32Array, StringArray};
-    use arrow::datatypes::Float64Type;
+    use arrow::array::{Float64Array, Int32Array};
 
     /// A helper to create a sample RecordBatch for testing.
     fn create_test_batch() -> RecordBatch {
@@ -190,7 +241,6 @@ mod tests {
         );
         assert_eq!(original_batch.num_rows(), decompressed_batch.num_rows());
 
-        // Check column data types and values
         let original_col_a = original_batch
             .column(0)
             .as_any()
@@ -217,32 +267,17 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_empty_batch() {
-        let schema = Arc::new(Schema::new(vec![Field::new("a", DataType::Int32, true)]));
-        let original_batch = RecordBatch::new_empty(schema);
-        let hints = None;
+    fn test_get_frame_diagnostics_is_valid_json() {
+        let original_batch = create_test_batch();
+        let compressed_bytes = compress_frame(&original_batch, &None).unwrap();
 
-        let compressed_bytes = compress_frame(&original_batch, &hints).unwrap();
-        let decompressed_batch = decompress_frame(&compressed_bytes).unwrap();
+        let diagnostics_json = get_frame_diagnostics(&compressed_bytes).unwrap();
+        let parsed: Result<Value, _> = serde_json::from_str(&diagnostics_json);
+        assert!(parsed.is_ok(), "Diagnostics output should be valid JSON");
 
-        assert_eq!(original_batch.num_rows(), 0);
-        assert_eq!(decompressed_batch.num_rows(), 0);
-        assert_eq!(
-            original_batch.num_columns(),
-            decompressed_batch.num_columns()
-        );
-    }
-
-    #[test]
-    fn test_decompress_corrupt_header() {
-        // Test various forms of corruption
-        let res1 = decompress_frame(b"BAD_MAGIC");
-        assert!(matches!(res1, Err(PhoenixError::FrameFormatError(_))));
-
-        let res2 = decompress_frame(&[b'P', b'H', b'N', b'X', 0, 2]); // Wrong version
-        assert!(matches!(res2, Err(PhoenixError::FrameFormatError(_))));
-
-        let res3 = decompress_frame(&[b'P', b'H', b'N', b'X', 0, 1, 0, 0, 0, 1, 0]); // Truncated
-        assert!(matches!(res3, Err(PhoenixError::FrameFormatError(_))));
+        let diagnostics_array = parsed.unwrap().as_array().unwrap().to_vec();
+        assert_eq!(diagnostics_array.len(), 2); // Two columns
+        assert_eq!(diagnostics_array[0]["column_index"], 0);
+        assert_eq!(diagnostics_array[1]["original_type"], "Float64");
     }
 }

@@ -6,6 +6,7 @@ INFO:__main__:  - Creating PyArrow Table...
 INFO:__main__:  - Running all benchmarks...
 INFO:__main__:✅ Successfully wrote Phoenix frame to: unit_positions.phx
 
+```
 ================================================================================
                        --- Phoenix 3.9 unit_positions ---
 ================================================================================
@@ -45,6 +46,13 @@ vz                        986,181      553,464      447,776 [{"op":"xor_delta"},
 heading                   711,062      601,864      609,755 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
 --------------------------------------------------------------------------------
 *Parquet size is the on-disk compressed size for that column's data chunks.
+INFO:__main__:--- Starting MPK Compression Test for: unit_events.mpk (Aspect: unit_events) ---
+INFO:__main__:  - Loaded 2,499,651 bytes from disk.
+INFO:__main__:  - Decoding and transforming records...
+INFO:__main__:  - Transformation complete in 0.80s. Found 103,469 records.
+INFO:__main__:  - Creating PyArrow Table...
+INFO:__main__:  - Running all benchmarks...
+INFO:__main__:✅ Successfully wrote Phoenix frame to: unit_events.phx
 
 
 
@@ -91,6 +99,13 @@ builder_id                 34,189       49,606       29,879 [{"op":"shuffle"},{"
 factory_queue_len          10,475       27,546       15,402 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
 --------------------------------------------------------------------------------
 *Parquet size is the on-disk compressed size for that column's data chunks.
+INFO:__main__:--- Starting MPK Compression Test for: damage_log.mpk (Aspect: damage_log) ---
+INFO:__main__:  - Loaded 6,531,861 bytes from disk.
+INFO:__main__:  - Decoding and transforming records...
+INFO:__main__:  - Transformation complete in 1.50s. Found 199,975 records.
+INFO:__main__:  - Creating PyArrow Table...
+INFO:__main__:  - Running all benchmarks...
+INFO:__main__:✅ Successfully wrote Phoenix frame to: damage_log.phx
 
 
 ================================================================================
@@ -135,3 +150,4 @@ victim_pos_y              145,250      163,957      160,036 [{"op":"delta","para
 victim_pos_z              279,995      339,467      335,766 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"leb128"},{"op":"zstd","params":{"level":3}}]
 --------------------------------------------------------------------------------
 *Parquet size is the on-disk compressed size for that column's data chunks.
+```

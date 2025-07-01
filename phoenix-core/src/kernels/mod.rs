@@ -37,6 +37,8 @@ pub mod sparsity;
 pub mod xor_delta;
 pub mod zigzag;
 pub mod zstd;
+pub mod canonicalize;
+pub mod bitcast;
 
 // NOTE: Sparsity is a meta-op handled by the executor, so it does NOT get an
 // arm in the dispatchers. This is intentional.
@@ -198,7 +200,29 @@ pub fn dispatch_encode(
         "ans" => {
             // This follows the established pattern for raw byte-stream kernels like zstd.
             ans::encode(input_bytes, output_buf)
-        }
+        },
+        "CanonicalizeZeros" => match type_str {
+            "Float32" => safe_convert_and_exec!(f32, canonicalize, output_buf),
+            "Float64" => safe_convert_and_exec!(f64, canonicalize, output_buf),
+            _ => Err(PhoenixError::UnsupportedType(format!(
+                "CanonicalizeZeros is only supported for float types, but got {}",
+                type_str
+            ))),
+        },
+        "BitCast" => {
+            let to_type = params["to_type"].as_str().ok_or_else(|| {
+                PhoenixError::UnsupportedType("BitCast requires a 'to_type' param".to_string())
+            })?;
+            match (type_str, to_type) {
+                ("Float32", "UInt32") => bitcast::encode::<f32, u32>(input_bytes, output_buf),
+                ("Float64", "UInt64") => bitcast::encode::<f64, u64>(input_bytes, output_buf),
+                // Add other casts here if needed in the future
+                _ => Err(PhoenixError::UnsupportedType(format!(
+                    "Unsupported BitCast from {} to {}",
+                    type_str, to_type
+                ))),
+            }
+        },
         _ => Err(PhoenixError::UnsupportedType(format!(
             "Unsupported encode op: {}",
             op
@@ -372,7 +396,28 @@ pub fn dispatch_decode(
         "ans" => {
             // This follows the established pattern for raw byte-stream kernels like zstd.
             ans::decode(input_bytes, output_buf, num_values)
-        }
+        },
+        "CanonicalizeZeros" => {
+            // This is a one-way transform, so decode is a no-op.
+            canonicalize::decode(input_bytes, output_buf)
+        },
+        "BitCast" => {
+            // The "to_type" in the plan was for the *encode* direction.
+            // For decode, we must infer the reverse cast from the `type_str`
+            // that the executor is tracking.
+            let from_type = params["to_type"].as_str().ok_or_else(|| {
+                PhoenixError::UnsupportedType("BitCast requires a 'to_type' param".to_string())
+            })?;
+            match (from_type, type_str) {
+                ("UInt32", "Float32") => bitcast::decode::<u32, f32>(input_bytes, output_buf),
+                ("UInt64", "Float64") => bitcast::decode::<u64, f64>(input_bytes, output_buf),
+                // Add other casts here if needed in the future
+                _ => Err(PhoenixError::UnsupportedType(format!(
+                    "Unsupported BitCast decode from {} to {}",
+                    from_type, type_str
+                ))),
+            }
+        },
         _ => Err(PhoenixError::UnsupportedType(format!(
             "Unsupported decode op: {}",
             op
