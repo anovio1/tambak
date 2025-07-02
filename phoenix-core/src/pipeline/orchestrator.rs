@@ -716,6 +716,6 @@ pub fn get_compressed_chunk_info(
     let data_size = artifact.compressed_streams.values().map(|v| v.len()).sum();
     let header_size = bytes.len() - data_size;
     let plan: Plan = serde_json::from_str(&artifact.plan_json)?;
-    let pretty_plan = serde_json::to_string_pretty(&plan)?;
+    let pretty_plan = serde_json::to_string(&plan)?;
     Ok((header_size, data_size, pretty_plan, artifact.original_type))
 }

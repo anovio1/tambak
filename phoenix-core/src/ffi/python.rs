@@ -86,7 +86,7 @@ pub fn plan_py(py: Python, bytes: &[u8], original_type: &str) -> PyResult<String
         let plan_struct = planner::plan_pipeline(bytes, context)?;
 
         // 4. Serialize the `Plan` struct back to a JSON string for Python.
-        serde_json::to_string_pretty(&plan_struct).map_err(|e| PhoenixError::from(e).into())
+        serde_json::to_string(&plan_struct).map_err(|e| PhoenixError::from(e).into())
     })
 }
 

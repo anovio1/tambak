@@ -101,7 +101,7 @@ def main(aspect_name):
             column_array = column_array.combine_chunks()
         all_column_results[column_name] = {}
         try:
-            
+            print("phoenix run compress_analyze",column_name)
             analysis_result = phoenix_cache.compress_analyze(column_array)
             phoenix_compressed_columns[column_name] = analysis_result['artifact']
             all_column_results[column_name]["phoenix_size"] = len(analysis_result['artifact'])
@@ -151,36 +151,37 @@ def main(aspect_name):
         total_parquet_columnar_size = sum(parquet_col_sizes.values())
 
     # --- FINAL REPORTING ---
-    print("\n" + "="*80)
-    print(f"--- Phoenix 4.0 {aspect_name} ---".center(80))
-    print("="*80)
+    #print("\n" + "="*80)
+    #print(f"--- Phoenix 4.0 {aspect_name} ---".center(80))
+    #print("="*80)
 
-    print("\n" + "="*80)
-    print("--- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---".center(80))
-    print("--- (The 'CEO' View: Which final file is smallest?) ---".center(80))
-    print("="*80)
-    print(f"  - Original MPK File:         {len(mpk_bytes):>15,} bytes (100.00%)")
-    print(f"  - Zstd on original MPK:      {zstd_on_mpk_size:>15,} bytes ({zstd_on_mpk_size/len(mpk_bytes)*100:6.2f}%)")
+    #print("\n" + "="*80)
+    #print("--- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---".center(80))
+    #print("--- (The 'CEO' View: Which final file is smallest?) ---".center(80))
+    #print("="*80)
+    #print(f"  - Original MPK File:         {len(mpk_bytes):>15,} bytes (100.00%)")
+    #print(f"  - Zstd on original MPK:      {zstd_on_mpk_size:>15,} bytes ({zstd_on_mpk_size/len(mpk_bytes)*100:6.2f}%)")
     if parquet_file_size != -1:
-        print(f"  - Parquet (Zstd) File:       {parquet_file_size:>15,} bytes ({parquet_file_size/len(mpk_bytes)*100:6.2f}%)")
-    print(f"  - Phoenix Frame File (.phx): {phoenix_frame_size:>15,} bytes ({phoenix_frame_size/len(mpk_bytes)*100:6.2f}%)")
-    print("="*80)
+        pass
+        #print(f"  - Parquet (Zstd) File:       {parquet_file_size:>15,} bytes ({parquet_file_size/len(mpk_bytes)*100:6.2f}%)")
+    #print(f"  - Phoenix Frame File (.phx): {phoenix_frame_size:>15,} bytes ({phoenix_frame_size/len(mpk_bytes)*100:6.2f}%)")
+    #print("="*80)
 
-    print("\n" + "="*80)
-    print("--- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---".center(80))
-    print("--- (The 'Engineering' View: How effective is our logic?) ---".center(80))
-    print("="*80)
+    #print("\n" + "="*80)
+    #print("--- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---".center(80))
+    #print("--- (The 'Engineering' View: How effective is our logic?) ---".center(80))
+    #print("="*80)
     if total_parquet_columnar_size != -1:
-        print(f"  - Parquet Columnar Data:     {total_parquet_columnar_size:>15,} bytes (100.00%)")
+        #print(f"  - Parquet Columnar Data:     {total_parquet_columnar_size:>15,} bytes (100.00%)")
         ratio = total_zstd_columnar_size / total_parquet_columnar_size * 100
-        print(f"  - Zstd-per-Column Data:      {total_zstd_columnar_size:>15,} bytes ({ratio:6.2f}%)")
+        #print(f"  - Zstd-per-Column Data:      {total_zstd_columnar_size:>15,} bytes ({ratio:6.2f}%)")
         ratio = total_phoenix_data_size / total_parquet_columnar_size * 100
-        print(f"  - Phoenix Columnar Data:     {total_phoenix_data_size:>15,} bytes ({ratio:6.2f}%)")
-    print("="*80)
+        #print(f"  - Phoenix Columnar Data:     {total_phoenix_data_size:>15,} bytes ({ratio:6.2f}%)")
+    #print("="*80)
 
-    print("\n--- 🔬 PER-COLUMN DIAGNOSTICS ---")
-    print(f'{"Column":<20} {"Phoenix":>12} {"Zstd":>12} {"Parquet*":>12} {"Plan"}')
-    print(f'{"-"*20} {"-"*12} {"-"*12} {"-"*12} {"-"*40}')
+    #print("\n--- 🔬 PER-COLUMN DIAGNOSTICS ---")
+    #print(f'{"Column":<20} {"Phoenix":>12} {"Zstd":>12} {"Parquet*":>12} {"Plan"}')
+    #print(f'{"-"*20} {"-"*12} {"-"*12} {"-"*12} {"-"*40}')
     for name, results in all_column_results.items():
         p_size = results.get("phoenix_size", "N/A")
         z_size = results.get("zstd_size", "N/A")
@@ -189,9 +190,9 @@ def main(aspect_name):
         p_str = f"{p_size:,}" if isinstance(p_size, int) else str(p_size)
         z_str = f"{z_size:,}" if isinstance(z_size, int) else str(z_size)
         pq_str = f"{pq_size:,}" if isinstance(pq_size, int) else str(pq_size)
-        print(f"{name:<20} {p_str:>12} {z_str:>12} {pq_str:>12} {plan}")
-    print("-" * 80)
-    print("*Parquet size is the on-disk compressed size for that column's data chunks.")
+        #print(f"{name:<20} {p_str:>12} {z_str:>12} {pq_str:>12} {plan}")
+    #print("-" * 80)
+    #print("*Parquet size is the on-disk compressed size for that column's data chunks.")
 
 if __name__ == "__main__":
     for aspect in ASPECT_NAMES:

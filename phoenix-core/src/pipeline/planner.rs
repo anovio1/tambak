@@ -134,6 +134,7 @@ pub fn find_stride_by_autocorrelation(
 #[derive(Debug, Default)]
 struct DataProfile {
     is_constant: bool,
+    original_stream_has_low_cardinality: bool, // <-- ADD THIS
     delta_stream_has_low_cardinality: bool,
     signed_delta_bit_width: u8,
     unsigned_delta_bit_width: u8,
@@ -169,6 +170,7 @@ where
         unique_values.insert(val);
         max_original_zz = max_original_zz.max(zigzag::encode_val(val).to_u64().unwrap_or(0));
     }
+    profile.original_stream_has_low_cardinality = unique_values.len() <= 256;
     profile.original_bit_width = bit_width(max_original_zz);
     if unique_values.len() == 1 {
         profile.is_constant = true;
@@ -200,6 +202,7 @@ where
         unique_values.insert(val);
         max_original = max_original.max(val.to_u64().unwrap_or(0));
     }
+    profile.original_stream_has_low_cardinality = unique_values.len() <= 256;
     profile.original_bit_width = bit_width(max_original);
     if unique_values.len() == 1 {
         profile.is_constant = true;
@@ -236,6 +239,10 @@ fn generate_candidate_pipelines(
     // add overhead. Sometimes the best plan is just to compress the raw data.
     base_pipelines.push(vec![]); // An empty pipeline means just pass through to the entropy coder.
     base_pipelines.push(vec![Operation::Shuffle]);
+
+    if profile.original_stream_has_low_cardinality {
+        base_pipelines.push(vec![Operation::Dictionary]);
+    }
 
     let delta_op = if logical_type == LogicalType::SignedInteger {
         Operation::Delta { order: stride }
@@ -316,6 +323,13 @@ fn find_best_pipeline_by_trial(
         return Ok((default_plan, compressed.len()));
     }
 
+    // --- START: ADD DEBUG LOGGING ---
+    #[cfg(debug_assertions)]
+    println!(
+        "\n--- EMPIRICAL PLANNER SCORING (for {:?}) ---",
+        physical_dtype
+    );
+
     let mut best_pipeline = default_plan;
     let mut min_size = usize::MAX;
 
@@ -324,10 +338,25 @@ fn find_best_pipeline_by_trial(
         if let Ok(compressed_sample) =
             executor::execute_linear_encode_pipeline(sample_data_bytes, physical_dtype, &pipeline)
         {
+            // --- ADD THIS PRINTLN! ---
+            #[cfg(debug_assertions)]
+            println!(
+                "  - Candidate: {:<60} | Score (Size): {}",
+                format!("{:?}", pipeline),
+                compressed_sample.len()
+            );
+
             if compressed_sample.len() < min_size {
                 min_size = compressed_sample.len();
                 best_pipeline = pipeline;
             }
+        } else {
+            // --- (Optional but good) Log failed trials ---
+            #[cfg(debug_assertions)]
+            println!(
+                "  - Candidate: {:<60} | Score (Size): FAILED TO EXECUTE",
+                format!("{:?}", pipeline)
+            );
         }
     }
 
