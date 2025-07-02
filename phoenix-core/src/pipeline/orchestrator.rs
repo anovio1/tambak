@@ -5,7 +5,7 @@
 //! orchestrate the `Executor` to run the plan (handling meta-ops like Sparsify),
 //! and assemble the final compressed artifact.
 
-use arrow::array::{Array, PrimitiveArray};
+use arrow::array::{Array, BooleanArray, PrimitiveArray};
 use arrow::buffer::{BooleanBuffer, NullBuffer};
 use arrow::datatypes::*;
 use bytemuck::Pod;
@@ -23,7 +23,7 @@ use crate::pipeline::traits::TypeTransformer;
 use crate::types::PhoenixDataType;
 use crate::utils::typed_slice_to_bytes;
 
-const PLAN_VERSION: u32 = 2; // Increment for the new plan format
+const PLAN_VERSION: u32 = 2;
 
 #[derive(Debug, Clone)]
 struct StrategyResult {
@@ -61,17 +61,10 @@ fn prepare_initial_streams(array: &dyn Array) -> Result<HashMap<String, Vec<u8>>
         DataType::Float32 => extract_valid_data!(Float32Type),
         DataType::Float64 => extract_valid_data!(Float64Type),
         DataType::Boolean => {
-            let bool_array = array
-                .as_any()
-                .downcast_ref::<arrow::array::BooleanArray>()
-                .unwrap();
-            let valid_data_vec = bitmap::strip_valid_bools_to_vec(bool_array);
-
-            // Convert Vec<bool> to Vec<u8> with a guaranteed layout.
-            let valid_data_u8: Vec<u8> = valid_data_vec.iter().map(|&b| b as u8).collect();
-
-            // REFINED: Insert the Vec<u8> directly, avoiding an unnecessary copy.
-            streams.insert("main".to_string(), valid_data_u8);
+            let bool_array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+            let valid_bools = bitmap::strip_valid_bools_to_vec(bool_array);
+            let valid_bytes: Vec<u8> = valid_bools.iter().map(|&b| b as u8).collect();
+            streams.insert("main".to_string(), valid_bytes);
         }
         dt => {
             return Err(PhoenixError::UnsupportedType(format!(
@@ -216,7 +209,6 @@ pub fn create_plan(array: &dyn Array) -> Result<Plan, PhoenixError> {
             }};
         }
         use PhoenixDataType::*;
-        // CORRECTED: Fixed typo `¤t_type` to `current_type_for_planning`
         match current_type_for_planning {
             Int8 => evaluate_and_append!(i8),
             Int16 => evaluate_and_append!(i16),
@@ -306,6 +298,7 @@ pub fn compress_chunk(array: &dyn Array) -> Result<Vec<u8>, PhoenixError> {
     artifact.to_bytes()
 }
 
+// --- AUTHORITATIVE, CORRECTED `decompress_chunk` ---
 pub fn decompress_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
     let artifact = CompressedChunk::from_bytes(bytes)?;
     let plan: Plan = serde_json::from_str(&artifact.plan_json)?;
@@ -368,54 +361,61 @@ pub fn decompress_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
         }
     }
 
-    // --- 3. Decompress the main data stream, handling meta-ops in reverse ---
+    // --- 3. Decompress the main data stream by orchestrating the executor ---
     let mut main_data = streams.remove("main").unwrap();
-    let mut main_pipeline: Vec<Operation> = Vec::new();
+    let mut linear_pipeline: Vec<Operation> = Vec::new();
 
-    for (i, op) in plan.pipeline.iter().rev().enumerate() {
-        match op {
-            Operation::Sparsify {
-                values_pipeline, ..
-            } => {
-                let mask_bytes = decompressed_streams.get("sparsity_mask").unwrap();
-                let mask_vec: Vec<bool> = mask_bytes.iter().map(|b| *b != 0).collect();
-                let num_non_zero = mask_vec.iter().filter(|&&b| b).count();
-                let num_valid_rows = decompressed_streams
-                    .get("null_mask")
-                    .map_or(total_rows, |nm| {
-                        BooleanBuffer::new(nm.clone().into(), 0, total_rows).count_set_bits()
-                    });
+    // First, handle the Sparsify meta-op if it exists, as it's the outermost layer.
+    if let Some((op_idx, op)) = plan
+        .pipeline
+        .iter()
+        .enumerate()
+        .find(|(_, op)| matches!(op, Operation::Sparsify { .. }))
+    {
+        if let Operation::Sparsify {
+            values_pipeline, ..
+        } = op
+        {
+            let mask_bytes = decompressed_streams.get("sparsity_mask").unwrap();
+            let mask_vec: Vec<bool> = mask_bytes.iter().map(|b| *b != 0).collect();
+            let num_non_zero = mask_vec.iter().filter(|&&b| b).count();
+            let num_valid_rows = decompressed_streams
+                .get("null_mask")
+                .map_or(total_rows, |nm| {
+                    BooleanBuffer::new(nm.clone().into(), 0, total_rows).count_set_bits()
+                });
 
-                // The type of the data *before* the values_pipeline was the type of the main
-                // stream *before* the Sparsify op. We can get this from our full_type_flow.
-                let values_initial_type = full_type_flow[full_type_flow.len() - 2 - i];
-                let mut values_type_flow =
-                    derive_forward_type_flow(values_initial_type, values_pipeline)?;
-                values_type_flow.reverse();
-                let decompressed_values = executor::execute_linear_decode_pipeline(
-                    &main_data,
-                    &mut values_type_flow,
-                    values_pipeline,
-                    num_non_zero,
-                )?;
+            let values_initial_type = full_type_flow[op_idx];
+            let mut values_type_flow =
+                derive_forward_type_flow(values_initial_type, values_pipeline)?;
+            values_type_flow.reverse();
+            let decompressed_values = executor::execute_linear_decode_pipeline(
+                &main_data,
+                &mut values_type_flow,
+                values_pipeline,
+                num_non_zero,
+            )?;
 
-                main_data = kernels::dispatch_reconstruct_stream(
-                    &mask_vec,
-                    &decompressed_values,
-                    values_initial_type,
-                    num_valid_rows,
-                )?;
-            }
-            Operation::ExtractNulls { .. } => { /* Already handled */ }
-            _ => {
-                // This op is part of the linear pipeline
-                main_pipeline.insert(0, op.clone());
-            }
+            main_data = kernels::dispatch_reconstruct_stream(
+                &mask_vec,
+                &decompressed_values,
+                values_initial_type,
+                num_valid_rows,
+            )?;
         }
     }
 
-    // --- 4. Run the final linear decode pipeline ---
-    let mut linear_type_flow = derive_forward_type_flow(plan.initial_type, &main_pipeline)?;
+    // --- 4. Build and run the final linear decode pipeline ---
+    for op in &plan.pipeline {
+        if !matches!(
+            op,
+            Operation::Sparsify { .. } | Operation::ExtractNulls { .. }
+        ) {
+            linear_pipeline.push(op.clone());
+        }
+    }
+
+    let mut linear_type_flow = derive_forward_type_flow(plan.initial_type, &linear_pipeline)?;
     linear_type_flow.reverse();
     let num_values_for_linear = decompressed_streams
         .get("null_mask")
@@ -425,7 +425,7 @@ pub fn decompress_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
     main_data = executor::execute_linear_decode_pipeline(
         &main_data,
         &mut linear_type_flow,
-        &main_pipeline,
+        &linear_pipeline,
         num_values_for_linear,
     )?;
 
@@ -452,7 +452,6 @@ pub fn decompress_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
         PhoenixDataType::UInt64 => reapply_and_build!(UInt64Type),
         PhoenixDataType::Float32 => reapply_and_build!(Float32Type),
         PhoenixDataType::Float64 => reapply_and_build!(Float64Type),
-        // CORRECTED: Call the new, specialized function for booleans.
         PhoenixDataType::Boolean => {
             bitmap::reapply_bitmap_for_bools(main_data, null_buffer, total_rows)
                 .map(|arr| Box::new(arr) as Box<dyn Array>)
