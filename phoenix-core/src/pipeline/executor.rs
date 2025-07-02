@@ -94,13 +94,14 @@ pub(crate) fn execute_linear_decode_pipeline(
         return Ok(bytes.to_vec());
     }
 
-    let mut buffer_a = bytes.to_vec();
-    let mut buffer_b = Vec::with_capacity(buffer_a.len());
+    // Start with the initial compressed data.
+    let mut current_data = bytes.to_vec();
 
     let mut current_type = type_flow.pop().ok_or_else(|| {
         PhoenixError::InternalError("Type flow stack is empty at start of decode.".to_string())
     })?;
 
+    // Iterate through the pipeline in reverse for decoding.
     for op in pipeline.iter().rev() {
         let target_type = type_flow.pop().ok_or_else(|| {
             PhoenixError::InternalError(format!(
@@ -109,7 +110,6 @@ pub(crate) fn execute_linear_decode_pipeline(
             ))
         })?;
 
-        // --- NEW DEBUG CHECKPOINT ---
         #[cfg(debug_assertions)]
         {
             println!("--------------------------------------------------");
@@ -118,30 +118,32 @@ pub(crate) fn execute_linear_decode_pipeline(
                 op,
                 current_type,
                 target_type,
-                buffer_a.len()
+                current_data.len()
             );
         }
-        // --- END CHECKPOINT ---
 
+        // The dispatcher will call the kernel, which returns a *new* Vec.
+        // We create a temporary buffer for the dispatcher to write into.
+        let mut output_buf = Vec::new();
         kernels::dispatch_decode(
             op,
-            &buffer_a,
-            &mut buffer_b,
+            &current_data,
+            &mut output_buf,
             current_type,
             target_type,
             num_values,
         )?;
 
-        // --- NEW DEBUG CHECKPOINT ---
         #[cfg(debug_assertions)]
         {
-            println!("[EXECUTOR-DECODE] SUCCESS -> Out-Len: {}", buffer_b.len());
+            println!("[EXECUTOR-DECODE] SUCCESS -> Out-Len: {}", output_buf.len());
         }
-        // --- END CHECKPOINT ---
-        std::mem::swap(&mut buffer_a, &mut buffer_b);
-        buffer_b.clear();
+
+        // The output of this stage becomes the input for the next stage.
+        current_data = output_buf;
         current_type = target_type;
     }
 
-    Ok(buffer_a)
+    // The final result is the data held in `current_data`.
+    Ok(current_data)
 }

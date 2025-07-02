@@ -158,10 +158,29 @@ pub fn dispatch_encode(
                 dtype
             ))),
         },
-
         // --- Kernels that operate on raw byte streams ---
-        Zstd { level } => zstd::encode(input_bytes, output_buf, *level),
-        Ans => ans::encode(input_bytes, output_buf),
+        Zstd { level } => {
+            // Call the new encode function, which returns a Result<Vec<u8>>.
+            let compressed_data = zstd::encode(input_bytes, *level)?;
+
+            // Assign the new, compressed vector to the caller's output buffer.
+            *output_buf = compressed_data;
+
+            // The block must resolve to Ok(()).
+            Ok(())
+        }
+        Ans => {
+            // Call the new encode function, which returns a Result containing a Vec<u8>.
+            // The '?' operator will propagate any error or unwrap the successful Ok value.
+            let compressed_data = ans::encode(input_bytes)?;
+
+            // Assign the new, compressed vector to the caller's output buffer.
+            // The '*' dereferences the mutable reference to perform the assignment.
+            *output_buf = compressed_data;
+
+            // The block must resolve to the expected return type, which is likely Ok(()).
+            Ok(())
+        }
 
         // --- Kernels with special generic dispatch ---
         BitCast { to_type } => match (dtype, *to_type) {
@@ -295,8 +314,28 @@ pub fn dispatch_decode(
                 target_dtype
             ))),
         },
-        Zstd { .. } => zstd::decode(input_bytes, output_buf),
-        Ans => ans::decode(input_bytes, output_buf, num_values),
+        Zstd { .. } => {
+            // Call the new decode function, which returns a Result<Vec<u8>>.
+            let decompressed_data = zstd::decode(input_bytes)?;
+
+            // Assign the successfully decompressed data to the output buffer.
+            *output_buf = decompressed_data;
+
+            // The block must resolve to Ok(()).
+            Ok(())
+        }
+        Ans => {
+            // Call the new decode function, which returns a Result<Vec<u8>, ...>
+            // The '?' will handle the error case, propagating it up.
+            let decompressed_data = ans::decode(input_bytes)?;
+
+            // Assign the successfully decompressed data to your output buffer.
+            // The '*' dereferences the mutable reference.
+            *output_buf = decompressed_data;
+
+            // The block must resolve to Ok(()) to match the expected return type.
+            Ok(())
+        }
         CanonicalizeZeros => canonicalize::decode(input_bytes, output_buf),
         ZigZag => match (current_dtype, target_dtype) {
             (UInt8, Int8) => convert_and_exec_decode!(u8, zigzag, output_buf),

@@ -1,38 +1,46 @@
-//! This module contains the v4.0 kernel for Asymmetric Numeral Systems (ANS)
+//! This module contains a production-grade kernel for Asymmetric Numeral Systems (ANS)
 //! entropy coding.
 //!
 //! This is a modern, high-performance entropy coder that can provide superior
 //! compression ratios to Huffman coding and is often faster than Arithmetic
-//! Coding. It will compete with Zstd as a final compression stage. This
-//! implementation uses a range-based variant (rANS), which operates as a
-//! last-in, first-out (LIFO) state machine on the data.
+//! Coding. This implementation uses a range-based variant (rANS), which operates
+//! as a last-in, first-out (LIFO) state machine on the data.
+//!
+//! ## Stream Format
+//!
+//! The encoded bytestream is self-contained and has the following structure:
+//! 1.  **Uncompressed Size (8 bytes):** The original length of the data as a `u64` little-endian integer.
+//! 2.  **Frequency Header:**
+//!     -   Symbol Count (2 bytes): The number of unique symbols (`u16` LE).
+//!     -   Symbol Table (variable): A sequence of (symbol, frequency) pairs.
+//!         -   Symbol (1 byte): The byte value.
+//!         -   Frequency (2 bytes): The normalized frequency of the symbol (`u16` LE).
+//! 3.  **Final rANS State (4 bytes):** The final `u32` state of the encoder (LE).
+//! 4.  **Data Payload (variable):** The compressed rANS data stream.
 
 use crate::error::PhoenixError;
 
 // --- rANS Constants ---
-const ANS_NORMALIZATION_FACTOR: u32 = 1 << 12; // 4096
-const ANS_STATE_MIN: u32 = 1 << 16;
+const ANS_NORMALIZATION_FACTOR: u32 = 1 << 12; // 4096, the total frequency budget.
+const ANS_STATE_MIN: u32 = 1 << 16; // Minimum state value before renormalization.
 
 /// Represents the encoding/decoding information for a single symbol (byte).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Clone, Copy, Default)]
 struct AnsSymbol {
     freq: u32,
     cum_freq: u32,
 }
 
-/// A pure function to count and normalize symbol frequencies.
+/// Analyzes input data to build a normalized frequency model for ANS encoding.
+///s
+/// This function counts symbol occurrences, normalizes them to a fixed total
+/// (`ANS_NORMALIZATION_FACTOR`), and prepares tables for both encoding and header serialization.
 fn build_normalized_symbols(
     input_bytes: &[u8],
 ) -> Result<([AnsSymbol; 256], Vec<(u8, u16)>), PhoenixError> {
-    #[cfg(all(debug_assertions, not(feature = "dans")))]
-    println!(
-        "[ANS DEBUG] Entering build_normalized_symbols for {} bytes.",
-        input_bytes.len()
-    );
-
     if input_bytes.is_empty() {
         return Err(PhoenixError::AnsError(
-            "Input for frequency normalization cannot be empty".to_string(),
+            "Cannot build frequency model from empty input.".to_string(),
         ));
     }
 
@@ -42,22 +50,19 @@ fn build_normalized_symbols(
     }
 
     let unique_symbol_count = freqs.iter().filter(|&&c| c > 0).count();
-    #[cfg(all(debug_assertions, not(feature = "dans")))]
-    println!(
-        "[ANS DEBUG]   Found {} unique symbols.",
-        unique_symbol_count
-    );
-
     if unique_symbol_count <= 1 {
+        // ANS requires a dynamic probability distribution. A single symbol stream
+        // is better handled by RLE.
         return Err(PhoenixError::AnsError(
-            "ANS requires at least two unique symbols to build a frequency model.".to_string(),
+            "ANS requires at least two unique symbols.".to_string(),
         ));
     }
 
-    let mut norm_symbols_for_header = Vec::with_capacity(256);
+    let mut norm_symbols_for_header = Vec::with_capacity(unique_symbol_count);
     let mut total_norm_freq = 0;
     let total_input_len = input_bytes.len() as f64;
 
+    // Normalize frequencies to fit within the ANS_NORMALIZATION_FACTOR budget.
     for (byte, &count) in freqs.iter().enumerate().filter(|(_, &c)| c > 0) {
         let freq =
             (((count as f64 / total_input_len) * ANS_NORMALIZATION_FACTOR as f64) as u32).max(1);
@@ -65,29 +70,13 @@ fn build_normalized_symbols(
         total_norm_freq += freq;
     }
 
-    #[cfg(all(debug_assertions, not(feature = "dans")))]
-    {
-        println!(
-            "[ANS DEBUG]   Normalized Frequencies (first 5): {:?}",
-            &norm_symbols_for_header[..5.min(norm_symbols_for_header.len())]
-        );
-        println!(
-            "[ANS DEBUG]   Total normalized freq before remainder: {}",
-            total_norm_freq
-        );
-    }
-
+    // Distribute any rounding error to the last symbol to ensure the sum is exact.
     let remainder = ANS_NORMALIZATION_FACTOR.saturating_sub(total_norm_freq);
     if let Some((_, freq)) = norm_symbols_for_header.last_mut() {
         *freq = freq.saturating_add(remainder as u16);
     }
 
-    #[cfg(all(debug_assertions, not(feature = "dans")))]
-    println!(
-        "[ANS DEBUG]   Remainder added to last symbol: {}",
-        remainder
-    );
-
+    // Build the final table used for encoding, containing cumulative frequencies.
     let mut encode_table = [AnsSymbol::default(); 256];
     let mut cum_freq = 0;
     for (byte, freq) in &norm_symbols_for_header {
@@ -102,235 +91,164 @@ fn build_normalized_symbols(
 }
 
 /// Encodes a byte slice using a range Asymmetric Numeral Systems model.
-pub fn encode(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), PhoenixError> {
-    #[cfg(all(debug_assertions, not(feature = "dans")))]
-    println!(
-        "\n[ANS DEBUG] === ANS ENCODE START ({} bytes) ===",
-        input_bytes.len()
-    );
-
-    output_buf.clear();
+///
+/// The encoder processes the input in reverse (LIFO) to allow the decoder
+/// to produce output in the correct forward order.
+///
+/// # Returns
+/// A `Result` containing the compressed `Vec<u8>` or an `PhoenixError`.
+pub fn encode(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
     if input_bytes.is_empty() {
-        #[cfg(all(debug_assertions, not(feature = "dans")))]
-        println!("[ANS DEBUG] Input is empty, returning Ok.");
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let (encode_table, header_symbols) = build_normalized_symbols(input_bytes)?;
 
-    let num_symbols: u16 = header_symbols.len().try_into().map_err(|_| {
-        PhoenixError::AnsError(
-            "The number of unique symbols exceeds the u16 limit of 65,535.".to_string(),
-        )
-    })?;
+    // Pre-allocate buffer with a reasonable guess for the final size.
+    let mut output_buf = Vec::with_capacity(input_bytes.len() / 2);
 
+    // 1. Write uncompressed size header.
+    let uncompressed_len: u64 = input_bytes.len().try_into().map_err(|_| {
+        PhoenixError::AnsError("Input data length exceeds u64 capacity.".to_string())
+    })?;
+    output_buf.extend_from_slice(&uncompressed_len.to_le_bytes());
+
+    // 2. Write frequency table header.
+    let num_symbols: u16 = header_symbols.len() as u16;
     output_buf.extend_from_slice(&num_symbols.to_le_bytes());
     for (byte, freq) in &header_symbols {
         output_buf.push(*byte);
         output_buf.extend_from_slice(&freq.to_le_bytes());
     }
 
-    #[cfg(all(debug_assertions, not(feature = "dans")))]
-    println!(
-        "[ANS DEBUG] Serialized Header ({} bytes): {:?}",
-        output_buf.len(),
-        output_buf
-    );
-
+    // --- Core rANS Encoding Loop ---
     let mut state = ANS_STATE_MIN;
+    // Temporary buffer for the encoded payload, which is built in reverse.
     let mut encoded_data = Vec::with_capacity(input_bytes.len());
 
-    for (i, &byte) in input_bytes.iter().rev().enumerate() {
+    // Process input backwards (LIFO).
+    for &byte in input_bytes.iter().rev() {
         let symbol = encode_table[byte as usize];
-        #[cfg(all(debug_assertions, not(feature = "dans")))]
-        if i < 5 || i > input_bytes.len() - 5 {
-            println!(
-                "[ANS DEBUG]   Encoding byte '{}' (0x{:02X}) | state_in: 0x{:X}",
-                byte as char, byte, state
-            );
-        }
 
+        // Renormalize state if it's too large, streaming out low bytes.
         while state >= symbol.freq * (ANS_STATE_MIN >> 4) {
-            #[cfg(all(debug_assertions, not(feature = "dans")))]
-            if i < 5 || i > input_bytes.len() - 5 {
-                println!(
-                    "[ANS DEBUG]     Renormalizing state... writing byte 0x{:02X}",
-                    (state & 0xFF) as u8
-                );
-            }
             encoded_data.push((state & 0xFF) as u8);
             state >>= 8;
         }
+
+        // "Push" the symbol's information onto the state.
         state = (state / symbol.freq) * ANS_NORMALIZATION_FACTOR
             + (state % symbol.freq)
             + symbol.cum_freq;
-
-        #[cfg(all(debug_assertions, not(feature = "dans")))]
-        if i < 5 || i > input_bytes.len() - 5 {
-            println!(
-                "[ANS DEBUG]   Encoded byte '{}' (0x{:02X}) | state_out: 0x{:X}",
-                byte as char, byte, state
-            );
-        }
     }
 
-    #[cfg(all(debug_assertions, not(feature = "dans")))]
-    {
-        println!(
-            "[ANS DEBUG] Final encode state to be written: 0x{:X}",
-            state
-        );
-        println!(
-            "[ANS DEBUG] Encoded data payload size: {}",
-            encoded_data.len()
-        );
-    }
-
+    // 3. Write final state.
     output_buf.extend_from_slice(&state.to_le_bytes());
+
+    // 4. Write data payload.
+    // We reverse the payload because it was generated backwards. This allows
+    // the decoder to read it forwards linearly.
     output_buf.extend(encoded_data.iter().rev());
 
-    #[cfg(all(debug_assertions, not(feature = "dans")))]
-    println!(
-        "[ANS DEBUG] === ANS ENCODE END (Total size: {}) ===\n",
-        output_buf.len()
-    );
-
-    Ok(())
+    Ok(output_buf)
 }
 
 /// Decodes an ANS-encoded buffer.
-pub fn decode(
-    input_bytes: &[u8],
-    output_buf: &mut Vec<u8>,
-    num_values: usize,
-) -> Result<(), PhoenixError> {
-    #[cfg(all(debug_assertions, not(feature = "dans")))]
-    println!(
-        "\n[ANS DEBUG] === ANS DECODE START ({} bytes, expecting {} values) ===",
-        input_bytes.len(),
-        num_values
-    );
-
-    output_buf.clear();
-    if num_values == 0 {
-        #[cfg(all(debug_assertions, not(feature = "dans")))]
-        println!("[ANS DEBUG] Expecting 0 values, returning Ok.");
-        return Ok(());
-    }
+///
+/// This function reads the self-contained stream, reconstructs the frequency model,
+/// and decodes the data until the original uncompressed size is reached.
+///
+/// # Returns
+/// A `Result` containing the decompressed `Vec<u8>` or an `PhoenixError`.
+pub fn decode(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
     if input_bytes.is_empty() {
-        return Err(PhoenixError::AnsError(
-            "Input is empty but values were expected.".to_string(),
-        ));
+        return Ok(Vec::new());
     }
-    // output_buf.reserve(num_values);
 
-    // --- Header Parsing (Correct and Unchanged) ---
     let mut cursor = 0;
-    let num_symbols_bytes: [u8; 2] = input_bytes
-        .get(cursor..cursor + 2)
-        .ok_or_else(|| {
-            PhoenixError::AnsError("Truncated header: cannot read symbol count".to_string())
-        })?
-        .try_into()
-        .map_err(|_| {
-            PhoenixError::AnsError("Corrupt header: invalid slice for symbol count".to_string())
+
+    // Helper to read a fixed number of bytes from the input slice.
+    let mut read_bytes = |len: usize| -> Result<&[u8], PhoenixError> {
+        let end = cursor + len;
+        let slice = input_bytes.get(cursor..end).ok_or_else(|| {
+            PhoenixError::AnsError("Input stream is truncated or corrupt.".to_string())
         })?;
-    cursor += 2;
+        cursor = end;
+        Ok(slice)
+    };
+
+    // 1. Read uncompressed size header.
+    let len_bytes: [u8; 8] = read_bytes(8)?.try_into().unwrap(); // Should not fail
+    let num_values_to_decode = u64::from_le_bytes(len_bytes) as usize;
+
+    if num_values_to_decode == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Pre-allocate the output buffer for maximum performance.
+    let mut output_buf = Vec::with_capacity(num_values_to_decode);
+
+    // 2. Read frequency table header.
+    let num_symbols_bytes: [u8; 2] = read_bytes(2)?.try_into().unwrap();
     let num_symbols = u16::from_le_bytes(num_symbols_bytes) as usize;
+
     let mut symbol_table = [AnsSymbol::default(); 256];
     let mut decode_lookup = vec![0u8; ANS_NORMALIZATION_FACTOR as usize];
-    let mut total_freq_check = 0u32;
     let mut cum_freq = 0;
+
     for _ in 0..num_symbols {
-        let byte = *input_bytes.get(cursor).ok_or_else(|| {
-            PhoenixError::AnsError("Corrupt frequency table: cannot read symbol".to_string())
-        })?;
-        cursor += 1;
-        let freq_bytes: [u8; 2] = input_bytes
-            .get(cursor..cursor + 2)
-            .ok_or_else(|| {
-                PhoenixError::AnsError("Corrupt frequency table: cannot read frequency".to_string())
-            })?
-            .try_into()
-            .map_err(|_| {
-                PhoenixError::AnsError("Corrupt frequency table: invalid slice length".to_string())
-            })?;
-        cursor += 2;
+        let byte = read_bytes(1)?[0];
+        let freq_bytes: [u8; 2] = read_bytes(2)?.try_into().unwrap();
         let freq = u16::from_le_bytes(freq_bytes) as u32;
-        if freq == 0 {
-            return Err(PhoenixError::AnsError(
-                "Invalid frequency table: frequency cannot be zero".to_string(),
-            ));
-        }
+
         symbol_table[byte as usize] = AnsSymbol { freq, cum_freq };
-        total_freq_check += freq;
-        if cum_freq + freq > ANS_NORMALIZATION_FACTOR {
-            return Err(PhoenixError::AnsError(
-                "Invalid frequency table: cumulative frequency exceeds normalization factor"
-                    .to_string(),
-            ));
+
+        // Fill the fast lookup table for decoding.
+        let end_slot = cum_freq + freq;
+        for j in (cum_freq as usize)..(end_slot as usize) {
+            decode_lookup[j] = byte;
         }
-        for j in cum_freq..(cum_freq + freq) {
-            decode_lookup[j as usize] = byte;
-        }
-        cum_freq += freq;
+        cum_freq = end_slot;
     }
-    if total_freq_check != ANS_NORMALIZATION_FACTOR {
+
+    if cum_freq != ANS_NORMALIZATION_FACTOR {
         return Err(PhoenixError::AnsError(format!(
-            "Invalid frequency table: frequencies sum to {} but should sum to {}",
-            total_freq_check, ANS_NORMALIZATION_FACTOR
+            "Corrupt header: frequencies sum to {} but should be {}.",
+            cum_freq, ANS_NORMALIZATION_FACTOR
         )));
     }
-    let state_bytes: [u8; 4] = input_bytes
-        .get(cursor..cursor + 4)
-        .ok_or_else(|| {
-            PhoenixError::AnsError("Truncated header: cannot read initial state".to_string())
-        })?
-        .try_into()
-        .map_err(|_| {
-            PhoenixError::AnsError("Corrupt header: invalid slice length for state".to_string())
-        })?;
-    let mut state = u32::from_le_bytes(state_bytes);
-    cursor += 4;
-    let mut data_pos = cursor;
 
-    // Loop until we have decoded the expected number of values
-    while output_buf.len() < num_values {
+    // 3. Read initial state.
+    let state_bytes: [u8; 4] = read_bytes(4)?.try_into().unwrap();
+    let mut state = u32::from_le_bytes(state_bytes);
+
+    // Pointer to the start of the compressed data payload.
+    let mut data_ptr = cursor;
+
+    // --- Core rANS Decoding Loop ---
+    while output_buf.len() < num_values_to_decode {
+        // "Pop" a symbol's information from the state.
         let slot = state % ANS_NORMALIZATION_FACTOR;
         let byte = decode_lookup[slot as usize];
-        output_buf.push(byte); // Push to build the reversed stream
+        output_buf.push(byte);
 
         let symbol = symbol_table[byte as usize];
         state = symbol.freq * (state / ANS_NORMALIZATION_FACTOR) + slot - symbol.cum_freq;
 
+        // Renormalize state if it's too small, reading from the payload.
         while state < ANS_STATE_MIN {
-            if data_pos >= input_bytes.len() {
-                if output_buf.len() < num_values {
-                    return Err(PhoenixError::AnsError(
-                        "Input stream is truncated or corrupt.".to_string(),
-                    ));
-                }
-                break;
-            }
-            state = (state << 8) | input_bytes[data_pos] as u32;
-            data_pos += 1;
+            state = (state << 8)
+                | (*input_bytes.get(data_ptr).ok_or_else(|| {
+                    PhoenixError::AnsError("Input stream is truncated or corrupt.".to_string())
+                })? as u32);
+            data_ptr += 1;
         }
     }
 
-    // --- THE CRITICAL FIX ---
-    // Reverse the buffer at the end to restore original order.
-    // output_buf.reverse();
-    // --- END FIX ---
-
-    #[cfg(all(debug_assertions, not(feature = "dans")))]
-    println!(
-        "[ANS DEBUG] === ANS DECODE END (Decoded {} bytes) ===\n",
-        output_buf.len()
-    );
-    Ok(())
+    Ok(output_buf)
 }
 
-// --- Unit Tests ---
+// --- Unit Tests (Updated for new API) ---
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,11 +256,8 @@ mod tests {
     #[test]
     fn test_ans_roundtrip_simple_data() {
         let original = b"mississippi river".to_vec();
-        let mut encoded = Vec::new();
-        encode(&original, &mut encoded).unwrap();
-        // REMOVED THE INVALID ASSERTION
-        let mut decoded = Vec::new();
-        decode(&encoded, &mut decoded, original.len()).unwrap();
+        let encoded = encode(&original).unwrap();
+        let decoded = decode(&encoded).unwrap();
         assert_eq!(decoded, original);
     }
 
@@ -352,75 +267,66 @@ mod tests {
         for i in 0..1000 {
             original.push(if i % 4 == 0 { b'A' } else { b'B' });
         }
-        let mut encoded = Vec::new();
-        encode(&original, &mut encoded).unwrap();
-        // assert!(
-        //     encoded.len() < original.len() / 4,
-        //     "ANS compression ratio is poor for low-entropy data"
-        // );
-        let mut decoded = Vec::new();
-        decode(&encoded, &mut decoded, original.len()).unwrap();
+        let encoded = encode(&original).unwrap();
+        assert!(encoded.len() < original.len() / 2); // Check for reasonable compression.
+        let decoded = decode(&encoded).unwrap();
         assert_eq!(decoded, original);
     }
 
     #[test]
     fn test_ans_on_high_entropy_data() {
-        let original: Vec<u8> = (0..255).collect();
-        let mut encoded = Vec::new();
-        encode(&original, &mut encoded).unwrap();
-        assert!(
-            encoded.len() > original.len(),
-            "ANS should expand incompressible data"
-        );
-        let mut decoded = Vec::new();
-        decode(&encoded, &mut decoded, original.len()).unwrap();
+        let original: Vec<u8> = (0..=255).collect();
+        let encoded = encode(&original).unwrap();
+        assert!(encoded.len() > original.len()); // Should expand incompressible data.
+        let decoded = decode(&encoded).unwrap();
         assert_eq!(decoded, original);
     }
 
     #[test]
-    fn test_ans_empty_and_single_byte() {
+    fn test_ans_empty_and_single_symbol() {
+        // Empty case
         let original_empty: Vec<u8> = vec![];
-        let mut encoded_empty = Vec::new();
-        encode(&original_empty, &mut encoded_empty).unwrap();
+        let encoded_empty = encode(&original_empty).unwrap();
         assert!(encoded_empty.is_empty());
-        let mut decoded_empty = Vec::new();
-        decode(&encoded_empty, &mut decoded_empty, 0).unwrap();
+        let decoded_empty = decode(&encoded_empty).unwrap();
         assert_eq!(decoded_empty, original_empty);
 
-        let original_single: Vec<u8> = vec![42];
-        let mut encoded_single = Vec::new();
-        let result = encode(&original_single, &mut encoded_single);
-        assert!(result.is_err(), "Encode should fail for single-symbol data");
-        let err = result.unwrap_err();
-        assert!(matches!(err, PhoenixError::AnsError(_)));
+        // Single symbol case (should fail to encode)
+        let original_single: Vec<u8> = vec![42; 10];
+        let result = encode(&original_single);
         assert!(
-            err.to_string()
-                .contains("requires at least two unique symbols"),
-            "Error message should explain why it failed"
+            matches!(result, Err(PhoenixError::AnsError(msg)) if msg.contains("at least two unique symbols"))
         );
     }
 
     #[test]
-    fn test_decode_corrupt_data() {
-        let mut decoded = Vec::new();
-        let err1 = decode(&[0], &mut decoded, 1).unwrap_err();
-        assert!(matches!(err1, PhoenixError::AnsError(_)));
-        let err2 = decode(&[1, 97], &mut decoded, 1).unwrap_err();
-        assert!(matches!(err2, PhoenixError::AnsError(_)));
-        let err3 = decode(&[1, 97, 0, 1, 0, 0], &mut decoded, 1).unwrap_err();
-        assert!(matches!(err3, PhoenixError::AnsError(_)));
+    fn test_decode_corrupt_data_truncated() {
+        let original = b"some data".to_vec();
+        let encoded = encode(&original).unwrap();
+
+        // Truncate the stream at various points.
+        for i in 1..encoded.len() {
+            let truncated_stream = &encoded[..i];
+            let result = decode(truncated_stream);
+            assert!(
+                matches!(&result, Err(PhoenixError::AnsError(msg)) if msg.contains("truncated or corrupt")),
+                "Failed on length {}",
+                i
+            );
+        }
     }
 
     #[test]
     fn test_decode_invalid_frequency_sum() {
-        let original = b"abc".to_vec();
-        let mut encoded = Vec::new();
-        encode(&original, &mut encoded).unwrap();
-        let new_freq: u16 = 1000;
-        encoded[2..4].copy_from_slice(&new_freq.to_le_bytes());
-        let mut decoded = Vec::new();
-        let err = decode(&encoded, &mut decoded, original.len()).unwrap_err();
-        assert!(matches!(err, PhoenixError::AnsError(_)));
-        assert!(err.to_string().contains("frequencies sum to"));
+        let mut encoded = encode(&b"abc".to_vec()).unwrap();
+        // Manually corrupt the frequency of the first symbol (byte 'a').
+        // Original header: len(8) + num_sym(2) + 'a'(1) + freq(2) = 13 bytes
+        let freq_pos = 8 + 2 + 1;
+        encoded[freq_pos..freq_pos + 2].copy_from_slice(&1000u16.to_le_bytes());
+
+        let result = decode(&encoded);
+        assert!(
+            matches!(&result, Err(PhoenixError::AnsError(msg)) if msg.contains("Corrupt header: frequencies sum to"))
+        );
     }
 }

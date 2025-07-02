@@ -97,19 +97,61 @@ fn decompress_slice(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), 
 //==================================================================================
 
 /// The public-facing encode function for this module.
-pub fn encode(
-    input_bytes: &[u8],
-    output_buf: &mut Vec<u8>,
-    level: i32,
-) -> Result<(), PhoenixError> {
-    output_buf.clear();
-    compress_slice(input_bytes, output_buf, level)
+// MODIFIED: The encode function now returns a Vec<u8> and prepends the length.
+pub fn encode(input_bytes: &[u8], level: i32) -> Result<Vec<u8>, PhoenixError> {
+    if input_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut output_buf = Vec::with_capacity(input_bytes.len());
+
+    // --- FIX: Prepend the uncompressed size ---
+    let uncompressed_len: u64 = input_bytes.len() as u64;
+    output_buf.extend_from_slice(&uncompressed_len.to_le_bytes());
+
+    // Now, compress the data and append it to the buffer.
+    let mut encoder = zstd::stream::Encoder::new(&mut output_buf, level)
+        .map_err(|e| PhoenixError::ZstdError(e.to_string()))?;
+    std::io::Write::write_all(&mut encoder, input_bytes)
+        .map_err(|e| PhoenixError::ZstdError(e.to_string()))?;
+    encoder
+        .finish()
+        .map_err(|e| PhoenixError::ZstdError(e.to_string()))?;
+
+    Ok(output_buf)
 }
 
-/// The public-facing decode function for this module.
-pub fn decode(input_bytes: &[u8], output_buf: &mut Vec<u8>) -> Result<(), PhoenixError> {
-    output_buf.clear();
-    decompress_slice(input_bytes, output_buf)
+// MODIFIED: The decode function now returns a Vec<u8> and reads the length header.
+pub fn decode(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
+    if input_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // --- FIX: Read the uncompressed size header ---
+    if input_bytes.len() < 8 {
+        return Err(PhoenixError::ZstdError(
+            "Input stream too short to contain size header.".to_string(),
+        ));
+    }
+    let len_bytes: [u8; 8] = input_bytes[0..8].try_into().unwrap();
+    let uncompressed_len = u64::from_le_bytes(len_bytes) as usize;
+
+    // The actual compressed data starts *after* the header.
+    let compressed_data = &input_bytes[8..];
+
+    let mut decompressed_data = Vec::with_capacity(uncompressed_len);
+    zstd::stream::copy_decode(compressed_data, &mut decompressed_data)
+        .map_err(|e| PhoenixError::ZstdError(e.to_string()))?;
+
+    if decompressed_data.len() != uncompressed_len {
+        return Err(PhoenixError::ZstdError(format!(
+            "Decompressed size does not match header. Expected {}, got {}.",
+            uncompressed_len,
+            decompressed_data.len()
+        )));
+    }
+
+    Ok(decompressed_data)
 }
 
 //==================================================================================
@@ -126,13 +168,13 @@ mod tests {
             b"hello world, this is a test of zstd compression. hello world, this is a test."
                 .to_vec();
 
-        let mut compressed_bytes = Vec::new();
-        encode(&original_bytes, &mut compressed_bytes, 3).unwrap();
+        // --- FIX: Call the new API ---
+        let compressed_bytes = encode(&original_bytes, 3).unwrap();
 
         assert!(compressed_bytes.len() < original_bytes.len());
 
-        let mut decompressed_bytes = Vec::new();
-        decode(&compressed_bytes, &mut decompressed_bytes).unwrap();
+        // --- FIX: Call the new API ---
+        let decompressed_bytes = decode(&compressed_bytes).unwrap();
 
         assert_eq!(original_bytes, decompressed_bytes);
     }
@@ -141,22 +183,23 @@ mod tests {
     fn test_zstd_roundtrip_highly_compressible_data() {
         let original_bytes = vec![42u8; 10_000];
 
-        let mut compressed_bytes = Vec::new();
-        encode(&original_bytes, &mut compressed_bytes, 5).unwrap();
+        // --- FIX: Call the new API ---
+        let compressed_bytes = encode(&original_bytes, 5).unwrap();
 
-        assert!(compressed_bytes.len() < 50);
+        assert!(compressed_bytes.len() < 50); // The compressed size will be slightly larger due to the 8-byte header.
 
-        let mut decompressed_bytes = Vec::new();
-        decode(&compressed_bytes, &mut decompressed_bytes).unwrap();
+        // --- FIX: Call the new API ---
+        let decompressed_bytes = decode(&compressed_bytes).unwrap();
 
         assert_eq!(original_bytes, decompressed_bytes);
     }
 
     #[test]
     fn test_zstd_decompress_invalid_data() {
-        let invalid_bytes = vec![1, 2, 3, 4, 5];
-        let mut decompressed_bytes = Vec::new();
-        let result = decode(&invalid_bytes, &mut decompressed_bytes);
+        let invalid_bytes = vec![1, 2, 3, 4, 5]; // This is too short to be valid.
+
+        // --- FIX: Call the new API ---
+        let result = decode(&invalid_bytes);
 
         assert!(result.is_err());
         if let Err(e) = result {

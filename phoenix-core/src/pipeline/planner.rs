@@ -231,6 +231,10 @@ fn generate_candidate_pipelines(
     logical_type: LogicalType, // Now accepts LogicalType
 ) -> Vec<Vec<Operation>> {
     let mut base_pipelines: Vec<Vec<Operation>> = Vec::new();
+
+    // Add a "do nothing" base case. For small or random data, transformations
+    // add overhead. Sometimes the best plan is just to compress the raw data.
+    base_pipelines.push(vec![]); // An empty pipeline means just pass through to the entropy coder.
     base_pipelines.push(vec![Operation::Shuffle]);
 
     let delta_op = if logical_type == LogicalType::SignedInteger {
@@ -429,13 +433,65 @@ fn plan_bytes(
 //==================================================================================
 
 /// Analyzes a byte stream and its type to produce an optimal, self-contained `Plan`.
+// In: src/pipeline/planner.rs
+
 pub fn plan_pipeline(bytes: &[u8], context: PlanningContext) -> Result<Plan, PhoenixError> {
-    let stride = find_stride_by_autocorrelation(bytes, context.physical_dtype)?; // Use physical_dtype for stride
-    let (pipeline, _cost) = plan_bytes(bytes, &context, stride)?; // Pass context by reference
+    // --- THE AUTHORITATIVE FIX: SPECIALIZED BOOLEAN PLANNING ---
+    // The main planner is optimized for numeric data. For boolean streams,
+    // the best strategy is almost always RLE followed by an entropy coder.
+    // We add a special fast-path here to handle this case correctly.
+    if context.physical_dtype == PhoenixDataType::Boolean {
+        // --- FIX: Add more candidate pipelines for booleans ---
+        let rle_only_plan = vec![Operation::Rle];
+        let rle_zstd_plan = vec![Operation::Rle, Operation::Zstd { level: 19 }];
+        let rle_ans_plan = vec![Operation::Rle, Operation::Ans];
+
+        // Empirically determine the cost of each candidate.
+        let rle_cost = executor::execute_linear_encode_pipeline(
+            bytes,
+            context.physical_dtype,
+            &rle_only_plan,
+        )?
+        .len();
+
+        let zstd_cost = executor::execute_linear_encode_pipeline(
+            bytes,
+            context.physical_dtype,
+            &rle_zstd_plan,
+        )?
+        .len();
+
+        let ans_cost =
+            executor::execute_linear_encode_pipeline(bytes, context.physical_dtype, &rle_ans_plan)?
+                .len();
+
+        // Find the minimum cost among the three candidates.
+        let mut best_pipeline = rle_only_plan;
+        let mut min_cost = rle_cost;
+
+        if zstd_cost < min_cost {
+            min_cost = zstd_cost;
+            best_pipeline = rle_zstd_plan;
+        }
+        if ans_cost < min_cost {
+            best_pipeline = rle_ans_plan;
+        }
+
+        return Ok(Plan {
+            plan_version: PLAN_VERSION,
+            initial_type: context.initial_dtype,
+            pipeline: best_pipeline,
+        });
+    }
+    // --- END FIX ---
+
+    // If the type is not Boolean, proceed with the original, numeric-focused planning logic.
+    let stride = find_stride_by_autocorrelation(bytes, context.physical_dtype)?;
+    let (pipeline, _cost) = plan_bytes(bytes, &context.clone(), stride)?;
 
     Ok(Plan {
         plan_version: PLAN_VERSION,
-        initial_type: context.initial_dtype, // Store initial_dtype in the plan
+        initial_type: context.initial_dtype,
         pipeline,
     })
 }
