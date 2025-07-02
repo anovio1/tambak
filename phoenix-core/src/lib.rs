@@ -7,6 +7,11 @@
 //!     compiled library is imported into Python.
 
 //==================================================================================
+// 0. Constants
+//==================================================================================
+/// The crate version, automatically set from Cargo.toml at compile time.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+//==================================================================================
 // 1. Module Declarations
 //==================================================================================
 #[macro_use]
@@ -45,6 +50,9 @@ fn phoenix_cache(py: Python, m: &PyModule) -> PyResult<()> {
         "PhoenixError",
         py.get_type::<pyo3::exceptions::PyValueError>(),
     )?;
+
+    // --- Expose version string as a module attribute ---
+    m.add("__version__", VERSION)?;
 
     Ok(())
 }

@@ -101,7 +101,6 @@ def main(aspect_name):
             column_array = column_array.combine_chunks()
         all_column_results[column_name] = {}
         try:
-            print("phoenix run compress_analyze",column_name)
             analysis_result = phoenix_cache.compress_analyze(column_array)
             phoenix_compressed_columns[column_name] = analysis_result['artifact']
             all_column_results[column_name]["phoenix_size"] = len(analysis_result['artifact'])
@@ -152,7 +151,7 @@ def main(aspect_name):
 
     # --- FINAL REPORTING ---
     #print("\n" + "="*80)
-    #print(f"--- Phoenix 4.0 {aspect_name} ---".center(80))
+    print(f"\n--- Phoenix {phoenix_cache.__version__}.0 Columns {aspect_name} ---".center(80))
     #print("="*80)
 
     #print("\n" + "="*80)

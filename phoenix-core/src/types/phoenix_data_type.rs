@@ -10,7 +10,7 @@ use std::fmt;
 ///
 /// This enum replaces the fragile string-based type system of previous versions,
 /// enabling compile-time checks and eliminating an entire class of runtime errors.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PhoenixDataType {
     Int8,
     Int16,

@@ -152,7 +152,7 @@ def main(aspect_name):
 
     # --- FINAL REPORTING ---
     print("\n" + "="*80)
-    print(f"--- Phoenix 4.0 {aspect_name} ---".center(80))
+    print(f"--- Phoenix {phoenix_cache.__version__} {aspect_name} ---".center(80))
     print("="*80)
 
     print("\n" + "="*80)

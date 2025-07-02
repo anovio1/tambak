@@ -1,7 +1,7 @@
 # This is the manifest for the Rust core of the Phoenix library.
 [package]
 name = "phoenix-core"
-version = "4.3.1"
+version = "4.3.2"
 edition = "2021"
 authors = ["anovio1 <anastace.novio@gmail.com>"]
 description = "Core Rust library for the Phoenix high-performance compression protocol."

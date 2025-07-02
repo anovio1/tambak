@@ -1,21 +1,29 @@
-//! This module contains the v4.3 "Structure & Conquer" planner.
+// In: src/pipeline/planner.rs
+
+//! The empirical pipeline planner for Phoenix.
 //!
-//! It analyzes data to discover its structure, generates candidate pipelines using
-//! strongly-typed `Operation` objects, and uses empirical trial compression to
-//! find the most effective plan. Its final output is a complete, type-safe
-//! `Plan` struct, ready for the Executor.
+//! This module is the "smart" engine responsible for selecting the most
+//! effective compression pipeline. It operates by:
+//! 1. Generating a set of logically valid candidate pipelines.
+//! 2. Empirically evaluating these candidates against the input data using a
+//!    configurable strategy (`PlannerStrategy`).
+//! 3. Returning the single best `Plan` for execution.
+//!
+//! This decouples the logic of "what is a valid pipeline?" from the heuristic
+//! of "what is the best pipeline for this data?".
 
 use crate::error::PhoenixError;
 use crate::kernels::zigzag;
 use crate::pipeline::models::{Operation, Plan};
-use crate::pipeline::traits::TypeTransformer;
 use crate::pipeline::{self, executor};
 use crate::types::PhoenixDataType;
 use crate::utils::safe_bytes_to_typed_slice;
+
 use ndarray::{s, Array1};
 use num_traits::{PrimInt, Signed, ToPrimitive, Unsigned, WrappingSub};
 use std::collections::HashSet;
 use std::ops::{BitXor, Shl, Shr};
+use std::time::Instant;
 
 // A const for the plan version, ensuring consistency.
 const PLAN_VERSION: u32 = 1;
@@ -108,7 +116,7 @@ pub fn find_stride_by_autocorrelation(
         let mut best_lag = 0;
         let mut max_corr = -1.0;
         let upper_bound = (n / 4).max(3).min(256);
-        for lag in 2..upper_bound {
+        for lag in 1..upper_bound {
             let acf = centered_data
                 .slice(s![..n - lag])
                 .dot(&centered_data.slice(s![lag..]));
@@ -227,81 +235,236 @@ where
 // 3. Core Planning Logic (Refactored for Strong Types)
 //==================================================================================
 
+// Start of new generate_candidate_pipelines
 /// Generates candidate pipelines as `Vec<Operation>` instead of JSON.
-fn generate_candidate_pipelines(
+/// 1. Handling special cases (like constant data) for efficiency.
+/// 2. Calling the three stages: core, terminal, and entropy.
+/// 3. Ensuring essential baseline pipelines are always included.
+pub fn generate_candidate_pipelines(
     profile: &DataProfile,
     stride: usize,
-    logical_type: LogicalType, // Now accepts LogicalType
+    logical_type: LogicalType,
 ) -> Vec<Vec<Operation>> {
-    let mut base_pipelines: Vec<Vec<Operation>> = Vec::new();
-
-    // Add a "do nothing" base case. For small or random data, transformations
-    // add overhead. Sometimes the best plan is just to compress the raw data.
-    base_pipelines.push(vec![]); // An empty pipeline means just pass through to the entropy coder.
-    base_pipelines.push(vec![Operation::Shuffle]);
-
-    if profile.original_stream_has_low_cardinality {
-        base_pipelines.push(vec![Operation::Dictionary]);
+    // --- Optimization: Handle special cases first ---
+    if profile.is_constant {
+        // If all values are the same, RLE is almost certainly the best.
+        // We generate only RLE-based pipelines and stop.
+        let rle_prefix = vec![vec![Operation::Rle]];
+        return expand_with_entropy_coders(rle_prefix);
     }
 
-    let delta_op = if logical_type == LogicalType::SignedInteger {
-        Operation::Delta { order: stride }
-    } else {
-        Operation::XorDelta
-    };
+    // --- Stage 1: Generate the base set of core data transformations. ---
+    let core_pipelines = generate_core_transforms(stride, logical_type);
 
-    if profile.delta_stream_has_low_cardinality {
-        base_pipelines.push(vec![
-            delta_op.clone(),
-            if logical_type == LogicalType::SignedInteger {
-                Operation::Dictionary
-            } else {
-                Operation::Rle
-            },
-        ]);
-    }
+    // --- Stage 2: Expand with applicable "terminal" transforms. ---
+    let terminal_pipelines = expand_with_terminal_transforms(core_pipelines, profile, logical_type);
 
-    if logical_type == LogicalType::SignedInteger {
-        if profile.signed_delta_bit_width > 0 {
-            let base_path = vec![Operation::Delta { order: stride }, Operation::ZigZag];
-            if profile.signed_delta_bit_width < profile.original_bit_width {
-                let mut bitpack_path = base_path.clone();
-                bitpack_path.push(Operation::BitPack {
-                    bit_width: profile.signed_delta_bit_width,
-                });
-                base_pipelines.push(bitpack_path);
-            }
-            base_pipelines.push({
-                let mut leb_path = base_path;
-                leb_path.push(Operation::Leb128);
-                leb_path
-            });
-        }
-    } else if logical_type == LogicalType::UnsignedInteger
-        && profile.unsigned_delta_bit_width > 0
-        && profile.unsigned_delta_bit_width < profile.original_bit_width
-    {
-        base_pipelines.push(vec![
-            Operation::XorDelta,
-            Operation::BitPack {
-                bit_width: profile.unsigned_delta_bit_width,
-            },
-        ]);
-    }
+    // --- Stage 3: Append final entropy coders to all generated prefixes. ---
+    let mut final_candidates = expand_with_entropy_coders(terminal_pipelines);
 
-    let mut final_candidates = Vec::with_capacity(base_pipelines.len() * 2);
-    for pipeline in base_pipelines {
-        let mut zstd_variant = pipeline.clone();
-        zstd_variant.push(Operation::Zstd { level: 3 });
-        final_candidates.push(zstd_variant);
+    // --- Final Touch: Ensure the simplest baselines are always present ---
+    final_candidates.push(vec![Operation::Zstd { level: 3 }]);
+    final_candidates.push(vec![Operation::Ans]);
 
-        let mut ans_variant = pipeline;
-        ans_variant.push(Operation::Ans);
-        final_candidates.push(ans_variant);
-    }
+    // Optional: Deduplicate the final list if there's a chance of overlap.
+    // final_candidates.sort();
+    // final_candidates.dedup();
 
     final_candidates
 }
+
+// --- STAGE 1: Core Transforms ---
+fn generate_core_transforms(stride: usize, logical_type: LogicalType) -> Vec<Vec<Operation>> {
+    let mut pipelines = vec![
+        vec![], // Passthrough
+        vec![Operation::Shuffle],
+    ];
+
+    match logical_type {
+        LogicalType::SignedInteger => {
+            pipelines.push(vec![Operation::Delta { order: stride }]);
+            pipelines.push(vec![Operation::Delta { order: stride }, Operation::ZigZag]);
+        }
+        LogicalType::UnsignedInteger | LogicalType::Float => {
+            // XorDelta is effective for both unsigned integers and the bit representation of floats.
+            pipelines.push(vec![Operation::XorDelta]);
+        }
+        LogicalType::Other => {}
+    }
+    pipelines
+}
+
+// --- STAGE 2: Terminal Transforms ---
+fn expand_with_terminal_transforms(
+    base_pipelines: Vec<Vec<Operation>>,
+    profile: &DataProfile,
+    logical_type: LogicalType,
+) -> Vec<Vec<Operation>> {
+    let mut expanded = Vec::new();
+
+    for pipe in base_pipelines {
+        expanded.push(pipe.clone()); // Always include the original path
+
+        let last_op = pipe.last();
+
+        // If the original stream has low cardinality and this is the base passthrough path
+        if profile.original_stream_has_low_cardinality && pipe.is_empty() {
+            expanded.push(vec![Operation::Dictionary]);
+        }
+
+        // --- Reintroduce lost Delta+Dictionary / XorDelta+Rle combinations ---
+        // This block handles transformations that apply when the delta stream has low cardinality.
+        if profile.delta_stream_has_low_cardinality && last_op.is_some() {
+            // Safe to unwrap because of `last_op.is_some()`
+            match last_op.unwrap() {
+                Operation::Delta { .. } if logical_type == LogicalType::SignedInteger => {
+                    // Reintroduces: Delta {..} -> Dictionary for signed integers with low delta cardinality
+                    let mut new_pipe = pipe.clone();
+                    new_pipe.push(Operation::Dictionary);
+                    expanded.push(new_pipe);
+                }
+                Operation::XorDelta
+                    if logical_type == LogicalType::UnsignedInteger
+                        || logical_type == LogicalType::Float =>
+                {
+                    // Reintroduces: XorDelta -> Rle for unsigned integers/floats with low delta cardinality
+                    let mut new_pipe = pipe.clone();
+                    new_pipe.push(Operation::Rle);
+                    expanded.push(new_pipe);
+                }
+                // No special low-cardinality handling for other `last_op` types or logical types here.
+                _ => {}
+            }
+        }
+
+        // --- Existing Leb128 logic (after ZigZag) ---
+        if last_op.is_some() && matches!(last_op.unwrap(), Operation::ZigZag) {
+            let mut new_pipe = pipe.clone();
+            new_pipe.push(Operation::Leb128);
+            expanded.push(new_pipe);
+        }
+
+        // --- Existing BitPack logic ---
+        let can_bitpack_signed = logical_type == LogicalType::SignedInteger
+            && last_op.is_some()
+            && matches!(last_op.unwrap(), Operation::ZigZag)
+            && profile.signed_delta_bit_width > 0
+            && profile.signed_delta_bit_width < profile.original_bit_width;
+
+        let can_bitpack_unsigned = logical_type == LogicalType::UnsignedInteger
+            && last_op.is_some()
+            && matches!(last_op.unwrap(), Operation::XorDelta)
+            && profile.unsigned_delta_bit_width > 0
+            && profile.unsigned_delta_bit_width < profile.original_bit_width;
+
+        if can_bitpack_signed || can_bitpack_unsigned {
+            let bit_width = if can_bitpack_signed {
+                profile.signed_delta_bit_width
+            } else {
+                profile.unsigned_delta_bit_width
+            };
+            let mut new_pipe = pipe.clone();
+            new_pipe.push(Operation::BitPack { bit_width });
+            expanded.push(new_pipe);
+        }
+    }
+    expanded
+}
+
+// --- STAGE 3: Entropy Coders ---
+fn expand_with_entropy_coders(prefix_pipelines: Vec<Vec<Operation>>) -> Vec<Vec<Operation>> {
+    let entropy_coders = [Operation::Zstd { level: 3 }, Operation::Ans];
+    let mut final_pipelines = Vec::new();
+
+    for prefix in prefix_pipelines {
+        if prefix.is_empty() {
+            // Skip empty prefixes as they are handled by the final explicit baselines in the main function.
+            // This prevents generating [Zstd] and [Ans] twice if the empty prefix makes it this far.
+            continue;
+        }
+        for coder in &entropy_coders {
+            let mut final_pipe = prefix.clone();
+            final_pipe.push(coder.clone());
+            final_pipelines.push(final_pipe);
+        }
+    }
+    final_pipelines
+}
+
+fn find_top_n_candidates_by_trial(
+    sample_data_bytes: &[u8],
+    physical_dtype: PhoenixDataType,
+    candidates: Vec<Vec<Operation>>,
+    top_n: usize,
+) -> Result<Vec<Vec<Operation>>, PhoenixError> {
+    let start_overall = Instant::now();
+    if candidates.is_empty() {
+        return Ok(vec![]);
+    }
+
+    #[cfg(debug_assertions)]
+    println!(
+        "\n--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for {:?}) ---",
+        physical_dtype
+    );
+
+    let mut scored_candidates = Vec::new();
+
+    for pipeline in candidates {
+        let start_candidate = Instant::now();
+        if let Ok(compressed_sample) =
+            executor::execute_linear_encode_pipeline(sample_data_bytes, physical_dtype, &pipeline)
+        {
+            #[cfg(debug_assertions)]
+            {
+                let duration = start_candidate.elapsed();
+                println!(
+                    "  - Candidate: {:<60} | Score (Size): {} | Time: {:.2?}",
+                    format!("{:?}", pipeline),
+                    compressed_sample.len(),
+                    duration,
+                );
+            }
+            scored_candidates.push((pipeline, compressed_sample.len()));
+        } else {
+            #[cfg(debug_assertions)]
+            println!(
+                "  - Candidate: {:<60} | Score (Size): FAILED TO EXECUTE",
+                format!("{:?}", pipeline)
+            );
+        }
+    }
+
+    // Sort by score (size) to find the best candidates
+    scored_candidates.sort_by_key(|&(_, score)| score);
+
+    #[cfg(debug_assertions)]
+    {
+        let duration_overall = start_overall.elapsed();
+        println!(
+            "\n--- TOP {} CANDIDATES BY SAMPLE SIZE {:.2?}---",
+            top_n, duration_overall
+        );
+        for (i, (pipeline, size)) in scored_candidates.iter().take(top_n).enumerate() {
+            println!(
+                "  {}. {:<60} | Size: {}",
+                i + 1,
+                format!("{:?}", pipeline),
+                size
+            );
+        }
+    }
+
+    // Take the top N pipelines
+    let top_pipelines = scored_candidates
+        .into_iter()
+        .take(top_n)
+        .map(|(pipeline, _)| pipeline)
+        .collect();
+
+    Ok(top_pipelines)
+}
+// END of new generate_candidate_pipelines
 
 /// Finds the best pipeline by trial, now operating on `Vec<Operation>`.
 fn find_best_pipeline_by_trial(
@@ -309,6 +472,7 @@ fn find_best_pipeline_by_trial(
     physical_dtype: PhoenixDataType, // Now accepts physical_dtype
     candidates: Vec<Vec<Operation>>,
 ) -> Result<(Vec<Operation>, usize), PhoenixError> {
+    let start_overall = Instant::now();
     // The default plan is now also a strongly-typed Vec<Operation>.
     let default_plan = vec![Operation::Zstd { level: 3 }];
 
@@ -326,7 +490,7 @@ fn find_best_pipeline_by_trial(
     // --- START: ADD DEBUG LOGGING ---
     #[cfg(debug_assertions)]
     println!(
-        "\n--- EMPIRICAL PLANNER SCORING (for {:?}) ---",
+        "\n--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for {:?}) ---",
         physical_dtype
     );
 
@@ -334,17 +498,22 @@ fn find_best_pipeline_by_trial(
     let mut min_size = usize::MAX;
 
     for pipeline in candidates {
+        let start_candidate = Instant::now();
         // NOTE: This call anticipates the refactored executor.
         if let Ok(compressed_sample) =
             executor::execute_linear_encode_pipeline(sample_data_bytes, physical_dtype, &pipeline)
         {
             // --- ADD THIS PRINTLN! ---
             #[cfg(debug_assertions)]
-            println!(
-                "  - Candidate: {:<60} | Score (Size): {}",
-                format!("{:?}", pipeline),
-                compressed_sample.len()
-            );
+            {
+                let duration = start_candidate.elapsed();
+                println!(
+                    "  - Candidate: {:<60} | Score (Size): {} | Time: {:.2?}",
+                    format!("{:?}", pipeline),
+                    compressed_sample.len(),
+                    duration,
+                );
+            }
 
             if compressed_sample.len() < min_size {
                 min_size = compressed_sample.len();
@@ -359,6 +528,13 @@ fn find_best_pipeline_by_trial(
             );
         }
     }
+
+    let duration_overall = start_overall.elapsed();
+    #[cfg(debug_assertions)]
+    println!(
+        "--- Empirical scoring total time: {:.2?} ---",
+        duration_overall
+    );
 
     Ok((best_pipeline, min_size))
 }
@@ -410,7 +586,15 @@ fn plan_bytes(
                 Ok((plan, compressed.len()))
             } else {
                 let candidates = generate_candidate_pipelines(&profile, stride, logical_type);
-                find_best_pipeline_by_trial(sample_bytes, context.physical_dtype, candidates)
+                let sample_bytes = &bytes[..bytes.len().min(SAMPLE_SIZE_BYTES)];
+                const TOP_N: usize = 3;
+                let top_candidates = find_top_n_candidates_by_trial(
+                    sample_bytes,
+                    context.physical_dtype,
+                    candidates,
+                    TOP_N,
+                )?;
+                find_best_pipeline_by_trial(bytes, context.physical_dtype, top_candidates)
             }
         }};
     }
@@ -430,7 +614,15 @@ fn plan_bytes(
                 Ok((plan, compressed.len()))
             } else {
                 let candidates = generate_candidate_pipelines(&profile, stride, logical_type);
-                find_best_pipeline_by_trial(sample_bytes, context.physical_dtype, candidates)
+                let sample_bytes = &bytes[..bytes.len().min(SAMPLE_SIZE_BYTES)];
+                const TOP_N: usize = 3;
+                let top_candidates = find_top_n_candidates_by_trial(
+                    sample_bytes,
+                    context.physical_dtype,
+                    candidates,
+                    TOP_N,
+                )?;
+                find_best_pipeline_by_trial(bytes, context.physical_dtype, top_candidates)
             }
         }};
     }

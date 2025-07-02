@@ -98,3 +98,83 @@ We welcome contributions! Please see the [Developer Guide](DEVELOPER_GUIDE.md) f
 ## 📄 License
 
 This project is licensed under the MIT OR Apache-2.0 License.
+
+## Forward Facing
+
+---
+
+# **FEAT: Phoenix Pipeline Planner: Configuration and Strategy Selection**
+## `PlannerStrategy` and `PlannerConfig`
+
+**Title: Phoenix Pipeline Planner: Configuration and Strategy Selection**
+
+**Introduction**
+
+This document explains Phoenix's compression planner changes:
+
+*   **What:** `PlannerStrategy` and `PlannerConfig` for advanced pipeline optimization.
+*   **Why:** Old planning chose best strategy from single-pass + 1 data sample, causing compression loss (regressions).
+*   **Solution:** New multi-stage planning, allows dev to set progressively bigger samples or full data for better choices.
+*   **Example Before/After:**
+
+| Stage           | Before (Single-Stage Quick)                 | After (Multi-Stage TopNFull - Default)                 |
+| :-------------- | :------------------------------------------ | :----------------------------------------------------- |
+| **Stage 1**     | All candidates on small sample (e.g., 65KB) | All candidates on small sample (e.g., 128KB)           |
+| **Stage 2**     | *(N/A - Best from Stage 1 chosen)*          | Top N candidates evaluated on **full dataset**         |
+| **Final Choice**| Based on Stage 1 sample score               | Based on Stage 2 (full data) accuracy                  |
+
+---
+
+**1. `PlannerStrategy` Enum in `src/pipeline/models.rs` : Defining the Evaluation Approach**
+
+This enum defines how the planner picks the best compression pipeline. Developers choose a strategy based on how much planning speed or compression accuracy they need.
+
+*   **`TopNFull { top_n: usize }`**
+    *   **Strategy:** Recommended default. Robust, two-stage evaluation prioritizing **accuracy**.
+    *   **Process:**
+        1.  **Stage 1 (Quick Filter - Sample):** Checks all candidates on a small data sample.
+        2.  **Stage 2 (Precise Check - Full Data):** Re-evaluates the Top `top_n` candidates on the **entire dataset** for the final decision.
+    *   **Benefit:** Gives the most accurate result, fixing issues from misleading samples.
+    *   **Design Note:** Planning time depends on `top_n` times the full dataset processing.
+
+*   **`TwoStageSample { small_sample_size: usize, large_sample_size: usize }`**
+    *   **Strategy:** Two-stage, purely sample-based evaluation prioritizing **planning speed**.
+    *   **Process:**
+        1.  **Stage 1 (Quick Filter - Small Sample):** All candidates checked on `small_sample_size`.
+        2.  **Stage 2 (Refined Check - Larger Sample):** Top N candidates checked on a `large_sample_size` (not the full dataset).
+    *   **Benefit:** Faster planning, especially for very large datasets, as it avoids full-data processing.
+    *   **Warning:** Can still mispredict if the larger sample isn't truly representative. Better accuracy than `Quick`, but less than `TopNFull`.
+
+*   **`Quick { sample_size: usize }`**
+    *   **Strategy:** Single-stage evaluation for **maximum planning speed**.
+    *   **Process:** All candidates checked on a single `sample_size`. Best score wins.
+    *   **Benefit:** Fastest planning.
+    *   **Warning:** Most likely to mispredict. Use when planning speed is the highest priority and small errors are acceptable.
+
+**2. `PlannerConfig` Struct in `src/pipeline/models.rs` : Configuring the Planning Process**
+
+This struct holds the main settings for the pipeline planner.
+
+```rust
+// Conceptual Rust Structure
+#[derive(Debug, Clone)]
+pub struct PlannerConfig {
+    /// The chosen evaluation `PlannerStrategy` (e.g., TopNFull, Quick).
+    pub strategy: PlannerStrategy,
+    
+    /// List of final entropy coders (e.g., Zstd, Ans) to consider. REQUIRED.
+    pub entropy_coders: Vec<Operation>,
+}
+```
+
+**Configuration Capabilities:**
+
+*   **Strategy:** Pick the `PlannerStrategy` (e.g., `PlannerStrategy::TopNFull { top_n: 5 }`).
+*   **Entropy Coders:** Provide a `Vec<Operation>` (e.g., `vec![Operation::Zstd { level: 3 }]`) to specify end-stage compression options.
+*   **Default:** Use `PlannerConfig::default()` for a robust `TopNFull { top_n: 3 }` strategy with standard entropy coders.
+*   **Integration:** Pass this `PlannerConfig` to the top-level `plan_pipeline` function.
+
+**Extending the System:**
+
+*   New `Operation` types in `models.rs` are automatically considered by `generate_candidate_pipelines`.
+*   More advanced configurations (e.g., custom `core_transforms`) can be added to `PlannerConfig` later.
