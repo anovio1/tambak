@@ -3,8 +3,8 @@
 
 use crate::error::PhoenixError;
 use arrow::datatypes::DataType as ArrowDataType;
+use serde::{Deserialize, Serialize};
 use std::fmt;
-use serde::{Serialize, Deserialize};
 
 /// The canonical, internal representation of a data type in the Phoenix pipeline.
 ///
@@ -62,6 +62,15 @@ impl PhoenixDataType {
             Self::Float64 => ArrowDataType::Float64,
             Self::Boolean => ArrowDataType::Boolean,
         }
+    }
+    /// Returns `true` if the data type is a signed integer.
+    pub fn is_signed_int(&self) -> bool {
+        matches!(self, Self::Int8 | Self::Int16 | Self::Int32 | Self::Int64)
+    }
+
+    /// Returns `true` if the data type is a floating-point number.
+    pub fn is_float(&self) -> bool {
+        matches!(self, Self::Float32 | Self::Float64)
     }
 }
 

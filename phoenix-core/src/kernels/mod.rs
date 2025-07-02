@@ -185,10 +185,22 @@ pub fn dispatch_decode(
     op: &Operation,
     input_bytes: &[u8],
     output_buf: &mut Vec<u8>,
-    dtype: PhoenixDataType, // This is the type we expect to GET BACK from the decode operation.
+    current_dtype: PhoenixDataType, // The type of the input_bytes
+    target_dtype: PhoenixDataType,  // The type we expect to GET BACK
     num_values: usize,
 ) -> Result<(), PhoenixError> {
-    // This macro is used for kernels that expect a pre-converted typed slice for decoding.
+    #[cfg(debug_assertions)]
+    {
+        println!(
+            "[DISPATCH-DECODE] Received: Op: {:?}, In-Type: {:?}, Target-Type: {:?}, In-Len: {}",
+            op,
+            current_dtype,
+            target_dtype,
+            input_bytes.len()
+        );
+    }
+    // --- END CHECKPOINT ---
+
     macro_rules! convert_and_exec_decode {
         ($T:ty, $kernel:ident, $($args:expr),*) => {{
             if input_bytes.len() % std::mem::size_of::<$T>() != 0 {
@@ -203,8 +215,7 @@ pub fn dispatch_decode(
     use PhoenixDataType::*;
 
     match op {
-        // --- Kernels that operate on raw byte streams ---
-        Delta { order } => match dtype {
+        Delta { order } => match target_dtype {
             Int8 => delta::decode::<i8>(input_bytes, output_buf, *order),
             UInt8 => delta::decode::<u8>(input_bytes, output_buf, *order),
             Int16 => delta::decode::<i16>(input_bytes, output_buf, *order),
@@ -215,18 +226,18 @@ pub fn dispatch_decode(
             UInt64 => delta::decode::<u64>(input_bytes, output_buf, *order),
             _ => Err(PhoenixError::UnsupportedType(format!(
                 "Delta not supported for {:?}",
-                dtype
+                target_dtype
             ))),
         },
-        XorDelta => match dtype {
+        XorDelta => match target_dtype {
             UInt32 => xor_delta::decode::<u32>(input_bytes, output_buf),
             UInt64 => xor_delta::decode::<u64>(input_bytes, output_buf),
             _ => Err(PhoenixError::UnsupportedType(format!(
                 "XorDelta not supported for {:?}",
-                dtype
+                target_dtype
             ))),
         },
-        Rle => match dtype {
+        Rle => match target_dtype {
             Int8 => rle::decode::<i8>(input_bytes, output_buf, num_values),
             UInt8 | Boolean => rle::decode::<u8>(input_bytes, output_buf, num_values),
             Int16 => rle::decode::<i16>(input_bytes, output_buf, num_values),
@@ -237,41 +248,40 @@ pub fn dispatch_decode(
             UInt64 => rle::decode::<u64>(input_bytes, output_buf, num_values),
             _ => Err(PhoenixError::UnsupportedType(format!(
                 "RLE not supported for {:?}",
-                dtype
+                target_dtype
             ))),
         },
-        Leb128 => match dtype {
+        Leb128 => match target_dtype {
             UInt8 => leb128::decode::<u8>(input_bytes, output_buf, num_values),
             UInt16 => leb128::decode::<u16>(input_bytes, output_buf, num_values),
             UInt32 => leb128::decode::<u32>(input_bytes, output_buf, num_values),
             UInt64 => leb128::decode::<u64>(input_bytes, output_buf, num_values),
             _ => Err(PhoenixError::UnsupportedType(format!(
                 "Leb128 requires an unsigned integer type, but got {:?}",
-                dtype
+                target_dtype
             ))),
         },
-        BitPack { bit_width } => match dtype {
+        BitPack { bit_width } => match target_dtype {
             UInt8 => bitpack::decode::<u8>(input_bytes, output_buf, *bit_width, num_values),
             UInt16 => bitpack::decode::<u16>(input_bytes, output_buf, *bit_width, num_values),
             UInt32 => bitpack::decode::<u32>(input_bytes, output_buf, *bit_width, num_values),
             UInt64 => bitpack::decode::<u64>(input_bytes, output_buf, *bit_width, num_values),
             _ => Err(PhoenixError::UnsupportedType(format!(
                 "BitPack requires an unsigned integer type, but got {:?}",
-                dtype
+                target_dtype
             ))),
         },
-        Shuffle => match dtype {
+        Shuffle => match target_dtype {
             Int16 | UInt16 => shuffle::decode::<u16>(input_bytes, output_buf),
             Int32 | UInt32 | Float32 => shuffle::decode::<u32>(input_bytes, output_buf),
             Int64 | UInt64 | Float64 => shuffle::decode::<u64>(input_bytes, output_buf),
             Int8 | UInt8 | Boolean => {
-                // No-op for 1-byte types
                 output_buf.clear();
                 output_buf.extend_from_slice(input_bytes);
                 Ok(())
             }
         },
-        Dictionary => match dtype {
+        Dictionary => match target_dtype {
             Int8 => dictionary::decode::<i8>(input_bytes, output_buf, num_values),
             UInt8 | Boolean => dictionary::decode::<u8>(input_bytes, output_buf, num_values),
             Int16 => dictionary::decode::<i16>(input_bytes, output_buf, num_values),
@@ -282,37 +292,30 @@ pub fn dispatch_decode(
             UInt64 => dictionary::decode::<u64>(input_bytes, output_buf, num_values),
             _ => Err(PhoenixError::UnsupportedType(format!(
                 "Dictionary not supported for {:?}",
-                dtype
+                target_dtype
             ))),
         },
         Zstd { .. } => zstd::decode(input_bytes, output_buf),
         Ans => ans::decode(input_bytes, output_buf, num_values),
         CanonicalizeZeros => canonicalize::decode(input_bytes, output_buf),
-
-        // --- Kernels with special generic dispatch ---
-        ZigZag => match dtype {
-            Int8 => convert_and_exec_decode!(u8, zigzag, output_buf),
-            Int16 => convert_and_exec_decode!(u16, zigzag, output_buf),
-            Int32 => convert_and_exec_decode!(u32, zigzag, output_buf),
-            Int64 => convert_and_exec_decode!(u64, zigzag, output_buf),
+        ZigZag => match (current_dtype, target_dtype) {
+            (UInt8, Int8) => convert_and_exec_decode!(u8, zigzag, output_buf),
+            (UInt16, Int16) => convert_and_exec_decode!(u16, zigzag, output_buf),
+            (UInt32, Int32) => convert_and_exec_decode!(u32, zigzag, output_buf),
+            (UInt64, Int64) => convert_and_exec_decode!(u64, zigzag, output_buf),
             _ => Err(PhoenixError::UnsupportedType(format!(
-                "ZigZag decode requires a signed integer type, but got {:?}",
-                dtype
+                "Unsupported ZigZag decode from {:?} to {:?}",
+                current_dtype, target_dtype
             ))),
         },
-        BitCast { to_type } => {
-            // For decode, the `input_bytes` are of `to_type`, and we want to get `dtype` back.
-            match (*to_type, dtype) {
-                (UInt32, Float32) => bitcast::decode::<u32, f32>(input_bytes, output_buf),
-                (UInt64, Float64) => bitcast::decode::<u64, f64>(input_bytes, output_buf),
-                _ => Err(PhoenixError::UnsupportedType(format!(
-                    "Unsupported BitCast decode from {:?} to {:?}",
-                    to_type, dtype
-                ))),
-            }
-        }
-
-        // Meta-operations are handled by the executor, not dispatched.
+        BitCast { .. } => match (current_dtype, target_dtype) {
+            (UInt32, Float32) => bitcast::decode::<u32, f32>(input_bytes, output_buf),
+            (UInt64, Float64) => bitcast::decode::<u64, f64>(input_bytes, output_buf),
+            _ => Err(PhoenixError::UnsupportedType(format!(
+                "Unsupported BitCast decode from {:?} to {:?}",
+                current_dtype, target_dtype
+            ))),
+        },
         Sparsify { .. } | ExtractNulls { .. } => Err(PhoenixError::InternalError(
             "Meta-operations like Sparsify cannot be dispatched to a kernel.".to_string(),
         )),
@@ -394,31 +397,28 @@ pub fn dispatch_reconstruct_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::typed_slice_to_bytes;
+    use crate::{pipeline::TypeTransformer, utils::typed_slice_to_bytes};
 
     #[test]
     fn test_dispatch_zigzag_roundtrip_logic() {
         let original_data: Vec<i32> = vec![-1, 2, -3];
         let original_bytes = typed_slice_to_bytes(&original_data);
         let op = Operation::ZigZag;
+        let original_type = PhoenixDataType::Int32;
 
         // --- Encode ---
         let mut compressed_buf = Vec::new();
-        dispatch_encode(
-            &op,
-            &original_bytes,
-            &mut compressed_buf,
-            PhoenixDataType::Int32,
-        )
-        .unwrap();
+        dispatch_encode(&op, &original_bytes, &mut compressed_buf, original_type).unwrap();
 
         // --- Decode ---
+        let compressed_type = op.transform_type(original_type).unwrap();
         let mut decompressed_buf = Vec::new();
         dispatch_decode(
             &op,
             &compressed_buf,
             &mut decompressed_buf,
-            PhoenixDataType::Int32,
+            compressed_type, // current_dtype is UInt32
+            original_type,   // target_dtype is Int32
             original_data.len(),
         )
         .unwrap();
@@ -431,22 +431,19 @@ mod tests {
         let original_data: Vec<u32> = vec![1, 2, 3, 4, 5];
         let original_bytes = typed_slice_to_bytes(&original_data);
         let op = Operation::BitPack { bit_width: 3 };
+        let original_type = PhoenixDataType::UInt32;
 
         let mut compressed_buf = Vec::new();
-        dispatch_encode(
-            &op,
-            &original_bytes,
-            &mut compressed_buf,
-            PhoenixDataType::UInt32,
-        )
-        .unwrap();
+        dispatch_encode(&op, &original_bytes, &mut compressed_buf, original_type).unwrap();
 
+        let compressed_type = op.transform_type(original_type).unwrap();
         let mut decompressed_buf = Vec::new();
         dispatch_decode(
             &op,
             &compressed_buf,
             &mut decompressed_buf,
-            PhoenixDataType::UInt32,
+            compressed_type, // current_dtype is UInt32
+            original_type,   // target_dtype is UInt32
             original_data.len(),
         )
         .unwrap();
@@ -482,25 +479,22 @@ mod tests {
         let original_data: Vec<i32> = vec![10, 20, 10, 30, 20, 20];
         let original_bytes = typed_slice_to_bytes(&original_data);
         let op = Operation::Dictionary;
+        let original_type = PhoenixDataType::Int32;
 
         // --- Encode ---
         let mut compressed_buf = Vec::new();
-        dispatch_encode(
-            &op,
-            &original_bytes,
-            &mut compressed_buf,
-            PhoenixDataType::Int32,
-        )
-        .unwrap();
+        dispatch_encode(&op, &original_bytes, &mut compressed_buf, original_type).unwrap();
         assert!(!compressed_buf.is_empty());
 
         // --- Decode ---
+        let compressed_type = op.transform_type(original_type).unwrap();
         let mut decompressed_buf = Vec::new();
         dispatch_decode(
             &op,
             &compressed_buf,
             &mut decompressed_buf,
-            PhoenixDataType::Int32,
+            compressed_type, // current_dtype is Int32
+            original_type,   // target_dtype is Int32
             original_data.len(),
         )
         .unwrap();

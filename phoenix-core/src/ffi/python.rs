@@ -1,5 +1,4 @@
-//! This module is the FFI "Anti-Corruption Layer" for the Phoenix library.
-//! It handles the conversion between Python (PyArrow) and Rust (arrow-rs) types.
+// In: src/ffi/python.rs
 
 use arrow::array::{make_array, ArrayData, RecordBatch};
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
@@ -8,7 +7,9 @@ use pyo3::types::{PyBytes, PyDict};
 
 use crate::error::PhoenixError;
 use crate::pipeline::{frame_orchestrator, orchestrator, planner};
-use crate::types::PhoenixDataType; // CORRECTED: Import our new type
+// NEW: Import PlanningContext
+use crate::pipeline::planner::PlanningContext;
+use crate::types::PhoenixDataType;
 use crate::utils;
 
 //==================================================================================
@@ -56,7 +57,6 @@ pub fn decompress_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
 #[pyfunction]
 #[pyo3(name = "plan")]
 pub fn plan_py(py: Python, bytes: &[u8], original_type: &str) -> PyResult<String> {
-    // CORRECTED: This function is now a proper FFI bridge.
     py.allow_threads(move || {
         // 1. Convert the Python string to our internal, type-safe enum.
         let dtype = match original_type {
@@ -74,10 +74,18 @@ pub fn plan_py(py: Python, bytes: &[u8], original_type: &str) -> PyResult<String
             _ => return Err(PhoenixError::UnsupportedType(original_type.to_string()).into()),
         };
 
-        // 2. Call the refactored planner, which returns a `Plan` struct.
-        let plan_struct = planner::plan_pipeline(bytes, dtype)?;
+        // --- THIS IS THE CORE CHANGE ---
+        // 2. Construct the PlanningContext. For this simple FFI helper,
+        //    the initial and physical types are the same.
+        let context = PlanningContext {
+            initial_dtype: dtype,
+            physical_dtype: dtype,
+        };
 
-        // 3. Serialize the `Plan` struct back to a JSON string for Python.
+        // 3. Call the refactored planner with the context.
+        let plan_struct = planner::plan_pipeline(bytes, context)?;
+
+        // 4. Serialize the `Plan` struct back to a JSON string for Python.
         serde_json::to_string_pretty(&plan_struct).map_err(|e| PhoenixError::from(e).into())
     })
 }

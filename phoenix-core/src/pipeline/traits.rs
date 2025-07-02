@@ -52,3 +52,79 @@ impl TypeTransformer for Operation {
         }
     }
 }
+
+//==================================================================================
+// Unit Tests
+//==================================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::models::Operation;
+    use crate::types::PhoenixDataType;
+
+    #[test]
+    fn test_transform_type_preserves_for_delta() {
+        let op = Operation::Delta { order: 1 };
+        let input = PhoenixDataType::Int32;
+        let output = op.transform_type(input).unwrap();
+        assert_eq!(output, PhoenixDataType::Int32);
+    }
+
+    #[test]
+    fn test_transform_type_preserves_for_rle() {
+        let op = Operation::Rle;
+        let input = PhoenixDataType::UInt64;
+        let output = op.transform_type(input).unwrap();
+        assert_eq!(output, PhoenixDataType::UInt64);
+    }
+
+    #[test]
+    fn test_transform_type_changes_for_zigzag() {
+        let op = Operation::ZigZag;
+        let input = PhoenixDataType::Int32;
+        let output = op.transform_type(input).unwrap();
+        assert_eq!(output, PhoenixDataType::UInt32);
+    }
+
+    #[test]
+    fn test_transform_type_changes_for_bitcast() {
+        let op = Operation::BitCast {
+            to_type: PhoenixDataType::UInt64,
+        };
+        let input = PhoenixDataType::Float64;
+        let output = op.transform_type(input).unwrap();
+        assert_eq!(output, PhoenixDataType::UInt64);
+    }
+
+    #[test]
+    fn test_transform_type_errors_for_unsupported_zigzag() {
+        let op = Operation::ZigZag;
+        let input = PhoenixDataType::Float32; // ZigZag doesn't support floats
+        let result = op.transform_type(input);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(crate::error::PhoenixError::UnsupportedType(_))
+        ));
+    }
+
+    #[test]
+    fn test_transform_type_noop_for_meta_ops() {
+        let sparsify_op = Operation::Sparsify {
+            mask_stream_id: "m".to_string(),
+            mask_pipeline: vec![],
+            values_pipeline: vec![],
+        };
+        let input = PhoenixDataType::Int32;
+        let output = sparsify_op.transform_type(input).unwrap();
+        // Meta-ops should not change the type of the main stream in the context of the transformer.
+        assert_eq!(output, PhoenixDataType::Int32);
+
+        let extract_op = Operation::ExtractNulls {
+            output_stream_id: "n".to_string(),
+            null_mask_pipeline: vec![],
+        };
+        let output2 = extract_op.transform_type(input).unwrap();
+        assert_eq!(output2, PhoenixDataType::Int32);
+    }
+}

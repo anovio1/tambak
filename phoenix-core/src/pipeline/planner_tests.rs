@@ -1,31 +1,39 @@
+// In: src/pipeline/planner_tests.rs
+
 #[cfg(test)]
 mod tests {
-    use crate::pipeline::planner::*;
-    use crate::pipeline::{executor, models::Operation}; // Corrected import path
+    // MODIFIED: Import PlanningContext
+    use crate::pipeline::planner::{plan_pipeline, PlanningContext};
+    use crate::pipeline::{executor, models::Operation};
     use crate::types::PhoenixDataType;
     use crate::utils::typed_slice_to_bytes;
 
     fn get_compressed_size(
         original_bytes: &[u8],
         pipeline: &[Operation],
-        original_type: PhoenixDataType,
+        physical_type: PhoenixDataType, // MODIFIED: Use physical_type for execution
     ) -> usize {
-        executor::execute_linear_encode_pipeline(original_bytes, original_type, pipeline)
+        executor::execute_linear_encode_pipeline(original_bytes, physical_type, pipeline)
             .map(|v| v.len())
             .unwrap_or(usize::MAX)
     }
 
     fn assert_planner_is_optimal(
         original_bytes: &[u8],
-        original_type: PhoenixDataType,
+        context: PlanningContext, // MODIFIED: Accept PlanningContext
         expected_pipeline: Vec<Operation>,
     ) {
-        let planner_plan = plan_pipeline(original_bytes, original_type).unwrap();
+        // MODIFIED: Pass context to planner
+        let planner_plan = plan_pipeline(original_bytes, context.clone()).unwrap();
 
-        let expected_size = get_compressed_size(original_bytes, &expected_pipeline, original_type);
+        let expected_size =
+            get_compressed_size(original_bytes, &expected_pipeline, context.physical_dtype);
 
-        let planner_actual_size =
-            get_compressed_size(original_bytes, &planner_plan.pipeline, original_type);
+        let planner_actual_size = get_compressed_size(
+            original_bytes,
+            &planner_plan.pipeline,
+            context.physical_dtype,
+        );
 
         assert!(
             planner_actual_size <= expected_size.saturating_add(5),
@@ -38,8 +46,12 @@ mod tests {
     fn test_planner_chooses_rle_for_constant_data() {
         let data: Vec<i32> = vec![7; 1024];
         let bytes = typed_slice_to_bytes(&data);
-        let plan = plan_pipeline(&bytes, PhoenixDataType::Int32).unwrap();
-        // CORRECTED: Reverted to the simpler and more direct assert_eq!
+        // MODIFIED: Create context
+        let context = PlanningContext {
+            initial_dtype: PhoenixDataType::Int32,
+            physical_dtype: PhoenixDataType::Int32,
+        };
+        let plan = plan_pipeline(&bytes, context).unwrap();
         assert_eq!(
             plan.pipeline[0],
             Operation::Rle,
@@ -51,21 +63,32 @@ mod tests {
     fn test_planner_chooses_delta_rle_for_constant_deltas() {
         let data: Vec<i32> = (10..1000).collect(); // Creates a stream with a constant delta of 1.
         let bytes = typed_slice_to_bytes(&data);
+        // MODIFIED: Create context
+        let context = PlanningContext {
+            initial_dtype: PhoenixDataType::Int32,
+            physical_dtype: PhoenixDataType::Int32,
+        };
 
         let expected_best_plan = vec![
             Operation::Delta { order: 1 },
             Operation::Rle,
             Operation::Zstd { level: 3 },
         ];
-        assert_planner_is_optimal(&bytes, PhoenixDataType::Int32, expected_best_plan);
+        assert_planner_is_optimal(&bytes, context, expected_best_plan);
     }
 
     #[test]
     fn test_planner_chooses_xor_delta_for_drifting_floats() {
+        // This test now correctly simulates a bit-cast float.
         let data: Vec<u64> = (0..1000)
             .map(|i| f64::to_bits(100.0 + (i as f64 * 1e-12)))
             .collect();
         let bytes = typed_slice_to_bytes(&data);
+        // MODIFIED: Create context reflecting the bit-cast
+        let context = PlanningContext {
+            initial_dtype: PhoenixDataType::Float64, // Original type was float
+            physical_dtype: PhoenixDataType::UInt64, // But planner sees u64 bytes
+        };
 
         let expected_best_plan = vec![
             Operation::XorDelta,
@@ -73,7 +96,7 @@ mod tests {
             Operation::Zstd { level: 3 },
         ];
 
-        assert_planner_is_optimal(&bytes, PhoenixDataType::UInt64, expected_best_plan);
+        assert_planner_is_optimal(&bytes, context, expected_best_plan);
     }
 
     #[test]
@@ -88,7 +111,12 @@ mod tests {
                 data.push(2);
             }
         }
-        let plan = plan_pipeline(&data, PhoenixDataType::UInt8).unwrap();
+        // MODIFIED: Create context
+        let context = PlanningContext {
+            initial_dtype: PhoenixDataType::UInt8,
+            physical_dtype: PhoenixDataType::UInt8,
+        };
+        let plan = plan_pipeline(&data, context).unwrap();
         assert_eq!(
             plan.pipeline.last().unwrap(),
             &Operation::Ans,

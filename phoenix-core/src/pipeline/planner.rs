@@ -21,6 +21,49 @@ use std::ops::{BitXor, Shl, Shr};
 const PLAN_VERSION: u32 = 1;
 
 //==================================================================================
+// 0. Planning Context (New Struct)
+//==================================================================================
+/// Encapsulates all necessary context for the planner to make informed decisions.
+/// This includes the original semantic type and the current physical type of the data.
+#[derive(Clone)]
+pub(crate) struct PlanningContext {
+    /// The original, semantic data type of the Arrow Array before any transformations.
+    pub initial_dtype: PhoenixDataType,
+    /// The current physical data type of the byte stream being processed by the planner.
+    /// This might differ from `initial_dtype` (e.g., after a BitCast from Float to UInt).
+    pub physical_dtype: PhoenixDataType,
+    // Future context like null_count, etc., can be added here.
+}
+
+//==================================================================================
+// 0.1. Logical Type (New Enum)
+//==================================================================================
+/// Represents the high-level semantic category of the data for planning purposes.
+/// This is derived from the `initial_dtype` to guide strategic decisions.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum LogicalType {
+    SignedInteger,
+    UnsignedInteger,
+    Float,
+    Other, // Catch-all for types not explicitly handled by specific strategies
+}
+
+impl LogicalType {
+    /// Derives the `LogicalType` from the `PhoenixDataType`.
+    /// This mapping is crucial for the planner to understand the semantic nature
+    /// of the data, regardless of its current physical representation.
+    fn from_phoenix_type(dtype: PhoenixDataType) -> Self {
+        use PhoenixDataType::*;
+        match dtype {
+            Int8 | Int16 | Int32 | Int64 => LogicalType::SignedInteger,
+            UInt8 | UInt16 | UInt32 | UInt64 | Boolean => LogicalType::UnsignedInteger, // Boolean often treated as u8
+            Float32 | Float64 => LogicalType::Float,
+            _ => LogicalType::Other,
+        }
+    }
+}
+
+//==================================================================================
 // 1. Stride Discovery (Refactored for Type Safety)
 //==================================================================================
 pub fn find_stride_by_autocorrelation(
@@ -185,12 +228,12 @@ where
 fn generate_candidate_pipelines(
     profile: &DataProfile,
     stride: usize,
-    is_signed: bool,
+    logical_type: LogicalType, // Now accepts LogicalType
 ) -> Vec<Vec<Operation>> {
     let mut base_pipelines: Vec<Vec<Operation>> = Vec::new();
     base_pipelines.push(vec![Operation::Shuffle]);
 
-    let delta_op = if is_signed {
+    let delta_op = if logical_type == LogicalType::SignedInteger {
         Operation::Delta { order: stride }
     } else {
         Operation::XorDelta
@@ -199,7 +242,7 @@ fn generate_candidate_pipelines(
     if profile.delta_stream_has_low_cardinality {
         base_pipelines.push(vec![
             delta_op.clone(),
-            if is_signed {
+            if logical_type == LogicalType::SignedInteger {
                 Operation::Dictionary
             } else {
                 Operation::Rle
@@ -207,7 +250,7 @@ fn generate_candidate_pipelines(
         ]);
     }
 
-    if is_signed {
+    if logical_type == LogicalType::SignedInteger {
         if profile.signed_delta_bit_width > 0 {
             let base_path = vec![Operation::Delta { order: stride }, Operation::ZigZag];
             if profile.signed_delta_bit_width < profile.original_bit_width {
@@ -223,7 +266,8 @@ fn generate_candidate_pipelines(
                 leb_path
             });
         }
-    } else if profile.unsigned_delta_bit_width > 0
+    } else if logical_type == LogicalType::UnsignedInteger
+        && profile.unsigned_delta_bit_width > 0
         && profile.unsigned_delta_bit_width < profile.original_bit_width
     {
         base_pipelines.push(vec![
@@ -251,7 +295,7 @@ fn generate_candidate_pipelines(
 /// Finds the best pipeline by trial, now operating on `Vec<Operation>`.
 fn find_best_pipeline_by_trial(
     sample_data_bytes: &[u8],
-    dtype: PhoenixDataType,
+    physical_dtype: PhoenixDataType, // Now accepts physical_dtype
     candidates: Vec<Vec<Operation>>,
 ) -> Result<(Vec<Operation>, usize), PhoenixError> {
     // The default plan is now also a strongly-typed Vec<Operation>.
@@ -260,8 +304,11 @@ fn find_best_pipeline_by_trial(
     if candidates.is_empty() {
         // NOTE: This assumes a refactored executor that we will build next.
         // The new executor will not return the final type string.
-        let compressed =
-            executor::execute_linear_encode_pipeline(sample_data_bytes, dtype, &default_plan)?;
+        let compressed = executor::execute_linear_encode_pipeline(
+            sample_data_bytes,
+            physical_dtype,
+            &default_plan,
+        )?;
         return Ok((default_plan, compressed.len()));
     }
 
@@ -271,7 +318,7 @@ fn find_best_pipeline_by_trial(
     for pipeline in candidates {
         // NOTE: This call anticipates the refactored executor.
         if let Ok(compressed_sample) =
-            executor::execute_linear_encode_pipeline(sample_data_bytes, dtype, &pipeline)
+            executor::execute_linear_encode_pipeline(sample_data_bytes, physical_dtype, &pipeline)
         {
             if compressed_sample.len() < min_size {
                 min_size = compressed_sample.len();
@@ -286,7 +333,7 @@ fn find_best_pipeline_by_trial(
 /// The internal planning function, now returns a `Vec<Operation>` and its cost.
 fn plan_bytes(
     bytes: &[u8],
-    dtype: PhoenixDataType,
+    context: &PlanningContext, // Now accepts PlanningContext
     stride: usize,
 ) -> Result<(Vec<Operation>, usize), PhoenixError> {
     if bytes.is_empty() {
@@ -296,6 +343,25 @@ fn plan_bytes(
     const SAMPLE_SIZE_BYTES: usize = 65536;
     let sample_bytes = &bytes[..bytes.len().min(SAMPLE_SIZE_BYTES)];
 
+    let logical_type = LogicalType::from_phoenix_type(context.initial_dtype); // Derive logical type
+
+    // --- NEW: DEFENSIVE ASSERTIONS ---
+    // This assertion ensures that if the original data was a float, the orchestrator
+    // MUST have bit-cast it to an unsigned integer before passing it to the planner.
+    // The planner's core logic should never operate on a raw float byte stream.
+    debug_assert!(
+        !(logical_type == LogicalType::Float && context.physical_dtype.is_float()),
+        "Planner Invariant Violated: Planner received a float physical type for a float logical type. The orchestrator should have bit-cast it to an integer physical type first."
+    );
+
+    // This assertion validates our core assumption: if the logical type is signed,
+    // the physical type we are operating on must also be a signed integer.
+    debug_assert!(
+        !(logical_type == LogicalType::SignedInteger && !context.physical_dtype.is_signed_int()),
+        "Planner Invariant Violated: Logical type is SignedInteger, but physical type is not."
+    );
+    // --- END: DEFENSIVE ASSERTIONS ---
+
     macro_rules! plan_for_signed {
         ($T:ty) => {{
             let slice = safe_bytes_to_typed_slice::<$T>(bytes)?;
@@ -303,12 +369,15 @@ fn plan_bytes(
 
             if profile.is_constant {
                 let plan = vec![Operation::Rle, Operation::Zstd { level: 3 }];
-                let compressed =
-                    executor::execute_linear_encode_pipeline(sample_bytes, dtype, &plan)?;
+                let compressed = executor::execute_linear_encode_pipeline(
+                    sample_bytes,
+                    context.physical_dtype,
+                    &plan,
+                )?;
                 Ok((plan, compressed.len()))
             } else {
-                let candidates = generate_candidate_pipelines(&profile, stride, true);
-                find_best_pipeline_by_trial(sample_bytes, dtype, candidates)
+                let candidates = generate_candidate_pipelines(&profile, stride, logical_type);
+                find_best_pipeline_by_trial(sample_bytes, context.physical_dtype, candidates)
             }
         }};
     }
@@ -320,18 +389,22 @@ fn plan_bytes(
 
             if profile.is_constant {
                 let plan = vec![Operation::Rle, Operation::Zstd { level: 3 }];
-                let compressed =
-                    executor::execute_linear_encode_pipeline(sample_bytes, dtype, &plan)?;
+                let compressed = executor::execute_linear_encode_pipeline(
+                    sample_bytes,
+                    context.physical_dtype,
+                    &plan,
+                )?;
                 Ok((plan, compressed.len()))
             } else {
-                let candidates = generate_candidate_pipelines(&profile, stride, false);
-                find_best_pipeline_by_trial(sample_bytes, dtype, candidates)
+                let candidates = generate_candidate_pipelines(&profile, stride, logical_type);
+                find_best_pipeline_by_trial(sample_bytes, context.physical_dtype, candidates)
             }
         }};
     }
 
     use PhoenixDataType::*;
-    match dtype {
+    match context.physical_dtype {
+        // Use physical_dtype for type-casting the bytes
         Int8 => plan_for_signed!(i8),
         Int16 => plan_for_signed!(i16),
         Int32 => plan_for_signed!(i32),
@@ -340,10 +413,12 @@ fn plan_bytes(
         UInt16 => plan_for_unsigned!(u16),
         UInt32 => plan_for_unsigned!(u32),
         UInt64 => plan_for_unsigned!(u64),
-        _ => {
-            // Fallback for floats, booleans, etc.
+        // These fallbacks are now guarded by our debug_assert. We should not hit them
+        // if the logical type was Float, as it should have been bit-cast.
+        Float32 | Float64 | Boolean => {
             let plan = vec![Operation::Zstd { level: 3 }];
-            let compressed = executor::execute_linear_encode_pipeline(bytes, dtype, &plan)?;
+            let compressed =
+                executor::execute_linear_encode_pipeline(bytes, context.physical_dtype, &plan)?;
             Ok((plan, compressed.len()))
         }
     }
@@ -354,13 +429,13 @@ fn plan_bytes(
 //==================================================================================
 
 /// Analyzes a byte stream and its type to produce an optimal, self-contained `Plan`.
-pub fn plan_pipeline(bytes: &[u8], dtype: PhoenixDataType) -> Result<Plan, PhoenixError> {
-    let stride = find_stride_by_autocorrelation(bytes, dtype)?;
-    let (pipeline, _cost) = plan_bytes(bytes, dtype, stride)?;
+pub fn plan_pipeline(bytes: &[u8], context: PlanningContext) -> Result<Plan, PhoenixError> {
+    let stride = find_stride_by_autocorrelation(bytes, context.physical_dtype)?; // Use physical_dtype for stride
+    let (pipeline, _cost) = plan_bytes(bytes, &context, stride)?; // Pass context by reference
 
     Ok(Plan {
         plan_version: PLAN_VERSION,
-        initial_type: dtype,
+        initial_type: context.initial_dtype, // Store initial_dtype in the plan
         pipeline,
     })
 }

@@ -40,6 +40,7 @@ zstd = "0.13"
 chrono = "= 0.4.39"
 hashbrown = { version = "0.14", features = ["raw"] }
 rand = "0.9.1"
+colored = "3.0.0"
 
 [profile.release]
 panic = "abort"

@@ -19,6 +19,7 @@ use crate::log_metric;
 use crate::null_handling::bitmap;
 use crate::pipeline::artifact::CompressedChunk;
 use crate::pipeline::models::{Operation, Plan};
+use crate::pipeline::planner::PlanningContext;
 use crate::pipeline::traits::TypeTransformer;
 use crate::types::PhoenixDataType;
 use crate::utils::typed_slice_to_bytes;
@@ -78,7 +79,7 @@ fn prepare_initial_streams(array: &dyn Array) -> Result<HashMap<String, Vec<u8>>
 
 fn evaluate_sparsity_strategy<T: Pod + PrimInt + Zero>(
     data: &[T],
-    dtype: PhoenixDataType,
+    context: &PlanningContext, // MODIFIED: Pass context
 ) -> Result<Option<StrategyResult>, PhoenixError> {
     const SPARSITY_THRESHOLD_RATIO: f32 = 0.4;
     let zero_count = data.iter().filter(|&&v| v.is_zero()).count();
@@ -92,10 +93,14 @@ fn evaluate_sparsity_strategy<T: Pod + PrimInt + Zero>(
     }
 
     let non_zero_bytes = typed_slice_to_bytes(&non_zero_values);
-    let values_plan = planner::plan_pipeline(&non_zero_bytes, dtype)?;
-    let values_cost =
-        executor::execute_linear_encode_pipeline(&non_zero_bytes, dtype, &values_plan.pipeline)?
-            .len();
+    // MODIFIED: Pass the context to the planner
+    let values_plan = planner::plan_pipeline(&non_zero_bytes, context.clone())?;
+    let values_cost = executor::execute_linear_encode_pipeline(
+        &non_zero_bytes,
+        context.physical_dtype, // Use physical_dtype for execution
+        &values_plan.pipeline,
+    )?
+    .len();
 
     let mask_pipeline = vec![Operation::Rle, Operation::Zstd { level: 5 }];
     let mask_cost = data.len() / 8;
@@ -136,8 +141,9 @@ fn derive_forward_type_flow(
 pub fn create_plan(array: &dyn Array) -> Result<Plan, PhoenixError> {
     let initial_dtype = PhoenixDataType::from_arrow_type(array.data_type())?;
     let mut plan_pipeline: Vec<Operation> = Vec::new();
-    let mut current_type_for_planning = initial_dtype;
+    let mut current_physical_type = initial_dtype;
 
+    // 1. Perform all initial type transformations FIRST.
     if let PhoenixDataType::Float32 | PhoenixDataType::Float64 = initial_dtype {
         plan_pipeline.push(Operation::CanonicalizeZeros);
         let bitcast_op = Operation::BitCast {
@@ -147,23 +153,49 @@ pub fn create_plan(array: &dyn Array) -> Result<Plan, PhoenixError> {
                 PhoenixDataType::UInt64
             },
         };
-        current_type_for_planning = bitcast_op.transform_type(current_type_for_planning)?;
+        // The physical type of the data stream changes after the bitcast.
+        current_physical_type = bitcast_op.transform_type(current_physical_type)?;
         plan_pipeline.push(bitcast_op);
     }
 
+    // 2. NOW that we have the final physical type, plan for null separation.
+    // --- THIS IS YOUR CORRECT LOGIC, NOW IN THE RIGHT PLACE ---
+    let null_mask_context = PlanningContext {
+        initial_dtype: PhoenixDataType::Boolean,
+        physical_dtype: PhoenixDataType::Boolean,
+    };
+    // Use a non-constant sample to ensure the planner makes a good choice.
+    let sample_null_mask = vec![0u8, 1u8];
+    let null_mask_plan = planner::plan_pipeline(&sample_null_mask, null_mask_context)?;
+
     plan_pipeline.push(Operation::ExtractNulls {
         output_stream_id: "null_mask".to_string(),
-        null_mask_pipeline: vec![Operation::Rle, Operation::Zstd { level: 19 }],
+        null_mask_pipeline: null_mask_plan.pipeline, // Use the generated plan
     });
 
+    // 3. Finally, plan for the dense, validity-stripped data stream.
     let valid_data_bytes = prepare_initial_streams(array)?
         .remove("main")
         .unwrap_or_default();
     if !valid_data_bytes.is_empty() {
-        let dense_plan = planner::plan_pipeline(&valid_data_bytes, current_type_for_planning)?;
+        // --- THIS IS THE CORE CHANGE ---
+        // 1. Construct the PlanningContext.
+        let context = PlanningContext {
+            initial_dtype,
+            physical_dtype: current_physical_type,
+        };
+
+        #[cfg(debug_assertions)]
+        println!(
+            "[ORCH-PLAN] Planning with context -> initial: {:?}, physical: {:?}",
+            context.initial_dtype, context.physical_dtype
+        );
+
+        // 2. Call the planner with the new context.
+        let dense_plan = planner::plan_pipeline(&valid_data_bytes, context.clone())?;
         let dense_cost = executor::execute_linear_encode_pipeline(
             &valid_data_bytes,
-            current_type_for_planning,
+            context.physical_dtype, // Use physical type for execution
             &dense_plan.pipeline,
         )?
         .len();
@@ -175,14 +207,12 @@ pub fn create_plan(array: &dyn Array) -> Result<Plan, PhoenixError> {
         macro_rules! evaluate_and_append {
             ($T:ty) => {{
                 let typed_slice: &[$T] = bytemuck::try_cast_slice(&valid_data_bytes)?;
-                // CORRECTED: The `if let` correctly handles the Option from the evaluator.
-                if let Some(sparse_strategy) =
-                    evaluate_sparsity_strategy(typed_slice, current_type_for_planning)?
-                {
+                // Pass the context to the sparsity evaluator.
+                if let Some(sparse_strategy) = evaluate_sparsity_strategy(typed_slice, &context)? {
                     if sparse_strategy.cost < dense_strategy.cost {
                         log_metric!(
                             "event" = "strategy_chosen",
-                            "type" = &current_type_for_planning,
+                            "type" = &context.initial_dtype,
                             "strategy" = "Sparse",
                             "dense_cost" = &dense_strategy.cost,
                             "sparse_cost" = &sparse_strategy.cost
@@ -191,7 +221,7 @@ pub fn create_plan(array: &dyn Array) -> Result<Plan, PhoenixError> {
                     } else {
                         log_metric!(
                             "event" = "strategy_chosen",
-                            "type" = &current_type_for_planning,
+                            "type" = &context.initial_dtype,
                             "strategy" = "Dense",
                             "dense_cost" = &dense_strategy.cost
                         );
@@ -200,7 +230,7 @@ pub fn create_plan(array: &dyn Array) -> Result<Plan, PhoenixError> {
                 } else {
                     log_metric!(
                         "event" = "strategy_chosen",
-                        "type" = &current_type_for_planning,
+                        "type" = &context.initial_dtype,
                         "strategy" = "Dense",
                         "dense_cost" = &dense_strategy.cost
                     );
@@ -209,7 +239,8 @@ pub fn create_plan(array: &dyn Array) -> Result<Plan, PhoenixError> {
             }};
         }
         use PhoenixDataType::*;
-        match current_type_for_planning {
+        // Match on the physical type to correctly cast the byte slice.
+        match context.physical_dtype {
             Int8 => evaluate_and_append!(i8),
             Int16 => evaluate_and_append!(i16),
             Int32 => evaluate_and_append!(i32),
@@ -218,15 +249,27 @@ pub fn create_plan(array: &dyn Array) -> Result<Plan, PhoenixError> {
             UInt16 => evaluate_and_append!(u16),
             UInt32 => evaluate_and_append!(u32),
             UInt64 => evaluate_and_append!(u64),
+            // If the physical type is still a float or boolean, it means no
+            // special pre-processing was done, so we just use the dense strategy.
             _ => plan_pipeline.extend(dense_strategy.plan),
         }
     }
 
-    Ok(Plan {
+    let final_plan = Plan {
         plan_version: PLAN_VERSION,
         initial_type: initial_dtype,
         pipeline: plan_pipeline,
-    })
+    };
+
+    #[cfg(debug_assertions)]
+    {
+        println!(
+            "[PLANNER] Final plan for {:?}: {:?}",
+            initial_dtype, final_plan.pipeline
+        );
+    }
+
+    Ok(final_plan)
 }
 
 //==================================================================================
@@ -234,14 +277,19 @@ pub fn create_plan(array: &dyn Array) -> Result<Plan, PhoenixError> {
 //==================================================================================
 
 pub fn compress_chunk(array: &dyn Array) -> Result<Vec<u8>, PhoenixError> {
+    // 1. The Orchestrator's primary job: create the complete, correct plan.
     let plan = create_plan(array)?;
+
+    // 2. Prepare the initial byte streams from the Arrow array.
     let mut initial_streams = prepare_initial_streams(array)?;
-    let mut main_data_bytes = initial_streams.remove("main").unwrap_or_default();
     let mut compressed_streams = HashMap::new();
 
-    let mut main_pipeline: Vec<Operation> = Vec::new();
-    let mut current_type = plan.initial_type;
+    let mut main_data_bytes = initial_streams.remove("main").unwrap_or_default();
+    let mut current_physical_type = plan.initial_type;
+    let mut linear_pipeline: Vec<Operation> = Vec::new();
 
+    // --- THIS IS THE CLEANER 'Interpreter' PATTERN ---
+    // 3. Execute the plan by interpreting each operation.
     for op in &plan.pipeline {
         match op {
             Operation::ExtractNulls {
@@ -263,31 +311,40 @@ pub fn compress_chunk(array: &dyn Array) -> Result<Vec<u8>, PhoenixError> {
                 values_pipeline,
             } => {
                 let (mask_vec, dense_values_bytes) =
-                    kernels::dispatch_split_stream(&main_data_bytes, current_type)?;
+                    kernels::dispatch_split_stream(&main_data_bytes, current_physical_type)?;
                 let mask_bytes: Vec<u8> = mask_vec.iter().map(|&b| b as u8).collect();
+
                 let compressed_mask = executor::execute_linear_encode_pipeline(
                     &mask_bytes,
                     PhoenixDataType::Boolean,
                     mask_pipeline,
                 )?;
                 compressed_streams.insert(mask_stream_id.clone(), compressed_mask);
+
                 main_data_bytes = dense_values_bytes;
-                main_pipeline.extend_from_slice(values_pipeline);
+                // The values_pipeline becomes the new main linear pipeline.
+                linear_pipeline.extend_from_slice(values_pipeline);
+                // Sparsify is a terminal operation for the main stream's plan generation.
+                break;
             }
+            // For all other linear operations, add them to the list to be executed in one batch.
             _ => {
-                main_pipeline.push(op.clone());
+                linear_pipeline.push(op.clone());
             }
         }
-        current_type = op.transform_type(current_type)?;
     }
 
-    // CORRECTED: The initial type for the main pipeline is the type *after* all
-    // pre-processing meta-ops have been accounted for. This is the `current_type`
-    // we tracked through the loop.
-    let compressed_main =
-        executor::execute_linear_encode_pipeline(&main_data_bytes, current_type, &main_pipeline)?;
-    compressed_streams.insert("main".to_string(), compressed_main);
+    // 4. Execute the collected linear pipeline on the (potentially) transformed data.
+    if !main_data_bytes.is_empty() {
+        let compressed_main = executor::execute_linear_encode_pipeline(
+            &main_data_bytes,
+            current_physical_type,
+            &linear_pipeline,
+        )?;
+        compressed_streams.insert("main".to_string(), compressed_main);
+    }
 
+    // 5. Assemble the final artifact.
     let artifact = CompressedChunk {
         total_rows: array.len() as u64,
         original_type: plan.initial_type.to_string(),
@@ -305,10 +362,14 @@ pub fn decompress_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
     let total_rows = artifact.total_rows as usize;
     let mut streams = artifact.compressed_streams;
 
-    // --- 1. Derive the complete forward type flow ONCE. This is the source of truth. ---
-    let full_type_flow = derive_forward_type_flow(plan.initial_type, &plan.pipeline)?;
+    // 1. Calculate the FULL forward type flow for the ENTIRE plan, ONCE.
+    // This becomes the single source of truth for the type state at every step.
+    let mut full_type_flow = derive_forward_type_flow(plan.initial_type, &plan.pipeline)?;
+    
+    // 2. Reverse it to prepare the stack for the decode pipeline.
+    // The executor will pop from this stack.
+    full_type_flow.reverse();
 
-    // --- 2. Decompress side-streams first (e.g., nulls, sparsity mask) ---
     let mut decompressed_streams = HashMap::new();
     if let Some(op) = plan
         .pipeline
@@ -321,7 +382,9 @@ pub fn decompress_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
         } = op
         {
             if let Some(compressed_nulls) = streams.remove(output_stream_id) {
-                let mut type_flow = vec![PhoenixDataType::Boolean];
+                let mut type_flow =
+                    derive_forward_type_flow(PhoenixDataType::Boolean, null_mask_pipeline)?;
+                type_flow.reverse();
                 let validity_bytes = executor::execute_linear_decode_pipeline(
                     &compressed_nulls,
                     &mut type_flow,
@@ -349,7 +412,9 @@ pub fn decompress_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
                     .map_or(total_rows, |nm| {
                         BooleanBuffer::new(nm.clone().into(), 0, total_rows).count_set_bits()
                     });
-                let mut type_flow = vec![PhoenixDataType::Boolean];
+                let mut type_flow =
+                    derive_forward_type_flow(PhoenixDataType::Boolean, mask_pipeline)?;
+                type_flow.reverse();
                 let mask_bytes = executor::execute_linear_decode_pipeline(
                     &compressed_mask,
                     &mut type_flow,
@@ -361,86 +426,83 @@ pub fn decompress_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
         }
     }
 
-    // --- 3. Decompress the main data stream by orchestrating the executor ---
-    let mut main_data = streams.remove("main").unwrap();
-    let mut linear_pipeline: Vec<Operation> = Vec::new();
+    let mut main_data = streams.remove("main").unwrap_or_default();
 
-    // First, handle the Sparsify meta-op if it exists, as it's the outermost layer.
-    if let Some((op_idx, op)) = plan
-        .pipeline
-        .iter()
-        .enumerate()
-        .find(|(_, op)| matches!(op, Operation::Sparsify { .. }))
-    {
-        if let Operation::Sparsify {
-            values_pipeline, ..
-        } = op
+    if !main_data.is_empty() {
+        if let Some((op_idx, op)) = plan
+            .pipeline
+            .iter()
+            .enumerate()
+            .find(|(_, op)| matches!(op, Operation::Sparsify { .. }))
         {
-            let mask_bytes = decompressed_streams.get("sparsity_mask").unwrap();
-            let mask_vec: Vec<bool> = mask_bytes.iter().map(|b| *b != 0).collect();
-            let num_non_zero = mask_vec.iter().filter(|&&b| b).count();
-            let num_valid_rows = decompressed_streams
-                .get("null_mask")
-                .map_or(total_rows, |nm| {
-                    BooleanBuffer::new(nm.clone().into(), 0, total_rows).count_set_bits()
-                });
-
-            let values_initial_type = full_type_flow[op_idx];
-            let mut values_type_flow =
-                derive_forward_type_flow(values_initial_type, values_pipeline)?;
-            values_type_flow.reverse();
-            let decompressed_values = executor::execute_linear_decode_pipeline(
-                &main_data,
-                &mut values_type_flow,
-                values_pipeline,
-                num_non_zero,
-            )?;
-
-            main_data = kernels::dispatch_reconstruct_stream(
-                &mask_vec,
-                &decompressed_values,
-                values_initial_type,
-                num_valid_rows,
-            )?;
+            if let Operation::Sparsify {
+                values_pipeline, ..
+            } = op
+            {
+                let mask_bytes = decompressed_streams.get("sparsity_mask").unwrap();
+                let mask_vec: Vec<bool> = mask_bytes.iter().map(|b| *b != 0).collect();
+                let num_non_zero = mask_vec.iter().filter(|&&b| b).count();
+                let num_valid_rows = decompressed_streams
+                    .get("null_mask")
+                    .map_or(total_rows, |nm| {
+                        BooleanBuffer::new(nm.clone().into(), 0, total_rows).count_set_bits()
+                    });
+                let forward_type_flow =
+                    derive_forward_type_flow(plan.initial_type, &plan.pipeline)?;
+                let values_initial_type = forward_type_flow[op_idx];
+                let mut values_type_flow =
+                    derive_forward_type_flow(values_initial_type, values_pipeline)?;
+                values_type_flow.reverse();
+                let decompressed_values = executor::execute_linear_decode_pipeline(
+                    &main_data,
+                    &mut values_type_flow,
+                    values_pipeline,
+                    num_non_zero,
+                )?;
+                main_data = kernels::dispatch_reconstruct_stream(
+                    &mask_vec,
+                    &decompressed_values,
+                    values_initial_type,
+                    num_valid_rows,
+                )?;
+            }
         }
+
+        let mut linear_pipeline: Vec<Operation> = Vec::new();
+        for op in &plan.pipeline {
+            if !matches!(
+                op,
+                Operation::Sparsify { .. } | Operation::ExtractNulls { .. }
+            ) {
+                linear_pipeline.push(op.clone());
+            }
+        }
+
+        let mut linear_type_flow = derive_forward_type_flow(plan.initial_type, &linear_pipeline)?;
+        linear_type_flow.reverse();
+        let num_values_for_linear = decompressed_streams
+            .get("null_mask")
+            .map_or(total_rows, |nm| {
+                BooleanBuffer::new(nm.clone().into(), 0, total_rows).count_set_bits()
+            });
+
+        main_data = executor::execute_linear_decode_pipeline(
+            &main_data,
+            &mut linear_type_flow,
+            &linear_pipeline,
+            num_values_for_linear,
+        )?;
     }
 
-    // --- 4. Build and run the final linear decode pipeline ---
-    for op in &plan.pipeline {
-        if !matches!(
-            op,
-            Operation::Sparsify { .. } | Operation::ExtractNulls { .. }
-        ) {
-            linear_pipeline.push(op.clone());
-        }
-    }
-
-    let mut linear_type_flow = derive_forward_type_flow(plan.initial_type, &linear_pipeline)?;
-    linear_type_flow.reverse();
-    let num_values_for_linear = decompressed_streams
-        .get("null_mask")
-        .map_or(total_rows, |nm| {
-            BooleanBuffer::new(nm.clone().into(), 0, total_rows).count_set_bits()
-        });
-    main_data = executor::execute_linear_decode_pipeline(
-        &main_data,
-        &mut linear_type_flow,
-        &linear_pipeline,
-        num_values_for_linear,
-    )?;
-
-    // --- 5. Re-apply nulls and build the final Arrow Array ---
     let null_buffer = decompressed_streams
         .get("null_mask")
         .map(|bytes| NullBuffer::from(BooleanBuffer::new(bytes.clone().into(), 0, total_rows)));
-
     macro_rules! reapply_and_build {
         ($T:ty) => {
             bitmap::reapply_bitmap::<$T>(main_data, null_buffer, total_rows)
                 .map(|arr| Box::new(arr) as Box<dyn Array>)
         };
     }
-
     match plan.initial_type {
         PhoenixDataType::Int8 => reapply_and_build!(Int8Type),
         PhoenixDataType::Int16 => reapply_and_build!(Int16Type),
