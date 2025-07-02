@@ -4,16 +4,15 @@
 use arrow::array::{make_array, ArrayData, RecordBatch};
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyString};
+use pyo3::types::{PyBytes, PyDict};
 
 use crate::error::PhoenixError;
-use crate::pipeline::{
-    frame_orchestrator, get_compressed_chunk_info, orchestrator, planner, PlannerHints,
-};
+use crate::pipeline::{frame_orchestrator, orchestrator, planner};
+use crate::types::PhoenixDataType; // CORRECTED: Import our new type
 use crate::utils;
 
 //==================================================================================
-// 1. Public Python Functions (v4.2 Corrected)
+// 1. Public Python Functions (v4.3 Corrected)
 //==================================================================================
 
 #[pyfunction]
@@ -21,11 +20,8 @@ use crate::utils;
 pub fn compress_py<'py>(py: Python<'py>, array_py: &PyAny) -> PyResult<&'py PyBytes> {
     let array_data = ArrayData::from_pyarrow(array_py)?;
     let rust_array = make_array(array_data.into());
-
-    // CORRECTED: A single, high-level call. The orchestrator handles everything.
     let compressed_vec =
         py.allow_threads(move || orchestrator::compress_chunk(rust_array.as_ref()))?;
-
     Ok(PyBytes::new(py, &compressed_vec))
 }
 
@@ -34,14 +30,10 @@ pub fn compress_py<'py>(py: Python<'py>, array_py: &PyAny) -> PyResult<&'py PyBy
 pub fn compress_analyze_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
     let array_data = ArrayData::from_pyarrow(array_py)?;
     let rust_array = make_array(array_data.into());
-
-    // CORRECTED: Use the high-level orchestrator to perform the full compression.
     let artifact_bytes =
         py.allow_threads(move || orchestrator::compress_chunk(rust_array.as_ref()))?;
-
-    // This function remains the correct way to inspect the artifact.
     let (header_size, data_size, pipeline_json, original_type) =
-        get_compressed_chunk_info(&artifact_bytes)?;
+        orchestrator::get_compressed_chunk_info(&artifact_bytes)?;
 
     let result_dict = PyDict::new(py);
     result_dict.set_item("artifact", PyBytes::new(py, &artifact_bytes))?;
@@ -57,50 +49,47 @@ pub fn compress_analyze_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
 #[pyfunction]
 #[pyo3(name = "decompress")]
 pub fn decompress_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
-    // CORRECTED: A single, high-level call to the orchestrator.
     let reconstructed_array = py.allow_threads(move || orchestrator::decompress_chunk(bytes))?;
-
     utils::arrow_array_to_py(py, reconstructed_array)
 }
 
 #[pyfunction]
 #[pyo3(name = "plan")]
 pub fn plan_py(py: Python, bytes: &[u8], original_type: &str) -> PyResult<String> {
+    // CORRECTED: This function is now a proper FFI bridge.
     py.allow_threads(move || {
-        // CORRECTED: The planner now returns a tuple (plan, cost). We only want the plan string.
-        planner::plan_pipeline(bytes, original_type)
-            .map(|(plan, _cost)| plan)
-            .map_err(PhoenixError::into)
+        // 1. Convert the Python string to our internal, type-safe enum.
+        let dtype = match original_type {
+            "Int8" => PhoenixDataType::Int8,
+            "Int16" => PhoenixDataType::Int16,
+            "Int32" => PhoenixDataType::Int32,
+            "Int64" => PhoenixDataType::Int64,
+            "UInt8" => PhoenixDataType::UInt8,
+            "UInt16" => PhoenixDataType::UInt16,
+            "UInt32" => PhoenixDataType::UInt32,
+            "UInt64" => PhoenixDataType::UInt64,
+            "Float32" => PhoenixDataType::Float32,
+            "Float64" => PhoenixDataType::Float64,
+            "Boolean" => PhoenixDataType::Boolean,
+            _ => return Err(PhoenixError::UnsupportedType(original_type.to_string()).into()),
+        };
+
+        // 2. Call the refactored planner, which returns a `Plan` struct.
+        let plan_struct = planner::plan_pipeline(bytes, dtype)?;
+
+        // 3. Serialize the `Plan` struct back to a JSON string for Python.
+        serde_json::to_string_pretty(&plan_struct).map_err(|e| PhoenixError::from(e).into())
     })
 }
 
-// --- RESTORED AND CORRECTED FRAME-LEVEL FUNCTIONS ---
+// --- Frame-level functions are unchanged as they call the stable orchestrator facade ---
 
 #[pyfunction]
-#[pyo3(name = "compress_frame", signature = (batch_py, hints = None))]
-pub fn compress_frame_py<'py>(
-    py: Python<'py>,
-    batch_py: &PyAny,
-    hints: Option<&PyDict>,
-) -> PyResult<&'py PyBytes> {
+#[pyo3(name = "compress_frame")]
+pub fn compress_frame_py<'py>(py: Python<'py>, batch_py: &PyAny) -> PyResult<&'py PyBytes> {
     let rust_batch = RecordBatch::from_pyarrow(batch_py)?;
-
-    let rust_hints = if let Some(hints_dict) = hints {
-        Some(PlannerHints {
-            stream_id_column: hints_dict
-                .get_item("stream_id_column")?
-                .and_then(|v| v.extract().ok()),
-            timestamp_column: hints_dict
-                .get_item("timestamp_column")?
-                .and_then(|v| v.extract().ok()),
-        })
-    } else {
-        None
-    };
-
     let compressed_vec =
-        py.allow_threads(move || frame_orchestrator::compress_frame(&rust_batch, &rust_hints))?;
-
+        py.allow_threads(move || frame_orchestrator::compress_frame(&rust_batch, &None))?;
     Ok(PyBytes::new(py, &compressed_vec))
 }
 
@@ -112,6 +101,7 @@ pub fn decompress_frame_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
 
 #[pyfunction]
 pub fn get_frame_diagnostics_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
+    use pyo3::types::PyString;
     let diagnostics_json = frame_orchestrator::get_frame_diagnostics(bytes)?;
     Ok(PyString::new(py, &diagnostics_json).into())
 }

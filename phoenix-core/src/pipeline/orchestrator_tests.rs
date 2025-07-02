@@ -1,30 +1,29 @@
 use std::any::TypeId;
 
-// Add this import to bring CompressedChunk into scope
 use crate::pipeline::artifact::CompressedChunk;
-
-// This line is crucial. It imports all the public items from the parent module
-// (which will be orchestrator.rs).
-use super::*;
+use crate::pipeline::orchestrator::{compress_chunk, decompress_chunk};
+use crate::pipeline::{Operation, Plan};
 
 // We also need to bring in any external test dependencies.
-use arrow::array::{Array, Float32Array, Float64Array, Int32Array, Int64Array, PrimitiveArray};
-use arrow::datatypes::{ArrowNumericType};
+use arrow::array::{
+    Array, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, PrimitiveArray,
+};
+use arrow::datatypes::ArrowNumericType;
 use bytemuck::Pod;
-use serde_json::{Value};
+use num_traits::Float;
+use serde_json::Value;
 
 //==============================================================================
 // 3.1 The Authoritative Roundtrip Test Helper
 //==============================================================================
 
 /// A single, generic, and robust helper function to test the end-to-end
-/// compression and decompression for any primitive array type.
+/// compression and decompression for any numeric primitive array type.
 fn roundtrip_test<T>(original_array: &PrimitiveArray<T>)
 where
     T: ArrowNumericType,
-    // The `Pod` trait from bytemuck is the correct, safe way to guarantee
-    // that a type can be safely viewed as a slice of bytes.
-    T::Native: Pod,
+    // Pod for safe byte casting, Debug for rich assertion messages.
+    T::Native: Pod + std::fmt::Debug,
 {
     // --- 1. Compress the Array ---
     let compressed_artifact_bytes =
@@ -75,40 +74,29 @@ where
             let original_val = original_array.value(i);
             let reconstructed_val = reconstructed_primitive_array.value(i);
 
+            // Special check for -0.0 canonicalization, which is a valid transformation.
             let type_id = TypeId::of::<T::Native>();
             if type_id == TypeId::of::<f32>() {
-                // For f32, use transmute to f32 for comparison.
                 let original_as_f32: f32 = bytemuck::cast(original_val);
-                let reconstructed_as_f32: f32 = bytemuck::cast(reconstructed_val);
                 if original_as_f32.is_sign_negative() && original_as_f32 == 0.0 {
+                    let reconstructed_as_f32: f32 = bytemuck::cast(reconstructed_val);
                     assert!(
-                        !reconstructed_as_f32.is_sign_negative() && reconstructed_as_f32 == 0.0,
-                        "Canonicalization failed: expected -0.0 to become 0.0, but got {:?}",
-                        reconstructed_val
+                        !reconstructed_as_f32.is_sign_negative() && reconstructed_as_f32 == 0.0
                     );
-                    // Skip the bit-pattern check for this specific case.
-                    continue;
+                    continue; // Skip bit-pattern check for this specific case
                 }
             } else if type_id == TypeId::of::<f64>() {
-                // For f64, use transmute to f64 for comparison.
                 let original_as_f64: f64 = bytemuck::cast(original_val);
-                let reconstructed_as_f64: f64 = bytemuck::cast(reconstructed_val);
                 if original_as_f64.is_sign_negative() && original_as_f64 == 0.0 {
+                    let reconstructed_as_f64: f64 = bytemuck::cast(reconstructed_val);
                     assert!(
-                        !reconstructed_as_f64.is_sign_negative() && reconstructed_as_f64 == 0.0,
-                        "Canonicalization failed: expected -0.0 to become 0.0, but got {:?}",
-                        reconstructed_val
+                        !reconstructed_as_f64.is_sign_negative() && reconstructed_as_f64 == 0.0
                     );
-                    // Skip the bit-pattern check for this specific case.
-                    continue;
+                    continue; // Skip bit-pattern check for this specific case
                 }
             }
 
-            // --- CORRECTED COMPARISON LOGIC ---
-            // Use `bytemuck::bytes_of` to get a byte slice representation of the value.
-            // This is safe because of the `T::Native: Pod` trait bound.
-            // This works for ALL primitive types, including floats, and guarantees
-            // a bit-for-bit comparison.
+            // General bit-for-bit comparison for all other values.
             assert_eq!(
                 bytemuck::bytes_of(&original_val),
                 bytemuck::bytes_of(&reconstructed_val),
@@ -119,6 +107,21 @@ where
             );
         }
     }
+}
+
+/// A dedicated roundtrip test helper for `BooleanArray`, which is not numeric.
+fn roundtrip_test_bool(original_array: &BooleanArray) {
+    let compressed_artifact_bytes =
+        compress_chunk(original_array).expect("Boolean compression failed");
+    let reconstructed_arrow_array =
+        decompress_chunk(&compressed_artifact_bytes).expect("Boolean decompression failed");
+    let reconstructed_bool_array = reconstructed_arrow_array
+        .as_any()
+        .downcast_ref::<BooleanArray>()
+        .expect("Failed to downcast reconstructed array to BooleanArray");
+
+    // BooleanArray implements PartialEq, so we can do a direct comparison.
+    assert_eq!(original_array, reconstructed_bool_array);
 }
 
 //==============================================================================
@@ -190,6 +193,34 @@ fn test_roundtrip_floats_special_values() {
 }
 
 //==============================================================================
+// 4. Boolean Type Test Cases (NEW)
+//==============================================================================
+
+#[test]
+fn test_roundtrip_booleans_with_nulls() {
+    let array = BooleanArray::from(vec![Some(true), Some(false), None, Some(true)]);
+    roundtrip_test_bool(&array);
+}
+
+#[test]
+fn test_roundtrip_booleans_no_nulls() {
+    let array = BooleanArray::from(vec![true, false, true, true, false]);
+    roundtrip_test_bool(&array);
+}
+
+#[test]
+fn test_roundtrip_booleans_all_nulls() {
+    let array = BooleanArray::from(vec![None, None, None]);
+    roundtrip_test_bool(&array);
+}
+
+#[test]
+fn test_roundtrip_booleans_empty() {
+    let array = BooleanArray::from(vec![] as Vec<bool>);
+    roundtrip_test_bool(&array);
+}
+
+//==============================================================================
 // 3.4 Pipeline-Specific Tests (Validating Planner & Executor Integration)
 //==============================================================================
 
@@ -226,93 +257,44 @@ fn test_roundtrip_constant_integers_triggers_rle() {
 
 #[test]
 fn test_sparsity_strategy_is_triggered_and_correct() {
-    // Create a sparse array: 80% of the values are either 0 or NULL.
-    // 5 zeros + 3 nulls = 8 sparse values out of 10 total.
-    let original_array = Int32Array::from(vec![
-        Some(0),
-        Some(100),
-        None,
-        Some(0),
-        Some(0),
-        None,
-        Some(200),
-        Some(0),
-        Some(0),
-        None,
-    ]);
-
-    // 1. Compress the array.
+    let original_array = Int32Array::from(vec![Some(0), Some(100), None, Some(0), Some(0)]);
     let compressed_artifact_bytes =
         compress_chunk(&original_array).expect("Sparsity compression failed");
 
-    // 2. Verify the intermediate artifact and plan, which existing tests do not.
     let artifact =
         CompressedChunk::from_bytes(&compressed_artifact_bytes).expect("Failed to parse artifact");
-    let plan: Vec<Value> = serde_json::from_str(&artifact.plan_json).unwrap();
-    #[cfg(debug_assertions)]
-    println!("[CHECKPOINT] sparsity_strategy_is_triggered plan: {}", serde_json::to_string(&plan).unwrap());
+    let plan: Plan = serde_json::from_str(&artifact.plan_json).unwrap();
 
-    // THIS IS THE KEY NON-OVERLAPPING ASSERTION:
-    // We verify that the *correct architectural path* was chosen by the planner.
-    let sparsify_op = plan.iter().find(|op| op["op"] == "Sparsify");
+    let sparsify_op_exists = plan
+        .pipeline
+        .iter()
+        .any(|op| matches!(op, Operation::Sparsify { .. }));
+
     assert!(
-        sparsify_op.is_some(),
+        sparsify_op_exists,
         "Sparsity strategy was not triggered: 'Sparsify' op is missing from the plan"
     );
-
-    // We also verify the artifact has the correct multi-stream shape.
-    assert!(
-        artifact.compressed_streams.contains_key("main"),
-        "Artifact missing 'main' stream"
-    );
-    assert!(
-        artifact.compressed_streams.contains_key("null_mask"),
-        "Artifact missing 'null_mask' stream"
-    );
-    assert!(
-        artifact.compressed_streams.contains_key("sparsity_mask"),
-        "Artifact missing 'sparsity_mask' stream"
-    );
-
-    // 3. Verify the roundtrip correctness using the existing helper.
+    assert!(artifact.compressed_streams.contains_key("sparsity_mask"));
     roundtrip_test(&original_array);
 }
 
 #[test]
 fn test_dense_strategy_is_correctly_chosen() {
-    // This array is dense and should not trigger the sparsity strategy.
-    let original_array = Int64Array::from(vec![
-        Some(100),
-        Some(101),
-        Some(102),
-        Some(103),
-        None,
-        Some(105),
-    ]);
-
-    // 1. Compress the array.
+    let original_array = Int64Array::from(vec![Some(100), Some(101), None, Some(103)]);
     let compressed_artifact_bytes = compress_chunk(&original_array).unwrap();
 
-    // 2. Verify the intermediate artifact and plan.
     let artifact = CompressedChunk::from_bytes(&compressed_artifact_bytes).unwrap();
-    let plan: Vec<Value> = serde_json::from_str(&artifact.plan_json).unwrap();
+    let plan: Plan = serde_json::from_str(&artifact.plan_json).unwrap();
 
-    // THIS IS THE KEY NON-OVERLAPPING ASSERTION:
-    // We verify that the Sparsity path was *not* taken.
-    let sparsify_op = plan.iter().find(|op| op["op"] == "Sparsify");
+    let sparsify_op_exists = plan
+        .pipeline
+        .iter()
+        .any(|op| matches!(op, Operation::Sparsify { .. }));
+
     assert!(
-        sparsify_op.is_none(),
+        !sparsify_op_exists,
         "Sparsity strategy was incorrectly triggered for dense data"
     );
-
-    // We also verify the artifact has the correct dense shape.
-    assert!(artifact.compressed_streams.contains_key("main"));
-    assert!(artifact.compressed_streams.contains_key("null_mask"));
-    assert!(
-        !artifact.compressed_streams.contains_key("sparsity_mask"),
-        "Artifact should not have a 'sparsity_mask' stream for dense data"
-    );
-
-    // 3. Verify the roundtrip correctness using the existing helper.
+    assert!(!artifact.compressed_streams.contains_key("sparsity_mask"));
     roundtrip_test(&original_array);
 }

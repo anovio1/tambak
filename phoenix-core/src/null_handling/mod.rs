@@ -31,32 +31,13 @@ pub mod bitmap;
 // these re-exported items.
 
 pub use self::bitmap::{
-    strip_valid_data_to_buffer, // <-- CORRECTED: No longer exporting a non-existent struct
     reapply_bitmap,
+    strip_valid_data_to_buffer, // <-- CORRECTED: No longer exporting a non-existent struct
 };
 
 //==================================================================================
 // 3. Unit Tests (Module-level integration tests)
 //==================================================================================
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*; // Import the re-exported functions
-//     // use polars::arrow::array::Int32Array;
-
-//     #[test]
-//     fn test_public_api_is_accessible() {
-//         // This test confirms that the re-exporting is working correctly.
-//         let source_array = Int32Array::from(vec![Some(10), None, Some(20)]);
-//         let data_slice = source_array.values();
-//         let validity_bitmap = source_array.validity();
-
-//         // Call the function through the `mod.rs` public API
-//         let result = strip_valid_data(data_slice, validity_bitmap.unwrap());
-//         assert!(result.is_ok());
-
-//         // CORRECTED: The result is the Vec<i32> directly.
-//         let stripped_vec = result.unwrap();
-//         assert_eq!(stripped_vec, vec![10, 20]);
-//     }
-// }
+#[cfg(test)]
+mod bitmap_tests;

@@ -823,6 +823,7 @@ dependencies = [
  "num-traits",
  "pyo3",
  "rand",
+ "serde",
  "serde_json",
  "thiserror",
  "zstd",

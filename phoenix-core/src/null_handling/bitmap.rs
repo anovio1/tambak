@@ -4,7 +4,9 @@
 //! nullability, built correctly for the Arrow v55 API. It uses generics and the
 //! official `NullBuffer` and non-generic `Buffer` types.
 
-use arrow::array::{ArrayBuilder, ArrayData, PrimitiveArray, PrimitiveBuilder};
+use arrow::array::{
+    ArrayBuilder, ArrayData, BooleanArray, BooleanBuilder, PrimitiveArray, PrimitiveBuilder,
+};
 use arrow::buffer::{Buffer, NullBuffer, ScalarBuffer};
 use arrow::datatypes::{ArrowNumericType, ToByteSlice}; // ToByteSlice is needed for tests
 
@@ -36,6 +38,7 @@ where
     Buffer::from(valid_data.to_byte_slice())
 }
 
+/// Extracts the valid data from a `PrimitiveArray` into a new, dense `Vec`.
 pub fn strip_valid_data_to_vec<T: ArrowNumericType>(array: &PrimitiveArray<T>) -> Vec<T::Native> {
     // The iterator on PrimitiveArray yields Option<T::Native>.
     // filter_map is the most idiomatic and efficient way to collect non-null values.
@@ -63,6 +66,71 @@ where
     }
     let valid_data: Vec<T::Native> = bytemuck::cast_slice(&valid_data_bytes).to_vec();
     reapply_bitmap_from_vec(valid_data, null_buffer, num_rows)
+}
+
+/// Re-applies a `NullBuffer` to a byte buffer of valid booleans to reconstruct
+/// the original Arrow `BooleanArray`.
+///
+/// This is a specialized version of `reapply_bitmap` because `BooleanArray` is not
+/// a generic `PrimitiveArray` and `BooleanType` does not implement `ArrowNumericType`.
+pub fn reapply_bitmap_for_bools(
+    valid_data_bytes: Vec<u8>,
+    null_buffer: Option<NullBuffer>,
+    num_rows: usize,
+) -> Result<BooleanArray, PhoenixError> {
+    // First, convert the dense byte stream back into a vector of booleans.
+    let valid_bools: Vec<bool> = valid_data_bytes.iter().map(|&b| b != 0).collect();
+
+    // Handle the all-null case, where the valid data stream is empty.
+    if valid_bools.is_empty() && null_buffer.is_some() {
+        let mut builder = BooleanBuilder::with_capacity(num_rows);
+        for _ in 0..num_rows {
+            builder.append_null();
+        }
+        return Ok(builder.finish());
+    }
+
+    let mut builder = BooleanBuilder::with_capacity(num_rows);
+    let mut data_iter = valid_bools.iter();
+
+    if let Some(nb) = null_buffer {
+        for i in 0..num_rows {
+            if nb.is_valid(i) {
+                if let Some(&value) = data_iter.next() {
+                    builder.append_value(value);
+                } else {
+                    return Err(PhoenixError::InternalError(
+                        "Null bitmap indicates more valid values than boolean data provided"
+                            .to_string(),
+                    ));
+                }
+            } else {
+                builder.append_null();
+            }
+        }
+    } else {
+        // No nulls, just append all values.
+        if valid_bools.len() != num_rows {
+            return Err(PhoenixError::InternalError(format!(
+                "Boolean data vector length ({}) does not match total rows ({}) when no null buffer is present",
+                valid_bools.len(), num_rows
+            )));
+        }
+        for &val in &valid_bools {
+            builder.append_value(val);
+        }
+    }
+
+    Ok(builder.finish())
+}
+
+/// Extracts the valid boolean values from a `BooleanArray` into a new, dense `Vec<bool>`.
+///
+/// This is a specialized version of `strip_valid_data_to_vec` because `BooleanArray`
+/// is not a generic `PrimitiveArray` and `BooleanType` does not implement `ArrowNumericType`.
+pub fn strip_valid_bools_to_vec(array: &BooleanArray) -> Vec<bool> {
+    // The iterator on BooleanArray yields Option<bool>, so the logic is identical.
+    array.iter().filter_map(|val| val).collect()
 }
 
 /// Re-applies a `NullBuffer` to an already-reconstructed vector of typed data.
@@ -102,96 +170,4 @@ pub fn reapply_bitmap_from_vec<T: ArrowNumericType>(
     }
 
     Ok(builder.finish())
-}
-
-//==================================================================================
-// 2. Unit Tests (REVISED - Reflecting the correct Buffer API)
-//==================================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::utils::typed_slice_to_bytes; // <-- Import the utility
-    use arrow::array::Int32Array;
-    use arrow::datatypes::Int32Type;
-
-    #[test]
-    fn test_strip_valid_data_to_vec() {
-        let source_array = Int32Array::from(vec![Some(10), None, Some(30)]);
-        let valid_data_vec = strip_valid_data_to_vec::<Int32Type>(&source_array);
-        assert_eq!(valid_data_vec, vec![10, 30]);
-    }
-
-    #[test]
-    fn test_reapply_bitmap_with_nulls() {
-        let valid_data: Vec<i32> = vec![10, 30];
-        let null_buffer = NullBuffer::from(vec![true, false, true]);
-        let total_rows = 3;
-
-        // --- THIS IS THE FIX ---
-        // Convert the typed Vec<i32> to a byte Vec<u8> before calling the function.
-        let valid_data_bytes = typed_slice_to_bytes(&valid_data);
-
-        let reconstructed_array = reapply_bitmap::<Int32Type>(
-            valid_data_bytes, // Pass the correct byte vector
-            Some(null_buffer),
-            total_rows,
-        )
-        .unwrap();
-
-        let expected_array = Int32Array::from(vec![Some(10), None, Some(30)]);
-        assert_eq!(reconstructed_array, expected_array);
-    }
-
-    #[test]
-    fn test_reapply_bitmap_no_nulls() {
-        let valid_data: Vec<i32> = vec![10, 20, 30];
-        let total_rows = 3;
-
-        // --- THIS IS THE FIX ---
-        // Convert the typed Vec<i32> to a byte Vec<u8>.
-        let valid_data_bytes = typed_slice_to_bytes(&valid_data);
-
-        let reconstructed_array = reapply_bitmap::<Int32Type>(
-            valid_data_bytes, // Pass the correct byte vector
-            None,             // No nulls
-            total_rows,
-        )
-        .unwrap();
-
-        let expected_array = Int32Array::from(vec![10, 20, 30]);
-        assert_eq!(reconstructed_array, expected_array);
-    }
-    #[test]
-    fn test_reapply_bitmap_from_vec_with_nulls() {
-        // THIS IS THE FIX: Pass the DENSE data, not the sparse data.
-        let dense_vec: Vec<i32> = vec![10, 30, 50];
-        let null_buffer = NullBuffer::from(vec![true, false, true, false, true]);
-        let total_rows = 5;
-
-        let reconstructed_array = reapply_bitmap_from_vec::<Int32Type>(
-            dense_vec, // Pass the dense vector
-            Some(null_buffer),
-            total_rows,
-        )
-        .unwrap();
-
-        let expected_array = Int32Array::from(vec![Some(10), None, Some(30), None, Some(50)]);
-        assert_eq!(reconstructed_array, expected_array);
-    }
-
-    #[test]
-    fn test_reapply_bitmap_from_vec_no_nulls() {
-        let data_vec: Vec<i32> = vec![10, 20, 30];
-        let total_rows = 3;
-
-        let reconstructed_array = reapply_bitmap_from_vec::<Int32Type>(
-            data_vec, None, // No nulls
-            total_rows,
-        )
-        .unwrap();
-
-        let expected_array = Int32Array::from(vec![10, 20, 30]);
-        assert_eq!(reconstructed_array, expected_array);
-    }
 }

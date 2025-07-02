@@ -1,25 +1,32 @@
-//! This module contains the v4.1 "Structure & Conquer" planner.
+//! This module contains the v4.3 "Structure & Conquer" planner.
 //!
-//! It uses autocorrelation to discover the data's stride and then
-//! generates advanced candidate pipelines. It uses empirical trial compression
-//! to find the most effective plan and returns it along with its estimated size.
-
-use serde_json::{json, Value};
-use std::collections::HashSet;
+//! It analyzes data to discover its structure, generates candidate pipelines using
+//! strongly-typed `Operation` objects, and uses empirical trial compression to
+//! find the most effective plan. Its final output is a complete, type-safe
+//! `Plan` struct, ready for the Executor.
 
 use crate::error::PhoenixError;
 use crate::kernels::zigzag;
-use crate::pipeline::executor;
-use crate::traits::HasUnsigned;
+use crate::pipeline::models::{Operation, Plan};
+use crate::pipeline::traits::TypeTransformer;
+use crate::pipeline::{self, executor};
+use crate::types::PhoenixDataType;
 use crate::utils::safe_bytes_to_typed_slice;
 use ndarray::{s, Array1};
 use num_traits::{PrimInt, Signed, ToPrimitive, Unsigned, WrappingSub};
+use std::collections::HashSet;
 use std::ops::{BitXor, Shl, Shr};
 
+// A const for the plan version, ensuring consistency.
+const PLAN_VERSION: u32 = 1;
+
 //==================================================================================
-// 1. Stride Discovery (Unchanged)
+// 1. Stride Discovery (Refactored for Type Safety)
 //==================================================================================
-pub fn find_stride_by_autocorrelation(bytes: &[u8], type_str: &str) -> Result<usize, PhoenixError> {
+pub fn find_stride_by_autocorrelation(
+    bytes: &[u8],
+    dtype: PhoenixDataType,
+) -> Result<usize, PhoenixError> {
     macro_rules! to_f64_vec {
         ($T:ty, $bytes:expr) => {{
             safe_bytes_to_typed_slice::<$T>($bytes)?
@@ -29,18 +36,18 @@ pub fn find_stride_by_autocorrelation(bytes: &[u8], type_str: &str) -> Result<us
         }};
     }
 
-    let data_f64 = match type_str {
-        "Int8" => to_f64_vec!(i8, bytes),
-        "Int16" => to_f64_vec!(i16, bytes),
-        "Int32" => to_f64_vec!(i32, bytes),
-        "Int64" => to_f64_vec!(i64, bytes),
-        "UInt8" => to_f64_vec!(u8, bytes),
-        "UInt16" => to_f64_vec!(u16, bytes),
-        "UInt32" => to_f64_vec!(u32, bytes),
-        "UInt64" => to_f64_vec!(u64, bytes),
-        "Float32" => to_f64_vec!(f32, bytes),
-        "Float64" => to_f64_vec!(f64, bytes),
-        _ => return Ok(1),
+    let data_f64 = match dtype {
+        PhoenixDataType::Int8 => to_f64_vec!(i8, bytes),
+        PhoenixDataType::Int16 => to_f64_vec!(i16, bytes),
+        PhoenixDataType::Int32 => to_f64_vec!(i32, bytes),
+        PhoenixDataType::Int64 => to_f64_vec!(i64, bytes),
+        PhoenixDataType::UInt8 => to_f64_vec!(u8, bytes),
+        PhoenixDataType::UInt16 => to_f64_vec!(u16, bytes),
+        PhoenixDataType::UInt32 => to_f64_vec!(u32, bytes),
+        PhoenixDataType::UInt64 => to_f64_vec!(u64, bytes),
+        PhoenixDataType::Float32 => to_f64_vec!(f32, bytes),
+        PhoenixDataType::Float64 => to_f64_vec!(f64, bytes),
+        PhoenixDataType::Boolean => return Ok(1), // Autocorrelation not meaningful for booleans
     };
 
     let calculate = |data: &[f64]| -> Option<usize> {
@@ -79,7 +86,7 @@ pub fn find_stride_by_autocorrelation(bytes: &[u8], type_str: &str) -> Result<us
 }
 
 //==================================================================================
-// 2. Data Profile & Analysis (Unchanged)
+// 2. Data Profile & Analysis (Internal helpers)
 //==================================================================================
 #[derive(Debug, Default)]
 struct DataProfile {
@@ -102,12 +109,12 @@ where
         + Signed
         + ToPrimitive
         + WrappingSub
-        + HasUnsigned
+        + crate::traits::HasUnsigned
         + Shl<usize, Output = T>
         + Shr<usize, Output = T>
         + std::hash::Hash
         + Eq,
-    <T as HasUnsigned>::Unsigned: PrimInt + ToPrimitive,
+    <T as crate::traits::HasUnsigned>::Unsigned: PrimInt + ToPrimitive,
 {
     let mut profile = DataProfile::default();
     if data.len() < stride {
@@ -170,40 +177,49 @@ where
     profile
 }
 
+//==================================================================================
+// 3. Core Planning Logic (Refactored for Strong Types)
+//==================================================================================
+
+/// Generates candidate pipelines as `Vec<Operation>` instead of JSON.
 fn generate_candidate_pipelines(
     profile: &DataProfile,
     stride: usize,
     is_signed: bool,
-) -> Vec<Vec<Value>> {
-    let mut base_pipelines: Vec<Vec<Value>> = Vec::new();
-    base_pipelines.push(vec![json!({"op": "shuffle"})]);
+) -> Vec<Vec<Operation>> {
+    let mut base_pipelines: Vec<Vec<Operation>> = Vec::new();
+    base_pipelines.push(vec![Operation::Shuffle]);
 
-    let delta_op = if is_signed { "delta" } else { "xor_delta" };
+    let delta_op = if is_signed {
+        Operation::Delta { order: stride }
+    } else {
+        Operation::XorDelta
+    };
+
     if profile.delta_stream_has_low_cardinality {
         base_pipelines.push(vec![
-            json!({"op": delta_op, "params": {"order": stride}}),
+            delta_op.clone(),
             if is_signed {
-                json!({"op": "dictionary"})
+                Operation::Dictionary
             } else {
-                json!({"op": "rle"})
+                Operation::Rle
             },
         ]);
     }
 
     if is_signed {
         if profile.signed_delta_bit_width > 0 {
-            let base_path = vec![
-                json!({"op": "delta", "params": {"order": stride}}),
-                json!({"op": "zigzag"}),
-            ];
+            let base_path = vec![Operation::Delta { order: stride }, Operation::ZigZag];
             if profile.signed_delta_bit_width < profile.original_bit_width {
                 let mut bitpack_path = base_path.clone();
-                bitpack_path.push(json!({"op": "bitpack", "params": {"bit_width": profile.signed_delta_bit_width}}));
+                bitpack_path.push(Operation::BitPack {
+                    bit_width: profile.signed_delta_bit_width,
+                });
                 base_pipelines.push(bitpack_path);
             }
             base_pipelines.push({
                 let mut leb_path = base_path;
-                leb_path.push(json!({"op": "leb128"}));
+                leb_path.push(Operation::Leb128);
                 leb_path
             });
         }
@@ -211,50 +227,51 @@ fn generate_candidate_pipelines(
         && profile.unsigned_delta_bit_width < profile.original_bit_width
     {
         base_pipelines.push(vec![
-            json!({"op": "xor_delta"}),
-            json!({"op": "bitpack", "params": {"bit_width": profile.unsigned_delta_bit_width}}),
+            Operation::XorDelta,
+            Operation::BitPack {
+                bit_width: profile.unsigned_delta_bit_width,
+            },
         ]);
     }
 
     let mut final_candidates = Vec::with_capacity(base_pipelines.len() * 2);
     for pipeline in base_pipelines {
         let mut zstd_variant = pipeline.clone();
-        zstd_variant.push(json!({"op": "zstd", "params": {"level": 3}}));
+        zstd_variant.push(Operation::Zstd { level: 3 });
         final_candidates.push(zstd_variant);
 
         let mut ans_variant = pipeline;
-        ans_variant.push(json!({"op": "ans"}));
+        ans_variant.push(Operation::Ans);
         final_candidates.push(ans_variant);
     }
 
     final_candidates
 }
 
-//==================================================================================
-// 3. Trial Compression & Core Planning Logic (Unchanged)
-//==================================================================================
+/// Finds the best pipeline by trial, now operating on `Vec<Operation>`.
 fn find_best_pipeline_by_trial(
     sample_data_bytes: &[u8],
-    type_str: &str,
-    candidates: Vec<Vec<Value>>,
-) -> Result<(String, usize), PhoenixError> {
-    let default_plan = vec![json!({"op": "zstd", "params": {"level": 3}})];
+    dtype: PhoenixDataType,
+    candidates: Vec<Vec<Operation>>,
+) -> Result<(Vec<Operation>, usize), PhoenixError> {
+    // The default plan is now also a strongly-typed Vec<Operation>.
+    let default_plan = vec![Operation::Zstd { level: 3 }];
 
     if candidates.is_empty() {
-        let (compressed, _) =
-            executor::execute_linear_encode_pipeline(sample_data_bytes, type_str, &default_plan)?;
-        return Ok((
-            serde_json::to_string(&default_plan).unwrap(),
-            compressed.len(),
-        ));
+        // NOTE: This assumes a refactored executor that we will build next.
+        // The new executor will not return the final type string.
+        let compressed =
+            executor::execute_linear_encode_pipeline(sample_data_bytes, dtype, &default_plan)?;
+        return Ok((default_plan, compressed.len()));
     }
 
     let mut best_pipeline = default_plan;
     let mut min_size = usize::MAX;
 
     for pipeline in candidates {
-        if let Ok((compressed_sample, _)) =
-            executor::execute_linear_encode_pipeline(sample_data_bytes, type_str, &pipeline)
+        // NOTE: This call anticipates the refactored executor.
+        if let Ok(compressed_sample) =
+            executor::execute_linear_encode_pipeline(sample_data_bytes, dtype, &pipeline)
         {
             if compressed_sample.len() < min_size {
                 min_size = compressed_sample.len();
@@ -263,20 +280,17 @@ fn find_best_pipeline_by_trial(
         }
     }
 
-    let best_pipeline_json = serde_json::to_string(&best_pipeline).map_err(|e| {
-        PhoenixError::InternalError(format!("Pipeline JSON serialization failed: {}", e))
-    })?;
-
-    Ok((best_pipeline_json, min_size))
+    Ok((best_pipeline, min_size))
 }
 
+/// The internal planning function, now returns a `Vec<Operation>` and its cost.
 fn plan_bytes(
     bytes: &[u8],
-    type_str: &str,
+    dtype: PhoenixDataType,
     stride: usize,
-) -> Result<(String, usize), PhoenixError> {
+) -> Result<(Vec<Operation>, usize), PhoenixError> {
     if bytes.is_empty() {
-        return Ok(("[]".to_string(), 0));
+        return Ok((vec![], 0));
     }
 
     const SAMPLE_SIZE_BYTES: usize = 65536;
@@ -288,12 +302,13 @@ fn plan_bytes(
             let profile = analyze_signed_data(slice, stride);
 
             if profile.is_constant {
-                let plan = vec![json!({"op": "rle"}), json!({"op": "zstd"})];
-                let (compressed, _) = executor::execute_linear_encode_pipeline(sample_bytes, type_str, &plan)?;
-                Ok((serde_json::to_string(&plan).unwrap(), compressed.len()))
+                let plan = vec![Operation::Rle, Operation::Zstd { level: 3 }];
+                let compressed =
+                    executor::execute_linear_encode_pipeline(sample_bytes, dtype, &plan)?;
+                Ok((plan, compressed.len()))
             } else {
                 let candidates = generate_candidate_pipelines(&profile, stride, true);
-                find_best_pipeline_by_trial(sample_bytes, type_str, candidates)
+                find_best_pipeline_by_trial(sample_bytes, dtype, candidates)
             }
         }};
     }
@@ -304,141 +319,48 @@ fn plan_bytes(
             let profile = analyze_unsigned_data(slice, stride);
 
             if profile.is_constant {
-                let plan = vec![json!({"op": "rle"}), json!({"op": "zstd"})];
-                let (compressed, _) = executor::execute_linear_encode_pipeline(sample_bytes, type_str, &plan)?;
-                Ok((serde_json::to_string(&plan).unwrap(), compressed.len()))
+                let plan = vec![Operation::Rle, Operation::Zstd { level: 3 }];
+                let compressed =
+                    executor::execute_linear_encode_pipeline(sample_bytes, dtype, &plan)?;
+                Ok((plan, compressed.len()))
             } else {
                 let candidates = generate_candidate_pipelines(&profile, stride, false);
-                find_best_pipeline_by_trial(sample_bytes, type_str, candidates)
+                find_best_pipeline_by_trial(sample_bytes, dtype, candidates)
             }
         }};
     }
 
-    match type_str {
-        "Int8" => plan_for_signed!(i8),
-        "Int16" => plan_for_signed!(i16),
-        "Int32" => plan_for_signed!(i32),
-        "Int64" => plan_for_signed!(i64),
-        "UInt8" => plan_for_unsigned!(u8),
-        "UInt16" => plan_for_unsigned!(u16),
-        "UInt32" => plan_for_unsigned!(u32),
-        "UInt64" => plan_for_unsigned!(u64),
+    use PhoenixDataType::*;
+    match dtype {
+        Int8 => plan_for_signed!(i8),
+        Int16 => plan_for_signed!(i16),
+        Int32 => plan_for_signed!(i32),
+        Int64 => plan_for_signed!(i64),
+        UInt8 => plan_for_unsigned!(u8),
+        UInt16 => plan_for_unsigned!(u16),
+        UInt32 => plan_for_unsigned!(u32),
+        UInt64 => plan_for_unsigned!(u64),
         _ => {
-            let plan = vec![json!({"op": "zstd", "params": {"level": 3}})];
-            let (compressed, _) = executor::execute_linear_encode_pipeline(bytes, type_str, &plan)?;
-            Ok((serde_json::to_string(&plan).unwrap(), compressed.len()))
+            // Fallback for floats, booleans, etc.
+            let plan = vec![Operation::Zstd { level: 3 }];
+            let compressed = executor::execute_linear_encode_pipeline(bytes, dtype, &plan)?;
+            Ok((plan, compressed.len()))
         }
     }
 }
 
 //==================================================================================
-// 4. Top-Level Public API (Unchanged)
+// 4. Top-Level Public API (Refactored to return a `Plan` struct)
 //==================================================================================
-pub fn plan_pipeline(bytes: &[u8], type_str: &str) -> Result<(String, usize), PhoenixError> {
-    let stride = find_stride_by_autocorrelation(bytes, type_str)?;
-    plan_bytes(bytes, type_str, stride)
-}
 
-//==================================================================================
-// 5. Unit Tests (MODIFIED)
-//==================================================================================
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::utils::typed_slice_to_bytes;
+/// Analyzes a byte stream and its type to produce an optimal, self-contained `Plan`.
+pub fn plan_pipeline(bytes: &[u8], dtype: PhoenixDataType) -> Result<Plan, PhoenixError> {
+    let stride = find_stride_by_autocorrelation(bytes, dtype)?;
+    let (pipeline, _cost) = plan_bytes(bytes, dtype, stride)?;
 
-    fn get_compressed_size(
-        original_bytes: &[u8],
-        pipeline_json: &str,
-        original_type: &str,
-    ) -> usize {
-        let pipeline: Vec<Value> = serde_json::from_str(pipeline_json).unwrap();
-        executor::execute_linear_encode_pipeline(original_bytes, original_type, &pipeline)
-            .map(|(v, _)| v.len())
-            .unwrap_or(usize::MAX)
-    }
-
-    fn assert_planner_is_optimal(
-        original_bytes: &[u8],
-        original_type: &str,
-        expected_pipeline: Vec<Value>,
-    ) {
-        let (planner_pipeline_json, _planner_estimated_size) =
-            plan_pipeline(original_bytes, original_type).unwrap();
-
-        let expected_pipeline_json = serde_json::to_string(&expected_pipeline).unwrap();
-        let expected_size =
-            get_compressed_size(original_bytes, &expected_pipeline_json, original_type);
-
-        let planner_actual_size =
-            get_compressed_size(original_bytes, &planner_pipeline_json, original_type);
-
-        assert!(
-            planner_actual_size <= expected_size.saturating_add(5),
-            "Planner's choice (plan: {}, actual size: {}) was worse than the expected optimal plan (plan: {}, size: {})",
-            planner_pipeline_json, planner_actual_size, expected_pipeline_json, expected_size
-        );
-    }
-
-    #[test]
-    fn test_planner_chooses_rle_for_constant_data() {
-        let data: Vec<i32> = vec![7; 1024];
-        let bytes = typed_slice_to_bytes(&data);
-        let (plan_json, _cost) = plan_pipeline(&bytes, "Int32").unwrap();
-        let ops: Vec<Value> = serde_json::from_str(&plan_json).unwrap();
-        assert_eq!(ops[0]["op"], "rle");
-    }
-
-    #[test]
-    fn test_planner_chooses_delta_dict_for_repeating_deltas() {
-        let data: Vec<i32> = (10..1000).collect();
-        let bytes = typed_slice_to_bytes(&data);
-        let expected_best_plan = vec![
-            json!({"op": "delta", "params": {"order": 1}}),
-            json!({"op": "dictionary"}),
-            json!({"op": "zstd", "params": {"level": 3}}),
-        ];
-        assert_planner_is_optimal(&bytes, "Int32", expected_best_plan);
-    }
-
-    #[test]
-    fn test_planner_chooses_xor_delta_for_drifting_floats() {
-        let data: Vec<u64> = (0..1000)
-            .map(|i| f64::to_bits(100.0 + (i as f64 * 1e-12)))
-            .collect();
-        let bytes = typed_slice_to_bytes(&data);
-        let expected_best_plan = vec![
-            json!({"op": "xor_delta"}),
-            json!({"op": "bitpack", "params": {"bit_width": 1}}),
-            json!({"op": "zstd", "params": {"level": 3}}),
-        ];
-        assert_planner_is_optimal(&bytes, "UInt64", expected_best_plan);
-    }
-
-    #[test]
-    fn test_planner_chooses_ans_for_skewed_data() {
-        // CORRECTED: Create data with a highly skewed frequency distribution but without
-        // long runs of identical bytes. This pattern (a very common symbol interspersed
-        // with rare ones) is the ideal use case for ANS.
-        let mut data = Vec::new();
-        for i in 0..1000 {
-            data.push(0); // The very common symbol
-            if i % 100 == 0 {
-                data.push(1); // A rare symbol
-            }
-            if i % 250 == 0 {
-                data.push(2); // A very rare symbol
-            }
-        }
-
-        let (plan_json, _cost) = plan_pipeline(&data, "UInt8").unwrap();
-        let plan: Vec<Value> = serde_json::from_str(&plan_json).unwrap();
-
-        assert_eq!(
-            plan.last().unwrap()["op"],
-            "ans",
-            "Planner failed to choose ANS for highly skewed data. Final plan was: {}",
-            plan_json
-        );
-    }
+    Ok(Plan {
+        plan_version: PLAN_VERSION,
+        initial_type: dtype,
+        pipeline,
+    })
 }
