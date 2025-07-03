@@ -435,8 +435,13 @@ pub fn dispatch_reconstruct_stream(
 
 #[cfg(test)]
 mod tests {
+    use core::panic;
+
     use super::*;
-    use crate::{pipeline::TypeTransformer, utils::typed_slice_to_bytes};
+    use crate::{
+        pipeline::{traits::StreamTransform, OperationBehavior},
+        utils::typed_slice_to_bytes,
+    };
 
     #[test]
     fn test_dispatch_zigzag_roundtrip_logic() {
@@ -450,7 +455,12 @@ mod tests {
         dispatch_encode(&op, &original_bytes, &mut compressed_buf, original_type).unwrap();
 
         // --- Decode ---
-        let compressed_type = op.transform_type(original_type).unwrap();
+        let transform_result = op.transform_stream(original_type).unwrap();
+        let compressed_type = match transform_result {
+            StreamTransform::TypeChange(new_type) => new_type,
+            _ => unreachable!("ZigZag on Int32 must result in a TypeChange to UInt32"),
+        };
+
         let mut decompressed_buf = Vec::new();
         dispatch_decode(
             &op,
@@ -475,7 +485,12 @@ mod tests {
         let mut compressed_buf = Vec::new();
         dispatch_encode(&op, &original_bytes, &mut compressed_buf, original_type).unwrap();
 
-        let compressed_type = op.transform_type(original_type).unwrap();
+        let transform_result = op.transform_stream(original_type).unwrap();
+        let compressed_type = match transform_result {
+            StreamTransform::PreserveType => original_type,
+         _ => unreachable!("BitPack must result in a PreserveType"),
+        };
+
         let mut decompressed_buf = Vec::new();
         dispatch_decode(
             &op,
@@ -526,7 +541,11 @@ mod tests {
         assert!(!compressed_buf.is_empty());
 
         // --- Decode ---
-        let compressed_type = op.transform_type(original_type).unwrap();
+        let transform_result = op.transform_stream(original_type).unwrap();
+        let compressed_type = match transform_result {
+            StreamTransform::PreserveType => original_type,
+         _ => unreachable!("Dictionary must result in a PreserveType"),
+        };
         let mut decompressed_buf = Vec::new();
         dispatch_decode(
             &op,

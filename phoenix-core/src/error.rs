@@ -1,16 +1,54 @@
-//! This module defines the single, unified error type for the entire Phoenix
-//! library.
-//! For v4.0, we add new variants to cover failures in the new,
-//! more complex pipeline stages.
+// In: src/error.rs
+
+//! This module defines the single, unified error type for the entire Phoenix library.
+//! It uses the `thiserror` crate to provide ergonomic, context-aware error handling.
 
 use pyo3::PyErr;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum PhoenixError {
+    // =========================================================================
+    // === High-Level, Semantic Errors (Specific to our library's logic)
+    // =========================================================================
     #[error("Unsupported data type for this operation: {0}")]
     UnsupportedType(String),
 
+    #[error("Frame serialization/deserialization failed: {0}")]
+    FrameFormatError(String),
+
+    #[error("Time-series relinearization failed: {0}")]
+    RelinearizationError(String),
+    // --- END FIX ---
+    #[error("Internal logic error (this is a bug): {0}")]
+    InternalError(String),
+
+    // =========================================================================
+    // === External Error Wrappers (Using #[from] for automatic conversion)
+    // =========================================================================
+    /// An error originating from the Arrow library.
+    #[error("Arrow operation failed: {0}")]
+    Arrow(#[from] arrow::error::ArrowError),
+
+    /// An error originating from the underlying I/O subsystem (e.g., file not found, network error).
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// An error from the Serde JSON library, typically during plan/footer serialization.
+    #[error("Serde JSON error: {0}")]
+    SerdeJson(#[from] serde_json::Error),
+
+    /// An error from a safe byte-casting operation failing.
+    #[error("Byte slice casting error: {0}")]
+    PodCast(String), // Manual `From` impl is needed as bytemuck::PodCastError doesn't impl Error
+
+    /// An error for Python FFI (Foreign Function Interface) operations.
+    #[error("FFI operation failed: {0}")]
+    FfiError(String), // PyErr doesn't impl Error, so we can't use #[from] here.
+
+    // =========================================================================
+    // === Low-Level Pipeline/Kernel Errors (Could be consolidated later)
+    // =========================================================================
     #[error("Buffer length mismatch: expected a multiple of {0}, got {1}")]
     BufferMismatch(usize, usize),
 
@@ -36,18 +74,9 @@ pub enum PhoenixError {
         source: Box<PhoenixError>,
     },
 
-    #[error("FFI operation failed: {0}")]
-    FfiError(String),
-
-    #[error("Internal logic error (this is a bug): {0}")]
-    InternalError(String),
-
     // --- NEW V4.0 ERRORS ---
     #[error("Structure discovery failed: {0}")]
     StructureDiscoveryError(String),
-
-    #[error("Time-series relinearization failed: {0}")]
-    RelinearizationError(String),
 
     #[error("Dictionary encoding/decoding failed: {0}")]
     DictionaryError(String),
@@ -55,14 +84,19 @@ pub enum PhoenixError {
     #[error("ANS encoding/decoding failed: {0}")]
     AnsError(String),
 
-    #[error("Frame serialization/deserialization failed: {0}")]
-    FrameFormatError(String),
-
     #[error("Sparsity transform failed: {0}")]
     SparsityError(String),
 }
 
-// --- FFI Conversion ---
+// =============================================================================
+// === Manual `From` Implementations ===
+// =============================================================================
+
+impl From<bytemuck::PodCastError> for PhoenixError {
+    fn from(err: bytemuck::PodCastError) -> Self {
+        PhoenixError::PodCast(err.to_string())
+    }
+}
 
 impl From<PyErr> for PhoenixError {
     fn from(err: PyErr) -> Self {
@@ -73,19 +107,5 @@ impl From<PyErr> for PhoenixError {
 impl From<PhoenixError> for PyErr {
     fn from(err: PhoenixError) -> PyErr {
         pyo3::exceptions::PyValueError::new_err(err.to_string())
-    }
-}
-
-// --- THIS IS THE FIX for the `?` operator ---
-
-impl From<serde_json::Error> for PhoenixError {
-    fn from(err: serde_json::Error) -> Self {
-        PhoenixError::InternalError(format!("JSON serialization/deserialization error: {}", err))
-    }
-}
-
-impl From<bytemuck::PodCastError> for PhoenixError {
-    fn from(err: bytemuck::PodCastError) -> Self {
-        PhoenixError::InternalError(format!("Byte slice casting error: {}", err))
     }
 }

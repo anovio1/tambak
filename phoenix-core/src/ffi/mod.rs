@@ -10,6 +10,7 @@
 //==================================================================================
 /// Contains all logic for interfacing with the Python/CPython ecosystem,
 pub mod python;
+pub mod ioadapters;
 
 //==================================================================================
 // 2. Public API Re-exports
@@ -24,4 +25,8 @@ pub use self::python::{
     compress_frame_py,
     decompress_frame_py,
     get_frame_diagnostics_py,
+    enable_verbose_logging_py,
+    compress_bridge_py,
+    compress_analyze_bridge_py,
+    decompress_bridge_py,
 };
