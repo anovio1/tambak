@@ -35,10 +35,10 @@ const PLAN_VERSION: u32 = 1;
 // A. Stand-in v4.4 (Unknown Section - For Bridge SOC) 
 //==================================================================================
 
-pub fn create_plan(_input: &PipelineInput) -> Result<Plan, PhoenixError> {
-    // TODO: Implement the new Arrow-agnostic planner logic.
-    todo!("planner::create_plan");
-}
+// pub fn create_plan(_input: &PipelineInput) -> Result<Plan, PhoenixError> {
+//     // TODO: Implement the new Arrow-agnostic planner logic.
+//     todo!("planner::create_plan");
+// }
 
 //==================================================================================
 // 0. Planning Context (New Struct)

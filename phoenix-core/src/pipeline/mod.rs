@@ -34,7 +34,7 @@ pub mod traits;
 // This section defines the public, stable API of the `pipeline` module.
 // The FFI layer should only need to interact with the `orchestrator`.
 
-pub use self::orchestrator::{compress_chunk, decompress_chunk, get_compressed_chunk_info_deprecated_soon};
+pub use self::orchestrator::{compress_chunk, decompress_chunk, get_compressed_chunk_info};
 
 pub use self::frame_orchestrator::{compress_frame, decompress_frame, get_frame_diagnostics};
 

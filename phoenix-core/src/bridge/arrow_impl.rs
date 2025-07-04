@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::error::PhoenixError;
 use crate::null_handling::bitmap;
-use crate::pipeline::context::PipelineInput;
+use crate::pipeline::context::{PipelineInput, PipelineOutput};
 use crate::types::PhoenixDataType;
 use crate::utils::typed_slice_to_bytes;
 
@@ -90,7 +90,7 @@ pub fn arrow_to_pipeline_input(array: &dyn Array) -> Result<PipelineInput, Phoen
     ))
 }
 
-pub fn pipeline_output_to_array(output: PipelineInput) -> Result<Box<dyn Array>, PhoenixError> {
+pub fn pipeline_output_to_array(output: PipelineOutput) -> Result<Box<dyn Array>, PhoenixError> {
     let total_rows = output.total_rows;
     let main_data = output.main;
     let null_buffer = output.null_mask.map(|bytes| {
@@ -132,13 +132,11 @@ mod tests {
     fn test_pipeline_output_to_array_no_nulls() {
         // Arrange: Create a pure PipelineInput representing [10, 20, 30]
         let main_data = vec![10i32, 20, 30];
-        let input = PipelineInput::new(
+        let input = PipelineOutput::new(
             bytemuck::cast_slice(&main_data).to_vec(),
             None, // No null mask
             PhoenixDataType::Int32,
             3,
-            3,
-            None,
         );
 
         // Act
@@ -156,13 +154,11 @@ mod tests {
         // Arrange: Create a pure PipelineInput representing [Some(10), None, Some(30)]
         let main_data = vec![10i32, 30]; // Only valid data
         let null_mask = vec![1u8, 0, 1];   // 1=valid, 0=null
-        let input = PipelineInput::new(
+        let input = PipelineOutput::new(
             bytemuck::cast_slice(&main_data).to_vec(),
             Some(null_mask),
             PhoenixDataType::Int32,
             3, // total rows
-            2, // valid rows
-            None,
         );
 
         // Act

@@ -1,23 +1,14 @@
-use arrow::array::{Array, BooleanArray, PrimitiveArray};
-use arrow::buffer::{BooleanBuffer, NullBuffer};
-use arrow::datatypes::*;
-use bytemuck::Pod;
-use num_traits::{PrimInt, Zero};
-use std::collections::HashMap;
+use arrow::array::{Array};
+use arrow::buffer::{BooleanBuffer};
 
 use super::helpers::*;
 use crate::error::PhoenixError;
-use crate::kernels;
-use crate::log_metric;
-use crate::null_handling::bitmap;
-use crate::pipeline::artifact::CompressedChunk;
 use crate::pipeline::models::{Operation, Plan};
 use crate::pipeline::planner::PlanningContext;
 use crate::pipeline::traits::StreamTransform;
 use crate::pipeline::OperationBehavior;
 use crate::pipeline::{executor, planner};
 use crate::types::PhoenixDataType;
-use crate::utils::typed_slice_to_bytes;
 
 const PLAN_VERSION: u32 = 2;
 
@@ -48,6 +39,7 @@ const PLAN_VERSION: u32 = 2;
 /// - It prepares a best-effort, type- and sparsity-aware starting point for the orchestrator
 ///   and executor to apply.
 pub fn create_plan(array: &dyn Array) -> Result<Plan, PhoenixError> {
+    println!("inside create_plan");
     // -------------------------------------------------------------------------
     // Identify the array's logical data type (e.g., Int32, Float64).
     // This logical type drives type-specific planning decisions downstream.
@@ -120,6 +112,28 @@ pub fn create_plan(array: &dyn Array) -> Result<Plan, PhoenixError> {
     let valid_data_bytes = prepare_initial_streams_deprecated_soon(array)?
         .remove("main")
         .unwrap_or_default();
+
+    // ======================= PROPOSED DEBUG BLOCK =======================
+    #[cfg(debug_assertions)]
+    {
+        println!(
+            "[DEBUG create_plan] Received valid_data_bytes with len: {}",
+            valid_data_bytes.len()
+        );
+
+        // THIS IS THE FIX: If there's no valid data, there's nothing to plan.
+        // Return the plan we have so far (which might contain ExtractNulls).
+        if valid_data_bytes.is_empty() {
+            println!("[DEBUG create_plan] Empty data, returning early.");
+            return Ok(Plan {
+                plan_version: PLAN_VERSION,
+                initial_type: initial_dtype,
+                pipeline: plan_pipeline,
+            });
+        }
+    }
+    // ===================== END PROPOSED DEBUG BLOCK =====================
+
     if !valid_data_bytes.is_empty() {
         // Create planning context describing the starting logical type and current physical type.
         let context = PlanningContext {

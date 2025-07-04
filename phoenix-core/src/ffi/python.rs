@@ -115,7 +115,7 @@ pub fn compress_analyze_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
     let artifact_bytes =
         py.allow_threads(move || orchestrator::compress_chunk(rust_array.as_ref()))?;
     let (header_size, data_size, pipeline_json, original_type) =
-        orchestrator::get_compressed_chunk_info_deprecated_soon(&artifact_bytes)?;
+        orchestrator::get_compressed_chunk_info(&artifact_bytes)?;
 
     let result_dict = PyDict::new(py);
     result_dict.set_item("artifact", PyBytes::new(py, &artifact_bytes))?;
@@ -131,7 +131,8 @@ pub fn compress_analyze_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
 #[pyfunction]
 #[pyo3(name = "decompress")]
 pub fn decompress_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
-    let reconstructed_array = py.allow_threads(move || orchestrator::decompress_chunk(bytes))?;
+    // Correctly call the stable bridge API.
+    let reconstructed_array = py.allow_threads(move || bridge::decompress_arrow_chunk(bytes))?;
     utils::arrow_array_to_py(py, reconstructed_array)
 }
 

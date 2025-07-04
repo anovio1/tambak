@@ -39,7 +39,7 @@
 //   3. [Stateful Facade (Decompressor)]     -> Assembles `RecordBatch` and yields to user
 //
 // ====================================================================================
-mod arrow_impl;
+pub(crate) mod arrow_impl;
 mod compressor;
 mod config;
 mod decompressor;

@@ -1,7 +1,10 @@
 use std::any::TypeId;
 
+use crate::bridge;
 use crate::pipeline::artifact::CompressedChunk;
-use crate::pipeline::orchestrator::{compress_chunk, decompress_chunk};
+use crate::pipeline::orchestrator::{
+    compress_chunk, compress_chunk_v2, decompress_chunk, decompress_chunk_v2,
+};
 use crate::pipeline::{Operation, Plan};
 
 // We also need to bring in any external test dependencies.
@@ -27,7 +30,7 @@ where
 {
     // --- 1. Compress the Array ---
     let compressed_artifact_bytes =
-        compress_chunk(original_array).expect("Compression failed during test");
+        bridge::compress_arrow_chunk(original_array).expect("Compression failed during test");
 
     if !original_array.is_empty() {
         assert!(
@@ -37,8 +40,8 @@ where
     }
 
     // --- 2. Decompress the Artifact ---
-    let reconstructed_arrow_array =
-        decompress_chunk(&compressed_artifact_bytes).expect("Decompression failed during test");
+    let reconstructed_arrow_array = bridge::decompress_arrow_chunk(&compressed_artifact_bytes)
+        .expect("Decompression failed during test");
 
     // --- 3. Downcast and Verify ---
     let reconstructed_primitive_array = reconstructed_arrow_array
@@ -108,18 +111,110 @@ where
         }
     }
 }
+fn roundtrip_test_v2<T>(original_array: &PrimitiveArray<T>)
+where
+    T: ArrowNumericType,
+    T::Native: Pod + std::fmt::Debug,
+{
+    // 1. Marshall to pure input
+    let pipeline_input =
+        crate::bridge::arrow_impl::arrow_to_pipeline_input(original_array).unwrap();
+
+    // 2. Compress using the new v2 compression function
+    let compressed_bytes = compress_chunk_v2(pipeline_input).expect("v2 Compression failed");
+
+    // 3. Decompress using the new v2 decompression function we are building
+    let pipeline_output = decompress_chunk_v2(&compressed_bytes).expect("v2 Decompression failed");
+
+    // 4. Marshall back to an Arrow Array
+    let reconstructed_array =
+        crate::bridge::arrow_impl::pipeline_output_to_array(pipeline_output).unwrap();
+
+    // 5. Downcast and verify (code can be copied from the old roundtrip_test)
+    let reconstructed_primitive_array = reconstructed_array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<T>>()
+        .unwrap();
+    // --- 4. Assert Equality ---
+    assert_eq!(
+        original_array.len(),
+        reconstructed_primitive_array.len(),
+        "Array length mismatch after roundtrip"
+    );
+    assert_eq!(
+        original_array.null_count(),
+        reconstructed_primitive_array.null_count(),
+        "Null count mismatch after roundtrip"
+    );
+
+    for i in 0..original_array.len() {
+        if original_array.is_null(i) {
+            assert!(
+                reconstructed_primitive_array.is_null(i),
+                "Null value mismatch at index {}",
+                i
+            );
+        } else {
+            assert!(
+                reconstructed_primitive_array.is_valid(i),
+                "Valid value mismatch at index {}",
+                i
+            );
+            let original_val = original_array.value(i);
+            let reconstructed_val = reconstructed_primitive_array.value(i);
+
+            // Special check for -0.0 canonicalization, which is a valid transformation.
+            let type_id = TypeId::of::<T::Native>();
+            if type_id == TypeId::of::<f32>() {
+                let original_as_f32: f32 = bytemuck::cast(original_val);
+                if original_as_f32.is_sign_negative() && original_as_f32 == 0.0 {
+                    let reconstructed_as_f32: f32 = bytemuck::cast(reconstructed_val);
+                    assert!(
+                        !reconstructed_as_f32.is_sign_negative() && reconstructed_as_f32 == 0.0
+                    );
+                    continue; // Skip bit-pattern check for this specific case
+                }
+            } else if type_id == TypeId::of::<f64>() {
+                let original_as_f64: f64 = bytemuck::cast(original_val);
+                if original_as_f64.is_sign_negative() && original_as_f64 == 0.0 {
+                    let reconstructed_as_f64: f64 = bytemuck::cast(reconstructed_val);
+                    assert!(
+                        !reconstructed_as_f64.is_sign_negative() && reconstructed_as_f64 == 0.0
+                    );
+                    continue; // Skip bit-pattern check for this specific case
+                }
+            }
+
+            // General bit-for-bit comparison for all other values.
+            assert_eq!(
+                bytemuck::bytes_of(&original_val),
+                bytemuck::bytes_of(&reconstructed_val),
+                "Value bit-pattern mismatch at index {}: orig={:?}, recon={:?}",
+                i,
+                original_val,
+                reconstructed_val
+            );
+        }
+    }
+}
 
 /// A dedicated roundtrip test helper for `BooleanArray`, which is not numeric.
 fn roundtrip_test_bool(original_array: &BooleanArray) {
+    // --- 1. Compress using the bridge API ---
     let compressed_artifact_bytes =
-        compress_chunk(original_array).expect("Boolean compression failed");
-    let reconstructed_arrow_array =
-        decompress_chunk(&compressed_artifact_bytes).expect("Boolean decompression failed");
+        bridge::compress_arrow_chunk(original_array).expect("Boolean compression failed");
+
+    // --- 2. Decompress using the bridge API ---
+    // The bridge correctly returns a generic Box<dyn Array>.
+    let reconstructed_arrow_array = bridge::decompress_arrow_chunk(&compressed_artifact_bytes)
+        .expect("Boolean decompression failed");
+
     let reconstructed_bool_array = reconstructed_arrow_array
         .as_any()
         .downcast_ref::<BooleanArray>()
         .expect("Failed to downcast reconstructed array to BooleanArray");
 
+    // --- 4. Assert equality ---
     // BooleanArray implements PartialEq, so we can do a direct comparison.
     assert_eq!(original_array, reconstructed_bool_array);
 }
@@ -132,6 +227,12 @@ fn roundtrip_test_bool(original_array: &BooleanArray) {
 fn test_roundtrip_integers_with_nulls() {
     let array = Int64Array::from(vec![Some(1000), Some(1001), None, Some(1003), Some(1003)]);
     roundtrip_test(&array);
+}
+
+#[test]
+fn test_v2_api_roundtrip_with_nulls() {
+    let array = Int64Array::from(vec![Some(1000), Some(1001), None, Some(1003)]);
+    roundtrip_test_v2(&array);
 }
 
 #[test]

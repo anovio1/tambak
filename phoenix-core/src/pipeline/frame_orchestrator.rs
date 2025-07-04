@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 // Use an alias for clarity, as we now interact with the chunk-level orchestrator.
 use super::orchestrator;
+use crate::bridge;
 use crate::error::PhoenixError;
 use crate::pipeline::artifact::CompressedChunk;
 
@@ -114,7 +115,7 @@ pub fn decompress_frame(bytes: &[u8]) -> Result<RecordBatch, PhoenixError> {
         })?;
 
         // CORRECTED: A single, high-level call to the chunk orchestrator.
-        let array = orchestrator::decompress_chunk(chunk_bytes)?;
+        let array = bridge::decompress_arrow_chunk(chunk_bytes)?;
 
         fields.push(Field::new(
             format!("col_{}", i),

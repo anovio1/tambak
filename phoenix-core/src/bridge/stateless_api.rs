@@ -6,6 +6,7 @@ use crate::error::PhoenixError;
 use crate::pipeline;
 // We need this to call the peek_info function.
 use crate::pipeline::artifact::CompressedChunk;
+use crate::pipeline::context::PipelineOutput;
 use arrow::array::Array;
 
 /// Compresses a single Arrow Array into a byte vector.
@@ -21,18 +22,11 @@ pub fn compress_arrow_chunk(array: &dyn Array) -> Result<Vec<u8>, PhoenixError> 
 /// Decompresses bytes into a single Arrow Array.
 /// This is the direct replacement for the old `orchestrator::decompress_chunk`.
 pub fn decompress_arrow_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
-    // todo!("
-    //     // 1. Call the pure engine and get the pure data back.
-    //     let pipeline_output: PipelineData = pipeline::orchestrator::decompress_chunk_agnostic(bytes)?;
+    // 1. Calls v2, gets a PipelineOutput back.
+    let pipeline_output: PipelineOutput = pipeline::orchestrator::decompress_chunk_v2(bytes)?;
 
-    //     // 2. NOW, the bridge does the Arrow-specific work.
-    //     // This new function would live in `arrow_impl.rs`.
-    //     let final_array = arrow_impl::pipeline_data_to_array(pipeline_output)?;
-    //      Ok(final_array)
-    // ");
-
-    // NOTE: This remains a todo until we implement the v2 decompressor.
-    pipeline::orchestrator::decompress_chunk_v2(bytes)
+    // 2. The bridge finishes the job.
+    arrow_impl::pipeline_output_to_array(pipeline_output)
 }
 
 /// Analyzes a compressed chunk without fully decompressing the data.

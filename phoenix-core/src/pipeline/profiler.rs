@@ -166,7 +166,7 @@ fn calculate_autocorrelation(data: &[f64]) -> Option<usize> {
 mod tests {
     use super::*;
     use arrow::array::{Float64Array, Int32Array};
-    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::datatypes::{Schema};
     use std::sync::Arc;
 
     #[test]
