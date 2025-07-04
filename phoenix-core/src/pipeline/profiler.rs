@@ -11,7 +11,7 @@ use ndarray::{s, Array1};
 
 use crate::error::PhoenixError;
 use crate::log_metric;
-use crate::utils::{safe_bytes_to_typed_slice};
+use crate::utils::safe_bytes_to_typed_slice;
 use num_traits::ToPrimitive;
 
 /// A struct to hold user-provided hints that guide the planning process.
@@ -43,8 +43,16 @@ pub fn discover_structure(
     hints: &Option<PlannerHints>,
 ) -> Result<DataStructure, PhoenixError> {
     // 1. Check for the strongest signal: user-provided hints for multiplexed data.
-    if hints.as_ref().and_then(|h| h.stream_id_column.as_ref()).is_some() {
-        log_metric!("event"="discover_structure", "outcome"="Multiplexed", "reason"="user_hint_provided");
+    if hints
+        .as_ref()
+        .and_then(|h| h.stream_id_column.as_ref())
+        .is_some()
+    {
+        log_metric!(
+            "event" = "discover_structure",
+            "outcome" = "Multiplexed",
+            "reason" = "user_hint_provided"
+        );
         return Ok(DataStructure::Multiplexed);
     }
 
@@ -53,7 +61,11 @@ pub fn discover_structure(
     if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
         // Autocorrelation is expensive, so we run it on a sample.
         const SAMPLE_SIZE: usize = 2048;
-        let sample: Vec<f64> = float_array.iter().take(SAMPLE_SIZE).filter_map(|v| v).collect();
+        let sample: Vec<f64> = float_array
+            .iter()
+            .take(SAMPLE_SIZE)
+            .filter_map(|v| v)
+            .collect();
 
         // We need a minimum amount of data for the analysis to be meaningful.
         const MIN_DATA_POINTS: usize = 100;
@@ -61,7 +73,11 @@ pub fn discover_structure(
             if let Some(stride) = calculate_autocorrelation(&sample) {
                 // A stride of 1 is not a useful pattern, it's just normal correlation.
                 if stride > 1 {
-                    log_metric!("event"="discover_structure", "outcome"="FixedStride", "stride"=&stride);
+                    log_metric!(
+                        "event" = "discover_structure",
+                        "outcome" = "FixedStride",
+                        "stride" = &stride
+                    );
                     return Ok(DataStructure::FixedStride(stride));
                 }
             }
@@ -69,7 +85,11 @@ pub fn discover_structure(
     }
 
     // 3. Fallback: If no other structure is detected, assume it's a simple array.
-    log_metric!("event"="discover_structure", "outcome"="Simple", "reason"="no_hints_or_strong_stride");
+    log_metric!(
+        "event" = "discover_structure",
+        "outcome" = "Simple",
+        "reason" = "no_hints_or_strong_stride"
+    );
     Ok(DataStructure::Simple)
 }
 
@@ -79,10 +99,7 @@ pub fn discover_structure(
 /// `Some(stride)` if a significant correlation is found for a specific lag,
 /// otherwise `None`.
 // This is the NEW public-facing function that the planner will call.
-pub fn find_stride_by_autocorrelation(
-    bytes: &[u8],
-    type_str: &str,
-) -> Result<usize, PhoenixError> {
+pub fn find_stride_by_autocorrelation(bytes: &[u8], type_str: &str) -> Result<usize, PhoenixError> {
     // --- START: CORRECTED MACROS ---
     // Helper macro for SIGNED integers
     macro_rules! signed_to_f64_vec {
@@ -145,7 +162,9 @@ fn calculate_autocorrelation(data: &[f64]) -> Option<usize> {
     let mut max_corr = -1.0;
     let upper_bound = (n / 4).max(3).min(256);
     for lag in 2..upper_bound {
-        let acf = centered_data.slice(s![..n - lag]).dot(&centered_data.slice(s![lag..]));
+        let acf = centered_data
+            .slice(s![..n - lag])
+            .dot(&centered_data.slice(s![lag..]));
         if acf > max_corr {
             max_corr = acf;
             best_lag = lag;
@@ -166,7 +185,7 @@ fn calculate_autocorrelation(data: &[f64]) -> Option<usize> {
 mod tests {
     use super::*;
     use arrow::array::{Float64Array, Int32Array};
-    use arrow::datatypes::{Schema};
+    use arrow::datatypes::Schema;
     use std::sync::Arc;
 
     #[test]
@@ -198,9 +217,9 @@ mod tests {
         for i in 0..200 {
             data.push(i as f64 * 10.0); // val_a
             data.push(i as f64 * -5.0); // val_b
-            data.push(100.0);           // val_c
-            data.push(i as f64);        // val_d
-            data.push(0.0);             // val_e
+            data.push(100.0); // val_c
+            data.push(i as f64); // val_d
+            data.push(0.0); // val_e
         }
         let array = Float64Array::from(data);
         let batch = RecordBatch::new_empty(Arc::new(Schema::empty()));

@@ -29,17 +29,6 @@ use std::time::Instant;
 // A const for the plan version, ensuring consistency.
 const PLAN_VERSION: u32 = 1;
 
-
-
-//==================================================================================
-// A. Stand-in v4.4 (Unknown Section - For Bridge SOC) 
-//==================================================================================
-
-// pub fn create_plan(_input: &PipelineInput) -> Result<Plan, PhoenixError> {
-//     // TODO: Implement the new Arrow-agnostic planner logic.
-//     todo!("planner::create_plan");
-// }
-
 //==================================================================================
 // 0. Planning Context (New Struct)
 //==================================================================================
@@ -544,6 +533,27 @@ fn find_best_pipeline_by_trial(
 }
 
 /// The internal planning function, now returns a `Vec<Operation>` and its cost.
+/// /// The internal "heavy lifter" of the planning process.
+///
+/// This function coordinates the core logic of finding an optimal pipeline for a given
+/// byte stream, once high-level structural parameters (like `stride`) have already
+/// been determined.
+///
+/// Its responsibilities are:
+/// 1.  **Profile Data:** Call type-specific analysis functions (`analyze_signed_data`,
+///     `analyze_unsigned_data`) to create a `DataProfile`.
+/// 2.  **Generate Candidates:** Use the profile and stride to generate a list of all
+///     plausible compression pipelines (`generate_candidate_pipelines`).
+/// 3.  **Empirically Test:** Run trials on a sample of the data to find the single
+///     best-performing pipeline from the candidate list (`find_best_pipeline_by_trial`).
+///
+/// # Arguments
+/// * `bytes` - The raw data bytes to be planned for.
+/// * `context` - The `PlanningContext` containing type information.
+/// * `stride` - The pre-calculated stride to use for `Delta` operations.
+///
+/// # Returns
+/// A tuple containing the best `Vec<Operation>` and its estimated compressed size.
 fn plan_bytes(
     bytes: &[u8],
     context: &PlanningContext, // Now accepts PlanningContext

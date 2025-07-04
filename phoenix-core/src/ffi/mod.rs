@@ -26,7 +26,5 @@ pub use self::python::{
     decompress_frame_py,
     get_frame_diagnostics_py,
     enable_verbose_logging_py,
-    compress_bridge_py,
-    compress_analyze_bridge_py,
     decompress_bridge_py,
 };

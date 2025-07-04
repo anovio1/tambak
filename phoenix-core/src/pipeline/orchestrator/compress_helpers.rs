@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use crate::error::PhoenixError;
 use crate::kernels;
 use crate::pipeline::artifact::CompressedChunk;
-use crate::pipeline::context::{PipelineInput};
+use crate::pipeline::context::PipelineInput;
 use crate::pipeline::models::{Operation, Plan};
+use crate::pipeline::orchestrator::helpers::StrategyResult;
 use crate::pipeline::planner::PlanningContext;
 use crate::pipeline::traits::StreamTransform;
 use crate::pipeline::OperationBehavior;
@@ -19,9 +20,6 @@ use crate::types::PhoenixDataType;
 /// Handles the early-exit case when the main data stream is empty.
 /// This typically means the array was either empty or contained only nulls.
 pub fn compress_empty_main_data_stream(input: &PipelineInput) -> Result<Vec<u8>, PhoenixError> {
-    #[cfg(debug_assertions)]
-    println!("[DEBUG compress_chunk_v2] Main data is empty. Assembling an empty-data artifact and returning early.");
-
     let mut compressed_streams = HashMap::new();
     // The pipeline will only contain the null-handling operation, if any.
     let plan_pipeline = if let Some(null_mask_bytes) = &input.null_mask {
@@ -41,6 +39,8 @@ pub fn compress_empty_main_data_stream(input: &PipelineInput) -> Result<Vec<u8>,
             null_mask_pipeline: null_mask_plan,
         }]
     } else {
+        #[cfg(debug_assertions)]
+        println!("[DEBUG compress_empty_main_data_stream] Main data is empty. Assembling an empty-data artifact and returning early.");
         // No main data and no nulls means a truly empty array.
         vec![]
     };
@@ -153,4 +153,116 @@ pub fn plan_and_compress_null_stream(
 
     // Return the pipeline prefix (which now includes null handling) and the new streams map.
     Ok((pipeline_prefix.clone(), compressed_streams))
+}
+
+// Patch Helper due to lost sparsity strategy
+/// Determines the optimal pipeline for the main data by evaluating and comparing
+/// dense and sparse strategies.
+///
+/// For integer-like data, it empirically costs both a dense pipeline and a potential
+/// sparse pipeline, returning the plan for the cheaper of the two. For all other
+/// data types, it returns a standard dense plan.
+///
+/// This function encapsulates the core strategic decision for the main data stream.
+pub fn plan_main_data_pipeline(
+    processed_data: &[u8],
+    input: &PipelineInput,
+    current_physical_type: PhoenixDataType,
+) -> Result<Vec<Operation>, PhoenixError> {
+    let context = PlanningContext {
+        initial_dtype: input.initial_dtype,
+        physical_dtype: current_physical_type,
+    };
+
+    // We can only evaluate sparsity on integer-like types.
+    let is_integer_like = matches!(
+        current_physical_type,
+        PhoenixDataType::Int8
+            | PhoenixDataType::Int16
+            | PhoenixDataType::Int32
+            | PhoenixDataType::Int64
+            | PhoenixDataType::UInt8
+            | PhoenixDataType::UInt16
+            | PhoenixDataType::UInt32
+            | PhoenixDataType::UInt64
+    );
+
+    if is_integer_like {
+        // --- This is the integer-specific path with sparse vs. dense comparison ---
+
+        // First, plan and cost the DENSE strategy. This is our baseline.
+        let dense_plan = planner::plan_pipeline(processed_data, context.clone())?;
+        let dense_cost = executor::execute_linear_encode_pipeline(
+            processed_data,
+            context.physical_dtype,
+            &dense_plan.pipeline,
+        )?
+        .len();
+        let dense_strategy = StrategyResult {
+            plan: dense_plan.pipeline,
+            cost: dense_cost,
+        };
+
+        // Now, try to plan and cost a SPARSE strategy.
+        let sparse_strategy_result = evaluate_sparsity_strategy_for_type(processed_data, &context)?;
+
+        // Compare costs and return the winning pipeline.
+        if let Some(sparse_strategy) = sparse_strategy_result {
+            if sparse_strategy.cost < dense_strategy.cost {
+                Ok(sparse_strategy.plan) // Sparse is cheaper
+            } else {
+                Ok(dense_strategy.plan) // Dense is cheaper
+            }
+        } else {
+            Ok(dense_strategy.plan) // Sparse not applicable, use dense
+        }
+    } else {
+        // --- This is the fallback path for non-integer types ---
+        let dense_plan = planner::plan_pipeline(processed_data, context)?;
+        Ok(dense_plan.pipeline)
+    }
+}
+
+/// Helper to call the generic `evaluate_sparsity_strategy` based on the runtime type.
+fn evaluate_sparsity_strategy_for_type(
+    data_bytes: &[u8],
+    context: &PlanningContext,
+) -> Result<Option<StrategyResult>, PhoenixError> {
+    use PhoenixDataType::*;
+    // This function remains the same.
+    match context.physical_dtype {
+        Int8 => {
+            let s: &[i8] = bytemuck::try_cast_slice(data_bytes)?;
+            super::helpers::evaluate_sparsity_strategy(s, context)
+        }
+        Int16 => {
+            let s: &[i16] = bytemuck::try_cast_slice(data_bytes)?;
+            super::helpers::evaluate_sparsity_strategy(s, context)
+        }
+        Int32 => {
+            let s: &[i32] = bytemuck::try_cast_slice(data_bytes)?;
+            super::helpers::evaluate_sparsity_strategy(s, context)
+        }
+        Int64 => {
+            let s: &[i64] = bytemuck::try_cast_slice(data_bytes)?;
+            super::helpers::evaluate_sparsity_strategy(s, context)
+        }
+        UInt8 => {
+            let s: &[u8] = bytemuck::try_cast_slice(data_bytes)?;
+            super::helpers::evaluate_sparsity_strategy(s, context)
+        }
+        UInt16 => {
+            let s: &[u16] = bytemuck::try_cast_slice(data_bytes)?;
+            super::helpers::evaluate_sparsity_strategy(s, context)
+        }
+        UInt32 => {
+            let s: &[u32] = bytemuck::try_cast_slice(data_bytes)?;
+            super::helpers::evaluate_sparsity_strategy(s, context)
+        }
+        UInt64 => {
+            let s: &[u64] = bytemuck::try_cast_slice(data_bytes)?;
+            super::helpers::evaluate_sparsity_strategy(s, context)
+        }
+        _ => Ok(None),
+    }
 }

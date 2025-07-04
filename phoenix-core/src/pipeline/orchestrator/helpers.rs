@@ -1,17 +1,17 @@
 use arrow::array::{Array, BooleanArray, PrimitiveArray};
-use arrow::buffer::{BooleanBuffer};
+use arrow::buffer::BooleanBuffer;
 use arrow::datatypes::*;
 use bytemuck::Pod;
 use num_traits::{PrimInt, Zero};
 use std::collections::HashMap;
 
-use crate::pipeline::{executor, planner};
 use crate::error::PhoenixError;
 use crate::null_handling::bitmap;
-use crate::pipeline::models::{Operation};
+use crate::pipeline::models::Operation;
 use crate::pipeline::planner::PlanningContext;
-use crate::pipeline::traits::{StreamTransform};
+use crate::pipeline::traits::StreamTransform;
 use crate::pipeline::OperationBehavior;
+use crate::pipeline::{executor, planner};
 use crate::types::PhoenixDataType;
 use crate::utils::typed_slice_to_bytes;
 
@@ -49,85 +49,6 @@ pub fn decompress_meta_stream(
     } else {
         Ok(None)
     }
-}
-
-//  MOVED TO BRIDGE::arrow_impl
-// /// DATA MARSHALLING
-// /// Prepares the initial byte streams for compression from an Arrow array.
-// /// 
-// /// This function extracts two kinds of streams:
-// /// 1. **Null mask**: If the array contains null values, it unpacks the null bitmap
-// ///    into a plain vector of bytes where each byte is `0` (null) or `1` (valid).
-// /// 2. **Main data**: The non-null values themselves, extracted as contiguous bytes,
-// ///    discarding the null slots. For primitive types, this is a packed buffer of values.
-// ///    For booleans, it becomes a vector of `0`/`1` bytes.
-// ///
-// /// The result is a `HashMap` with at least a `"main"` stream, and optionally a `"null_mask"`
-// /// stream if the input has nulls.
-// ///
-// /// # Arguments
-// ///
-// /// * `array` - A reference to a dynamically typed Arrow array.
-// ///
-// /// # Returns
-// ///
-// /// * `Ok(HashMap)` with stream name → raw bytes, or
-// /// * `Err(PhoenixError)` if the type is unsupported.
-// ///
-// /// This is usually the first step of your compression pipeline, transforming Arrow's
-// /// internal representation into a set of flat byte streams suitable for further encoding.
-pub fn prepare_initial_streams_deprecated_soon(array: &dyn Array) -> Result<HashMap<String, Vec<u8>>, PhoenixError> {
-    let mut streams = HashMap::new();
-
-    // If the array contains nulls, extract its null bitmap and unpack it
-    // into a plain Vec<u8> of 0s and 1s, where 1 means "valid" and 0 means "null".
-    if let Some(nulls) = array.nulls() {
-        // Arrow stores null bitmaps compacted (1 bit per value). Here we unpack them.
-        // --- FIX: Unpack the bitmap to match the planner's view of the data ---
-        let boolean_buffer =
-            BooleanBuffer::new(nulls.buffer().clone(), nulls.offset(), nulls.len());
-        let unpacked_mask_bytes: Vec<u8> = boolean_buffer.iter().map(|b| b as u8).collect();
-        streams.insert("null_mask".to_string(), unpacked_mask_bytes);
-    }
-
-    // Helper macro: extracts the non-null values for primitive types (e.g., Int32, Float64),
-    // strips out the nulls, and converts the data into raw bytes.
-    macro_rules! extract_valid_data {
-        ($T:ty) => {{
-            let primitive_array = array.as_any().downcast_ref::<PrimitiveArray<$T>>().unwrap();
-            let valid_data_vec = bitmap::strip_valid_data_to_vec(primitive_array);
-            streams.insert("main".to_string(), typed_slice_to_bytes(&valid_data_vec));
-        }};
-    }
-
-    match array.data_type() {
-        // For each supported primitive type, call the macro to extract packed data.
-        DataType::Int8 => extract_valid_data!(Int8Type),
-        DataType::Int16 => extract_valid_data!(Int16Type),
-        DataType::Int32 => extract_valid_data!(Int32Type),
-        DataType::Int64 => extract_valid_data!(Int64Type),
-        DataType::UInt8 => extract_valid_data!(UInt8Type),
-        DataType::UInt16 => extract_valid_data!(UInt16Type),
-        DataType::UInt32 => extract_valid_data!(UInt32Type),
-        DataType::UInt64 => extract_valid_data!(UInt64Type),
-        DataType::Float32 => extract_valid_data!(Float32Type),
-        DataType::Float64 => extract_valid_data!(Float64Type),
-        // Special case: Booleans are stored bit-packed, so unpack them and store as bytes.
-        DataType::Boolean => {
-            let bool_array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-            let valid_bools = bitmap::strip_valid_bools_to_vec(bool_array);
-            let valid_bytes: Vec<u8> = valid_bools.iter().map(|&b| b as u8).collect();
-            streams.insert("main".to_string(), valid_bytes);
-        }
-        // Anything else: return an error indicating this type isn't supported.
-        dt => {
-            return Err(PhoenixError::UnsupportedType(format!(
-                "Unsupported type for preparation: {}",
-                dt
-            )))
-        }
-    }
-    Ok(streams)
 }
 
 pub fn evaluate_sparsity_strategy<T: Pod + PrimInt + Zero>(
@@ -178,6 +99,18 @@ pub fn evaluate_sparsity_strategy<T: Pod + PrimInt + Zero>(
         &mask_plan.pipeline,
     )?
     .len();
+    // ======================= DEBUG BLOCK #2 =======================
+    #[cfg(debug_assertions)]
+    {
+        println!("[DEBUG evaluate_sparsity_strategy] COST BREAKDOWN:");
+        println!("  - Non-Zero Values Cost (values_cost): {}", values_cost);
+        println!("  - Sparsity Mask Cost (mask_cost):     {}", mask_cost);
+        println!(
+            "  - Total Sparse Cost:                  {}",
+            values_cost + mask_cost
+        );
+    }
+    // ===================== END DEBUG BLOCK #2 =====================
     //======================================================================
     // --- END ARCHITECTURAL FIX ---
     //======================================================================
@@ -193,7 +126,6 @@ pub fn evaluate_sparsity_strategy<T: Pod + PrimInt + Zero>(
         cost: values_cost + mask_cost,
     }))
 }
-
 
 /// Derives the full forward type flow for a pipeline. This is the single
 /// source of truth for type state during decompression.

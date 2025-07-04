@@ -2,19 +2,85 @@ use std::any::TypeId;
 
 use crate::bridge;
 use crate::pipeline::artifact::CompressedChunk;
-use crate::pipeline::orchestrator::{
-    compress_chunk, compress_chunk_v2, decompress_chunk, decompress_chunk_v2,
-};
+use crate::pipeline::context::{PipelineInput, PipelineOutput};
+use crate::pipeline::orchestrator::{compress_chunk, decompress_chunk};
 use crate::pipeline::{Operation, Plan};
+use crate::types::PhoenixDataType;
 
 // We also need to bring in any external test dependencies.
 use arrow::array::{
     Array, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, PrimitiveArray,
 };
 use arrow::datatypes::ArrowNumericType;
-use bytemuck::Pod;
-use num_traits::Float;
-use serde_json::Value;
+use bytemuck::{cast_slice, from_bytes, Pod};
+
+// Test Helpers
+/// Test helper to simulate the bridge's marshalling from Arrow-like data to PipelineInput.
+fn create_pipeline_input_from_options<T>(
+    data: &[Option<T>],
+    dtype: PhoenixDataType,
+) -> PipelineInput
+where
+    T: Pod + Copy,
+{
+    let total_rows = data.len();
+    let mut main_data_typed: Vec<T> = Vec::new();
+    let mut null_mask_bytes: Vec<u8> = Vec::with_capacity(total_rows);
+    let mut num_valid_rows = 0;
+
+    for item in data {
+        if let Some(value) = item {
+            main_data_typed.push(*value);
+            null_mask_bytes.push(1);
+            num_valid_rows += 1;
+        } else {
+            null_mask_bytes.push(0);
+        }
+    }
+
+    let null_mask = if num_valid_rows == total_rows {
+        None // No nulls, so no mask.
+    } else {
+        Some(null_mask_bytes)
+    };
+
+    PipelineInput::new(
+        bytemuck::cast_slice(&main_data_typed).to_vec(),
+        null_mask,
+        dtype,
+        total_rows,
+        num_valid_rows,
+        Some("test_column".to_string()),
+    )
+}
+
+/// Test helper to simulate the bridge's reconstruction of data from a PipelineOutput.
+/// This allows us to verify the roundtrip correctness.
+
+fn reconstruct_vec_from_output<T>(output: &PipelineOutput) -> Vec<Option<T>>
+where
+    T: Pod + Copy,
+{
+    let main_typed: &[T] = cast_slice(&output.main);
+    let mut main_iter = main_typed.iter();
+    let mut result = Vec::with_capacity(output.total_rows);
+
+    if let Some(null_mask) = &output.null_mask {
+        for &is_valid in null_mask.iter() {
+            if is_valid == 1 {
+                result.push(main_iter.next().copied());
+            } else {
+                result.push(None);
+            }
+        }
+    } else {
+        // No null mask means all data is valid.
+        for value in main_iter {
+            result.push(Some(*value));
+        }
+    }
+    result
+}
 
 //==============================================================================
 // 3.1 The Authoritative Roundtrip Test Helper
@@ -121,10 +187,10 @@ where
         crate::bridge::arrow_impl::arrow_to_pipeline_input(original_array).unwrap();
 
     // 2. Compress using the new v2 compression function
-    let compressed_bytes = compress_chunk_v2(pipeline_input).expect("v2 Compression failed");
+    let compressed_bytes = compress_chunk(pipeline_input).expect("v2 Compression failed");
 
     // 3. Decompress using the new v2 decompression function we are building
-    let pipeline_output = decompress_chunk_v2(&compressed_bytes).expect("v2 Decompression failed");
+    let pipeline_output = decompress_chunk(&compressed_bytes).expect("v2 Decompression failed");
 
     // 4. Marshall back to an Arrow Array
     let reconstructed_array =
@@ -358,22 +424,21 @@ fn test_roundtrip_constant_integers_triggers_rle() {
 
 #[test]
 fn test_sparsity_strategy_is_triggered_and_correct() {
-    // --- MODIFIED: The data is overwhelmingly sparse, AND the set of non-zero
-    // values is large enough to overcome compression overhead. ---
-    let mut data = vec![Some(0); 500]; // Use a larger array.
-
-    // Add a significant number of non-zero values, but keep them clustered
-    // to ensure the data is still sparse overall.
+    // --- 1. SETUP: Define the sparse data ---
+    let mut data = vec![Some(0i32); 500];
     for i in 0..30 {
         data[100 + i] = Some((i as i32) * 10);
     }
-    data[400] = None; // Add a null to ensure that path is tested.
+    data[400] = None; // Ensure null handling is tested.
 
-    let original_array = Int32Array::from(data);
+    // --- 2. MARSHALL: Simulate the bridge converting Arrow to pure data ---
+    let pipeline_input = create_pipeline_input_from_options(&data, PhoenixDataType::Int32);
 
+    // --- 3. COMPRESS: Call the pure orchestrator function ---
     let compressed_artifact_bytes =
-        compress_chunk(&original_array).expect("Sparsity compression failed");
+        compress_chunk(pipeline_input).expect("Sparsity compression failed");
 
+    // --- 4. VERIFY PLAN: Check that the planner made the correct choice ---
     let artifact =
         CompressedChunk::from_bytes(&compressed_artifact_bytes).expect("Failed to parse artifact");
     let plan: Plan = serde_json::from_str(&artifact.plan_json).unwrap();
@@ -383,22 +448,31 @@ fn test_sparsity_strategy_is_triggered_and_correct() {
         .iter()
         .any(|op| matches!(op, Operation::Sparsify { .. }));
 
-    // The assertion now runs on data where the sparse strategy is empirically better.
     assert!(
         sparsify_op_exists,
         "Sparsity strategy was not triggered for empirically sparse data. Plan was: {:?}",
         plan.pipeline
     );
 
-    // The roundtrip test remains the most important check for correctness.
-    roundtrip_test(&original_array);
+    // --- 5. VERIFY ROUNDTRIP: Decompress and reconstruct to ensure correctness ---
+    let pipeline_output = decompress_chunk(&compressed_artifact_bytes).unwrap();
+    let reconstructed_data = reconstruct_vec_from_output::<i32>(&pipeline_output);
+
+    assert_eq!(data, reconstructed_data, "Data mismatch after roundtrip.");
 }
 
 #[test]
 fn test_dense_strategy_is_correctly_chosen() {
-    let original_array = Int64Array::from(vec![Some(100), Some(101), None, Some(103)]);
-    let compressed_artifact_bytes = compress_chunk(&original_array).unwrap();
+    // --- 1. SETUP: Define the dense data ---
+    let data = vec![Some(100i64), Some(101), None, Some(103)];
 
+    // --- 2. MARSHALL: Simulate the bridge ---
+    let pipeline_input = create_pipeline_input_from_options(&data, PhoenixDataType::Int64);
+
+    // --- 3. COMPRESS: Call the pure orchestrator ---
+    let compressed_artifact_bytes = compress_chunk(pipeline_input).unwrap();
+
+    // --- 4. VERIFY PLAN: Check that the planner made the correct choice ---
     let artifact = CompressedChunk::from_bytes(&compressed_artifact_bytes).unwrap();
     let plan: Plan = serde_json::from_str(&artifact.plan_json).unwrap();
 
@@ -412,5 +486,10 @@ fn test_dense_strategy_is_correctly_chosen() {
         "Sparsity strategy was incorrectly triggered for dense data"
     );
     assert!(!artifact.compressed_streams.contains_key("sparsity_mask"));
-    roundtrip_test(&original_array);
+
+    // --- 5. VERIFY ROUNDTRIP: Decompress and reconstruct to ensure correctness ---
+    let pipeline_output = decompress_chunk(&compressed_artifact_bytes).unwrap();
+    let reconstructed_data = reconstruct_vec_from_output::<i64>(&pipeline_output);
+
+    assert_eq!(data, reconstructed_data, "Data mismatch after roundtrip.");
 }

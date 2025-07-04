@@ -37,10 +37,10 @@ use ffi::python::{PyCompressor, PyCompressorConfig};
 #[pymodule]
 fn phoenix_cache(py: Python, m: &PyModule) -> PyResult<()> {
     // --- V4.4 Refactor Orchestrator ---
-    m.add_function(wrap_pyfunction!(ffi::compress_bridge_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ffi::compress_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ffi::decompress_py, m)?)?;
     m.add_function(wrap_pyfunction!(ffi::decompress_bridge_py, m)?)?;
     // m.add_function(wrap_pyfunction!(ffi::plan_bridge_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ffi::compress_analyze_bridge_py, m)?)?;
 
     // --- V4.0 Frame-level API ---
     m.add_function(wrap_pyfunction!(ffi::compress_frame_py, m)?)?;
@@ -48,8 +48,6 @@ fn phoenix_cache(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ffi::get_frame_diagnostics_py, m)?)?;
 
     // --- V3.9 Legacy Chunk-level API ---
-    m.add_function(wrap_pyfunction!(ffi::compress_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ffi::decompress_py, m)?)?;
     m.add_function(wrap_pyfunction!(ffi::plan_py, m)?)?;
     m.add_function(wrap_pyfunction!(ffi::compress_analyze_py, m)?)?;
 

@@ -56,7 +56,9 @@ impl PyCompressor {
 
     #[pyo3(name = "compress")]
     pub fn compress_py(&mut self, py: Python, reader: &PyAny) -> PyResult<()> {
-        let mut rust_reader = PyRecordBatchReader { inner: reader.to_object(py) };
+        let mut rust_reader = PyRecordBatchReader {
+            inner: reader.to_object(py),
+        };
         py.allow_threads(|| self.inner.compress(&mut rust_reader))
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         Ok(())
@@ -76,7 +78,9 @@ impl PyDecompressor {
         let reader = PythonFileReader { obj: py_reader };
         let decompressor = Decompressor::new(reader)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
-        Ok(Self { inner: Some(decompressor) })
+        Ok(Self {
+            inner: Some(decompressor),
+        })
     }
 
     /// Returns a streaming RecordBatchReader over the decompressed data.
@@ -92,7 +96,6 @@ impl PyDecompressor {
     }
 }
 
-
 //==================================================================================
 // 1. Public Python Functions (v4.3 Corrected)
 //==================================================================================
@@ -102,47 +105,6 @@ impl PyDecompressor {
 pub fn compress_py<'py>(py: Python<'py>, array_py: &PyAny) -> PyResult<&'py PyBytes> {
     let array_data = ArrayData::from_pyarrow(array_py)?;
     let rust_array = make_array(array_data.into());
-    let compressed_vec =
-        py.allow_threads(move || orchestrator::compress_chunk(rust_array.as_ref()))?;
-    Ok(PyBytes::new(py, &compressed_vec))
-}
-
-#[pyfunction]
-#[pyo3(name = "compress_analyze")]
-pub fn compress_analyze_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
-    let array_data = ArrayData::from_pyarrow(array_py)?;
-    let rust_array = make_array(array_data.into());
-    let artifact_bytes =
-        py.allow_threads(move || orchestrator::compress_chunk(rust_array.as_ref()))?;
-    let (header_size, data_size, pipeline_json, original_type) =
-        orchestrator::get_compressed_chunk_info(&artifact_bytes)?;
-
-    let result_dict = PyDict::new(py);
-    result_dict.set_item("artifact", PyBytes::new(py, &artifact_bytes))?;
-    result_dict.set_item("header_size", header_size)?;
-    result_dict.set_item("data_size", data_size)?;
-    result_dict.set_item("total_size", artifact_bytes.len())?;
-    result_dict.set_item("plan", pipeline_json)?;
-    result_dict.set_item("original_type", original_type)?;
-
-    Ok(result_dict.into())
-}
-
-#[pyfunction]
-#[pyo3(name = "decompress")]
-pub fn decompress_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
-    // Correctly call the stable bridge API.
-    let reconstructed_array = py.allow_threads(move || bridge::decompress_arrow_chunk(bytes))?;
-    utils::arrow_array_to_py(py, reconstructed_array)
-}
-
-// Bridge versions
-
-#[pyfunction]
-#[pyo3(name = "compress_bridge")]
-pub fn compress_bridge_py<'py>(py: Python<'py>, array_py: &PyAny) -> PyResult<&'py PyBytes> {
-    let array_data = ArrayData::from_pyarrow(array_py)?;
-    let rust_array = make_array(array_data.into());
     // --- THE ONLY CHANGE IS HERE ---
     let compressed_vec =
         py.allow_threads(move || bridge::compress_arrow_chunk(rust_array.as_ref()))?;
@@ -150,8 +112,8 @@ pub fn compress_bridge_py<'py>(py: Python<'py>, array_py: &PyAny) -> PyResult<&'
 }
 
 #[pyfunction]
-#[pyo3(name = "compress_analyze_bridge")]
-pub fn compress_analyze_bridge_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
+#[pyo3(name = "compress_analyze")]
+pub fn compress_analyze_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
     let array_data = ArrayData::from_pyarrow(array_py)?;
     let rust_array = make_array(array_data.into());
 
@@ -171,6 +133,14 @@ pub fn compress_analyze_bridge_py(py: Python, array_py: &PyAny) -> PyResult<PyOb
     result_dict.set_item("original_type", stats.original_type)?;
 
     Ok(result_dict.into())
+}
+
+#[pyfunction]
+#[pyo3(name = "decompress")]
+pub fn decompress_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
+    // Correctly call the stable bridge API.
+    let reconstructed_array = py.allow_threads(move || bridge::decompress_arrow_chunk(bytes))?;
+    utils::arrow_array_to_py(py, reconstructed_array)
 }
 
 #[pyfunction]
@@ -245,11 +215,26 @@ static INIT_LOGGER: Once = Once::new();
 
 #[pyfunction]
 #[pyo3(name = "enable_verbose_logging")]
-pub fn enable_verbose_logging_py() {
+pub fn enable_verbose_logging_py(log_file: Option<String>) {
     INIT_LOGGER.call_once(|| {
-        let _ = env_logger::builder()
-            .is_test(false) // so cargo test doesn’t suppress it
-            .filter_level(LevelFilter::Info) // or Debug
-            .try_init();
+        let mut builder = env_logger::Builder::new();
+
+        builder.is_test(false);
+        builder.filter_level(LevelFilter::Info);
+
+        // Custom formatter: just print the level and message
+        builder.format(|buf, record| {
+            use std::io::Write;
+            writeln!(buf, "[{}] {}", record.level(), record.args())?;
+            buf.flush()?;
+            Ok(())
+        });
+
+        if let Some(filename) = log_file {
+            let file = std::fs::File::create(filename).expect("Could not create log file");
+            builder.target(env_logger::Target::Pipe(Box::new(file)));
+        }
+
+        let _ = builder.try_init();
     });
 }

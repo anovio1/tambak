@@ -51,7 +51,7 @@ pub fn compress_frame(
         let array = batch.column(i);
 
         // CORRECTED: A single, high-level call to the chunk orchestrator.
-        let chunk_bytes = orchestrator::compress_chunk(array.as_ref())?;
+        let chunk_bytes = bridge::compress_arrow_chunk(array.as_ref())?;
 
         final_buffer
             .write_all(&(chunk_bytes.len() as u64).to_le_bytes())

@@ -16,14 +16,14 @@ pub fn compress_arrow_chunk(array: &dyn Array) -> Result<Vec<u8>, PhoenixError> 
     let pipeline_input = arrow_impl::arrow_to_pipeline_input(array)?;
 
     // 2. Call the pure pipeline engine with the pure input.
-    pipeline::orchestrator::compress_chunk_v2(pipeline_input)
+    pipeline::orchestrator::compress_chunk(pipeline_input)
 }
 
 /// Decompresses bytes into a single Arrow Array.
 /// This is the direct replacement for the old `orchestrator::decompress_chunk`.
 pub fn decompress_arrow_chunk(bytes: &[u8]) -> Result<Box<dyn Array>, PhoenixError> {
     // 1. Calls v2, gets a PipelineOutput back.
-    let pipeline_output: PipelineOutput = pipeline::orchestrator::decompress_chunk_v2(bytes)?;
+    let pipeline_output: PipelineOutput = pipeline::orchestrator::decompress_chunk(bytes)?;
 
     // 2. The bridge finishes the job.
     arrow_impl::pipeline_output_to_array(pipeline_output)
