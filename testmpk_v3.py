@@ -117,7 +117,7 @@ def main(aspect_name):
             column_array = column_array.combine_chunks()
         all_column_results[column_name] = {}
         try:
-            analysis_result = phoenix_cache.compress_analyze_bridge(column_array)
+            analysis_result = phoenix_cache.compress_analyze(column_array)
             all_column_results[column_name]["phoenix_size"] = len(
                 analysis_result["artifact"]
             )

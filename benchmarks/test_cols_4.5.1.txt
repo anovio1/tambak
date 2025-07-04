@@ -1,0 +1,1002 @@
+
+Running Aspect:unit_positions Column:frame
+
+Running Aspect:unit_positions Column:unit_id
+
+Running Aspect:unit_positions Column:unit_def_id
+
+Running Aspect:unit_positions Column:team_id
+
+Running Aspect:unit_positions Column:x
+
+Running Aspect:unit_positions Column:y
+
+Running Aspect:unit_positions Column:z
+
+Running Aspect:unit_positions Column:vx
+
+Running Aspect:unit_positions Column:vy
+
+Running Aspect:unit_positions Column:vz
+
+Running Aspect:unit_positions Column:heading
+
+Running Aspect:unit_events Column:frame
+
+Running Aspect:unit_events Column:unit_id
+
+Running Aspect:unit_events Column:unit_def_id
+
+Running Aspect:unit_events Column:unit_team_id
+
+Running Aspect:unit_events Column:x
+
+Running Aspect:unit_events Column:y
+
+Running Aspect:unit_events Column:z
+
+Running Aspect:unit_events Column:attacker_unit_id
+
+Running Aspect:unit_events Column:attacker_unit_def_id
+
+Running Aspect:unit_events Column:attacker_team_id
+
+Running Aspect:unit_events Column:event_type
+
+Running Aspect:unit_events Column:old_team_id
+
+Running Aspect:unit_events Column:new_team_id
+
+Running Aspect:unit_events Column:builder_id
+
+Running Aspect:unit_events Column:factory_queue_len
+
+Running Aspect:damage_log Column:frame
+
+Running Aspect:damage_log Column:victim_team_id
+
+Running Aspect:damage_log Column:attacker_team_id
+
+Running Aspect:damage_log Column:victim_unit_id
+
+Running Aspect:damage_log Column:victim_def_id
+
+Running Aspect:damage_log Column:attacker_unit_id
+
+Running Aspect:damage_log Column:attacker_def_id
+
+Running Aspect:damage_log Column:weapon_def_id
+
+Running Aspect:damage_log Column:projectile_id
+
+Running Aspect:damage_log Column:damage
+
+Running Aspect:damage_log Column:is_paralyzer
+
+Running Aspect:damage_log Column:victim_pos_x
+
+Running Aspect:damage_log Column:victim_pos_y
+
+Running Aspect:damage_log Column:victim_pos_z
+                           | Size: 157
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 221
+[INFO]   3. [Delta { order: 1 }, ZigZag, Ans]                            | Size: 297
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 1052 | Time: 6.24ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 1598 | Time: 1.89ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 2086 | Time: 6.14ms
+[INFO] --- Empirical scoring total time: 14.29ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 8346 | Time: 236.70µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 22863 | Time: 221.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 9654 | Time: 284.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 29349 | Time: 236.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 8965 | Time: 315.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 23607 | Time: 257.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 7928 | Time: 276.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 19057 | Time: 123.70µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 6690 | Time: 280.80µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 22871 | Time: 243.20µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.53ms---
+[INFO]   1. [Zstd { level: 3 }]                                          | Size: 6690
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 7928
+[INFO]   3. [Shuffle, Zstd { level: 3 }]                                 | Size: 8346
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 145504 | Time: 2.30ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 157297 | Time: 3.35ms
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 159394 | Time: 2.91ms
+[INFO] --- Empirical scoring total time: 8.60ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 5051 | Time: 291.40µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 7669 | Time: 197.50µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 4493 | Time: 223.20µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 11239 | Time: 224.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 8433 | Time: 252.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 19776 | Time: 258.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 8479 | Time: 255.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 14200 | Time: 271.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 4906 | Time: 210.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 10307 | Time: 104.50µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 7942 | Time: 314.90µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 11239 | Time: 246.30µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.92ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 4493
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 4906
+[INFO]   3. [Dictionary, Zstd { level: 3 }]                              | Size: 5051
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 96941 | Time: 2.80ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 94965 | Time: 2.83ms
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 120718 | Time: 4.37ms
+[INFO] --- Empirical scoring total time: 10.04ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 5086 | Time: 297.90µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 6709 | Time: 193.60µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 2827 | Time: 220.30µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 8209 | Time: 211.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 9056 | Time: 321.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 15790 | Time: 237.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 5508 | Time: 318.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 9117 | Time: 239.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 3419 | Time: 194.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 4859 | Time: 50.30µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 4641 | Time: 279.80µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 8208 | Time: 223.30µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.90ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 2827
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 3419
+[INFO]   3. [Zstd { level: 3 }]                                          | Size: 4641
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 57742 | Time: 2.15ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 66718 | Time: 2.35ms
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 112827 | Time: 3.29ms
+[INFO] --- Empirical scoring total time: 7.83ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 14742 | Time: 259.10µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 21956 | Time: 229.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 21118 | Time: 394.80µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 27774 | Time: 240.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 18880 | Time: 383.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 22241 | Time: 254.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 15548 | Time: 191.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 16184 | Time: 84.00µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 18336 | Time: 367.10µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 21960 | Time: 240.60µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.71ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 14742
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 15548
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 16184
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 370809 | Time: 2.59ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 428639 | Time: 2.38ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 429462 | Time: 3.13ms
+[INFO] --- Empirical scoring total time: 8.14ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 7130 | Time: 220.20µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 11644 | Time: 227.70µs
+[INFO]   - Candidate: [Delta { order: 5 }, Zstd { level: 3 }]                      | Score (Size): 13753 | Time: 327.70µs
+[INFO]   - Candidate: [Delta { order: 5 }, Ans]                                    | Score (Size): 19143 | Time: 256.60µs
+[INFO]   - Candidate: [Delta { order: 5 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 11762 | Time: 337.30µs
+[INFO]   - Candidate: [Delta { order: 5 }, ZigZag, Ans]                            | Score (Size): 12953 | Time: 267.20µs
+[INFO]   - Candidate: [Delta { order: 5 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 8150 | Time: 157.20µs
+[INFO]   - Candidate: [Delta { order: 5 }, ZigZag, Leb128, Ans]                    | Score (Size): 8808 | Time: 69.10µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 9189 | Time: 293.30µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 11643 | Time: 245.10µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.47ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 7130
+[INFO]   2. [Delta { order: 5 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 8150
+[INFO]   3. [Delta { order: 5 }, ZigZag, Leb128, Ans]                    | Size: 8808
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 232551 | Time: 2.32ms
+[INFO]   - Candidate: [Delta { order: 5 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 265578 | Time: 2.34ms
+[INFO]   - Candidate: [Delta { order: 5 }, ZigZag, Leb128, Ans]                    | Score (Size): 267517 | Time: 3.00ms
+[INFO] --- Empirical scoring total time: 7.69ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 14946 | Time: 212.80µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 22507 | Time: 221.80µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 21615 | Time: 388.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 28079 | Time: 247.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 19127 | Time: 376.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 22528 | Time: 258.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 16053 | Time: 201.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 16759 | Time: 84.10µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 18390 | Time: 372.30µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 22513 | Time: 242.70µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.67ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 14946
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 16053
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 16759
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 384465 | Time: 2.62ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 440312 | Time: 2.32ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 441877 | Time: 3.07ms
+[INFO] --- Empirical scoring total time: 8.04ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for UInt64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 49002 | Time: 459.30µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 50343 | Time: 278.10µs
+[INFO]   - Candidate: [XorDelta, Zstd { level: 3 }]                                | Score (Size): 39299 | Time: 423.80µs
+[INFO]   - Candidate: [XorDelta, Ans]                                              | Score (Size): 59773 | Time: 232.50µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 20449 | Time: 368.90µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 50342 | Time: 238.20µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.09ms---
+[INFO]   1. [Zstd { level: 3 }]                                          | Size: 20449
+[INFO]   2. [XorDelta, Zstd { level: 3 }]                                | Size: 39299
+[INFO]   3. [Shuffle, Zstd { level: 3 }]                                 | Size: 49002
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for UInt64) ---
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 584486 | Time: 6.71ms
+[INFO]   - Candidate: [XorDelta, Zstd { level: 3 }]                                | Score (Size): 1029778 | Time: 9.64ms
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 1394305 | Time: 8.86ms
+[INFO] --- Empirical scoring total time: 25.36ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for UInt64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 23160 | Time: 413.60µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 19727 | Time: 324.20µs
+[INFO]   - Candidate: [XorDelta, Zstd { level: 3 }]                                | Score (Size): 11480 | Time: 304.70µs
+[INFO]   - Candidate: [XorDelta, Ans]                                              | Score (Size): 32258 | Time: 263.10µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 7811 | Time: 279.60µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 19724 | Time: 259.10µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 1.89ms---
+[INFO]   1. [Zstd { level: 3 }]                                          | Size: 7811
+[INFO]   2. [XorDelta, Zstd { level: 3 }]                                | Size: 11480
+[INFO]   3. [Ans]                                                        | Size: 19724
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for UInt64) ---
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 376173 | Time: 4.75ms
+[INFO]   - Candidate: [XorDelta, Zstd { level: 3 }]                                | Score (Size): 633041 | Time: 7.54ms
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 1103522 | Time: 7.60ms
+[INFO] --- Empirical scoring total time: 19.99ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for UInt64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 58936 | Time: 268.40µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 60035 | Time: 238.60µs
+[INFO]   - Candidate: [XorDelta, Zstd { level: 3 }]                                | Score (Size): 42632 | Time: 455.10µs
+[INFO]   - Candidate: [XorDelta, Ans]                                              | Score (Size): 62977 | Time: 222.60µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 22286 | Time: 388.20µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 60035 | Time: 233.80µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 1.85ms---
+[INFO]   1. [Zstd { level: 3 }]                                          | Size: 22286
+[INFO]   2. [XorDelta, Zstd { level: 3 }]                                | Size: 42632
+[INFO]   3. [Shuffle, Zstd { level: 3 }]                                 | Size: 58936
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for UInt64) ---
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 295752 | Time: 3.47ms
+[INFO]   - Candidate: [XorDelta, Zstd { level: 3 }]                                | Score (Size): 507680 | Time: 5.95ms
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 755616 | Time: 2.44ms
+[INFO] --- Empirical scoring total time: 11.96ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for UInt64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 48673 | Time: 542.60µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 50178 | Time: 291.80µs
+[INFO]   - Candidate: [XorDelta, Zstd { level: 3 }]                                | Score (Size): 38029 | Time: 457.40µs
+[INFO]   - Candidate: [XorDelta, Ans]                                              | Score (Size): 59681 | Time: 234.80µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 19644 | Time: 382.90µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 50177 | Time: 239.20µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.20ms---
+[INFO]   1. [Zstd { level: 3 }]                                          | Size: 19644
+[INFO]   2. [XorDelta, Zstd { level: 3 }]                                | Size: 38029
+[INFO]   3. [Shuffle, Zstd { level: 3 }]                                 | Size: 48673
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for UInt64) ---
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 553307 | Time: 6.63ms
+[INFO]   - Candidate: [XorDelta, Zstd { level: 3 }]                                | Score (Size): 986052 | Time: 9.83ms
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 1379424 | Time: 19.62ms
+[INFO] --- Empirical scoring total time: 36.22ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 25360 | Time: 381.40µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 28490 | Time: 289.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 22818 | Time: 408.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 29385 | Time: 229.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 22446 | Time: 371.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 25085 | Time: 268.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 19622 | Time: 275.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 20354 | Time: 118.50µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 21257 | Time: 381.80µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 28489 | Time: 231.50µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 3.02ms---
+[INFO]   1. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 19622
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 20354
+[INFO]   3. [Zstd { level: 3 }]                                          | Size: 21257
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 547245 | Time: 3.91ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 549750 | Time: 4.47ms
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 597400 | Time: 6.88ms
+[INFO] --- Empirical scoring total time: 15.30ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 8159 | Time: 228.70µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 23286 | Time: 210.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 5679 | Time: 293.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 6193 | Time: 235.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 5688 | Time: 287.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 6193 | Time: 236.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 3641 | Time: 206.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 3397 | Time: 50.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, BitPack { bit_width: 8 }, Zstd { level: 3 }] | Score (Size): 3628 | Time: 373.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, BitPack { bit_width: 8 }, Ans]  | Score (Size): 3381 | Time: 216.30µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 7243 | Time: 281.10µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 23291 | Time: 234.20µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.93ms---
+[INFO]   1. [Delta { order: 1 }, ZigZag, BitPack { bit_width: 8 }, Ans]  | Size: 3381
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 3397
+[INFO]   3. [Delta { order: 1 }, ZigZag, BitPack { bit_width: 8 }, Zstd { level: 3 }] | Size: 3628
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, BitPack { bit_width: 8 }, Ans]  | Score (Size): 24451 | Time: 3.33ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 24460 | Time: 1.64ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, BitPack { bit_width: 8 }, Zstd { level: 3 }] | Score (Size): 31591 | Time: 3.66ms
+[INFO] --- Empirical scoring total time: 8.65ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 16047 | Time: 229.20µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 23463 | Time: 218.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 22150 | Time: 377.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 28772 | Time: 226.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 19406 | Time: 369.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 22940 | Time: 254.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 18079 | Time: 209.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 18785 | Time: 115.70µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 16247 | Time: 341.30µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 23465 | Time: 239.30µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.65ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 16047
+[INFO]   2. [Zstd { level: 3 }]                                          | Size: 16247
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 18079
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 177132 | Time: 1.55ms
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 183672 | Time: 2.55ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 199576 | Time: 2.63ms
+[INFO] --- Empirical scoring total time: 6.83ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 8083 | Time: 354.80µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 9061 | Time: 191.10µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 6910 | Time: 235.20µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 12273 | Time: 218.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 13621 | Time: 326.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 19550 | Time: 256.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 13431 | Time: 458.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 13946 | Time: 264.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 9767 | Time: 256.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 10599 | Time: 97.70µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 9549 | Time: 296.80µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 12275 | Time: 240.90µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 3.28ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 6910
+[INFO]   2. [Dictionary, Zstd { level: 3 }]                              | Size: 8083
+[INFO]   3. [Dictionary, Ans]                                            | Size: 9061
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 74556 | Time: 1.53ms
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 79351 | Time: 2.64ms
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 105250 | Time: 2.65ms
+[INFO] --- Empirical scoring total time: 6.89ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 6663 | Time: 319.30µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 6834 | Time: 181.80µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 4062 | Time: 197.00µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 8276 | Time: 201.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 9276 | Time: 298.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 14409 | Time: 237.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 6719 | Time: 287.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 7731 | Time: 234.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 4661 | Time: 184.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 4642 | Time: 49.40µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 4785 | Time: 276.10µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 8279 | Time: 218.70µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.79ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 4062
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 4642
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 4661
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 42692 | Time: 1.24ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 46803 | Time: 1.61ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 48243 | Time: 1.75ms
+[INFO] --- Empirical scoring total time: 4.67ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 13416 | Time: 213.10µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 20332 | Time: 213.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 19804 | Time: 379.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 25536 | Time: 253.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 18439 | Time: 359.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 19653 | Time: 261.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 14071 | Time: 193.80µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 14714 | Time: 85.60µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 15616 | Time: 329.50µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 20334 | Time: 237.50µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.60ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 13416
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 14071
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 14714
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 140948 | Time: 1.66ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 155158 | Time: 2.23ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 162408 | Time: 1.93ms
+[INFO] --- Empirical scoring total time: 5.88ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 5145 | Time: 228.40µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 9639 | Time: 207.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 11192 | Time: 314.80µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 16657 | Time: 250.80µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 6943 | Time: 294.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 9878 | Time: 240.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 6112 | Time: 171.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 6584 | Time: 56.50µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 5651 | Time: 281.40µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 9640 | Time: 223.00µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.34ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 5145
+[INFO]   2. [Zstd { level: 3 }]                                          | Size: 5651
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 6112
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 67975 | Time: 1.43ms
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 82568 | Time: 1.97ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 74737 | Time: 1.90ms
+[INFO] --- Empirical scoring total time: 5.35ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 13815 | Time: 216.50µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 20713 | Time: 215.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 20446 | Time: 384.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 26072 | Time: 247.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 18784 | Time: 356.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 20191 | Time: 271.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 14792 | Time: 200.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 15463 | Time: 90.40µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 15627 | Time: 331.30µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 20715 | Time: 245.90µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.62ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 13815
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 14792
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 15463
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 146121 | Time: 1.66ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 159657 | Time: 2.33ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 166807 | Time: 2.16ms
+[INFO] --- Empirical scoring total time: 6.20ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 15097 | Time: 276.20µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 22953 | Time: 226.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 20301 | Time: 419.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 27033 | Time: 232.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 17632 | Time: 407.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 21136 | Time: 246.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 16702 | Time: 271.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 17520 | Time: 112.30µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 12550 | Time: 370.40µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 22955 | Time: 233.90µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.87ms---
+[INFO]   1. [Zstd { level: 3 }]                                          | Size: 12550
+[INFO]   2. [Shuffle, Zstd { level: 3 }]                                 | Size: 15097
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 16702
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 16833 | Time: 402.90µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 20744 | Time: 291.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 22684 | Time: 299.50µs
+[INFO] --- Empirical scoring total time: 1.01ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 6703 | Time: 369.70µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 9015 | Time: 207.10µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 6447 | Time: 251.00µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 12519 | Time: 224.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 11398 | Time: 321.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 17459 | Time: 250.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 11089 | Time: 313.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 12104 | Time: 261.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 8251 | Time: 235.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 9596 | Time: 93.70µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 7715 | Time: 282.40µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 12519 | Time: 240.80µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 3.13ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 6447
+[INFO]   2. [Dictionary, Zstd { level: 3 }]                              | Size: 6703
+[INFO]   3. [Zstd { level: 3 }]                                          | Size: 7715
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 8667 | Time: 273.80µs
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 8870 | Time: 376.60µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 10258 | Time: 313.00µs
+[INFO] --- Empirical scoring total time: 982.20µs ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 5337 | Time: 321.50µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 6810 | Time: 182.20µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 3472 | Time: 212.30µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 7446 | Time: 214.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 7852 | Time: 332.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 12925 | Time: 239.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 6075 | Time: 294.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 6477 | Time: 238.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 4045 | Time: 208.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 4043 | Time: 53.70µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 4056 | Time: 283.60µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 7447 | Time: 223.30µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.88ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 3472
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 4043
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 4045
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 4536 | Time: 255.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 5232 | Time: 129.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 5241 | Time: 228.70µs
+[INFO] --- Empirical scoring total time: 630.60µs ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 4230 | Time: 293.50µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 4055 | Time: 189.20µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 2549 | Time: 215.00µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 6520 | Time: 207.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 6840 | Time: 284.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 11591 | Time: 240.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 5452 | Time: 291.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 5492 | Time: 234.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 2951 | Time: 197.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 3144 | Time: 52.20µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 2471 | Time: 245.50µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 6520 | Time: 221.20µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.74ms---
+[INFO]   1. [Zstd { level: 3 }]                                          | Size: 2471
+[INFO]   2. [Shuffle, Zstd { level: 3 }]                                 | Size: 2549
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 2951
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 26870 | Time: 1.51ms
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 28080 | Time: 1.48ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 31584 | Time: 1.73ms
+[INFO] --- Empirical scoring total time: 4.78ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 150 | Time: 155.40µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 545 | Time: 19.10µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 86 | Time: 135.40µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 635 | Time: 19.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 185 | Time: 132.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 234 | Time: 19.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 157 | Time: 132.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 129 | Time: 18.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 135 | Time: 133.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 115 | Time: 5.60µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 175 | Time: 137.80µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 635 | Time: 20.60µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 986.90µs---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 86
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 115
+[INFO]   3. [Delta { order: 1 }, ZigZag, Ans]                            | Size: 129
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 86 | Time: 159.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 115 | Time: 7.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 129 | Time: 18.80µs
+[INFO] --- Empirical scoring total time: 205.50µs ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 133 | Time: 154.40µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 545 | Time: 18.40µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 95 | Time: 150.80µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 622 | Time: 18.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 161 | Time: 125.80µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 227 | Time: 18.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 145 | Time: 131.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 120 | Time: 18.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 122 | Time: 132.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 106 | Time: 5.20µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 120 | Time: 156.20µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 622 | Time: 20.30µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 1.02ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 95
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 106
+[INFO]   3. [Delta { order: 1 }, ZigZag, Ans]                            | Size: 120
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 95 | Time: 136.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 106 | Time: 5.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 120 | Time: 18.20µs
+[INFO] --- Empirical scoring total time: 174.80µs ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 13572 | Time: 216.50µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 20747 | Time: 204.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 18608 | Time: 361.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 29156 | Time: 221.80µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 17108 | Time: 327.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 23453 | Time: 240.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 16601 | Time: 261.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 18727 | Time: 112.60µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 10427 | Time: 283.20µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 20750 | Time: 231.20µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.52ms---
+[INFO]   1. [Zstd { level: 3 }]                                          | Size: 10427
+[INFO]   2. [Shuffle, Zstd { level: 3 }]                                 | Size: 13572
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 16601
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 20422 | Time: 449.80µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 26398 | Time: 313.80µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 30472 | Time: 456.70µs
+[INFO] --- Empirical scoring total time: 1.24ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 5006 | Time: 321.70µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 5727 | Time: 188.40µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 3045 | Time: 219.00µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 6663 | Time: 204.80µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 8201 | Time: 336.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 13913 | Time: 234.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 5393 | Time: 278.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 7411 | Time: 229.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 4099 | Time: 218.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 4826 | Time: 63.10µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 4397 | Time: 275.30µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 6663 | Time: 217.70µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.86ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 3045
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 4099
+[INFO]   3. [Zstd { level: 3 }]                                          | Size: 4397
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 4199 | Time: 280.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 5437 | Time: 263.20µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 5987 | Time: 326.30µs
+[INFO] --- Empirical scoring total time: 888.20µs ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 6890 | Time: 222.00µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 22910 | Time: 218.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 3854 | Time: 288.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 5083 | Time: 237.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 3801 | Time: 365.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 5081 | Time: 238.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 2997 | Time: 299.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 2764 | Time: 55.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, BitPack { bit_width: 10 }, Zstd { level: 3 }] | Score (Size): FAILED TO EXECUTE
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, BitPack { bit_width: 10 }, Ans] | Score (Size): FAILED TO EXECUTE
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 6578 | Time: 350.80µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 22914 | Time: 234.70µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.61ms---
+[INFO]   1. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 2764
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 2997
+[INFO]   3. [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Size: 3801
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 29203 | Time: 1.90ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 40876 | Time: 1.72ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 55778 | Time: 3.00ms
+[INFO] --- Empirical scoring total time: 6.65ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 3652 | Time: 353.50µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 6583 | Time: 182.70µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 2483 | Time: 270.60µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 8104 | Time: 216.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 5214 | Time: 282.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 9493 | Time: 245.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 4537 | Time: 274.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 4363 | Time: 240.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 2837 | Time: 163.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 2982 | Time: 59.00µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 2921 | Time: 208.90µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 8105 | Time: 227.90µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.80ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 2483
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 2837
+[INFO]   3. [Zstd { level: 3 }]                                          | Size: 2921
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 75593 | Time: 2.07ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 85968 | Time: 2.37ms
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 93029 | Time: 2.67ms
+[INFO] --- Empirical scoring total time: 7.15ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 3712 | Time: 301.50µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 6208 | Time: 184.00µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 2496 | Time: 237.40µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 8046 | Time: 210.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 5367 | Time: 278.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 9502 | Time: 240.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 4600 | Time: 269.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 4371 | Time: 246.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 2870 | Time: 231.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 2965 | Time: 58.90µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 2974 | Time: 248.20µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 8047 | Time: 219.60µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.80ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 2496
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 2870
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 2965
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 68401 | Time: 2.04ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 77184 | Time: 2.21ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 82615 | Time: 2.17ms
+[INFO] --- Empirical scoring total time: 6.49ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 11687 | Time: 235.60µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 22673 | Time: 227.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 12926 | Time: 313.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 21522 | Time: 256.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 11430 | Time: 292.80µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 15911 | Time: 288.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 10709 | Time: 234.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 13548 | Time: 108.50µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 7603 | Time: 262.10µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 22681 | Time: 244.60µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.53ms---
+[INFO]   1. [Zstd { level: 3 }]                                          | Size: 7603
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 10709
+[INFO]   3. [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Size: 11430
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 214010 | Time: 3.38ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 319711 | Time: 3.82ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 346523 | Time: 5.20ms
+[INFO] --- Empirical scoring total time: 12.46ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 4762 | Time: 304.80µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 8561 | Time: 192.10µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 4685 | Time: 219.90µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 12190 | Time: 224.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 7453 | Time: 270.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 13642 | Time: 273.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 7337 | Time: 269.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 8767 | Time: 261.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 5277 | Time: 210.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 7145 | Time: 84.60µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 5167 | Time: 232.10µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 12192 | Time: 242.50µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.87ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 4685
+[INFO]   2. [Dictionary, Zstd { level: 3 }]                              | Size: 4762
+[INFO]   3. [Zstd { level: 3 }]                                          | Size: 5167
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 132704 | Time: 2.50ms
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 129013 | Time: 3.91ms
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 149780 | Time: 2.99ms
+[INFO] --- Empirical scoring total time: 9.44ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 11812 | Time: 267.50µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 21922 | Time: 227.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 13060 | Time: 328.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 21933 | Time: 258.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 11724 | Time: 320.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 16432 | Time: 266.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 10760 | Time: 244.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 13769 | Time: 109.40µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 7448 | Time: 268.70µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 21925 | Time: 245.60µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.60ms---
+[INFO]   1. [Zstd { level: 3 }]                                          | Size: 7448
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 10760
+[INFO]   3. [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Size: 11724
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 200319 | Time: 3.21ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 308837 | Time: 3.85ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 335526 | Time: 5.13ms
+[INFO] --- Empirical scoring total time: 12.25ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 4295 | Time: 308.30µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 7789 | Time: 181.70µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 4209 | Time: 234.60µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 11660 | Time: 225.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 6908 | Time: 267.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 12371 | Time: 254.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 6691 | Time: 269.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 7677 | Time: 263.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 4665 | Time: 211.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 6305 | Time: 83.40µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 4772 | Time: 237.70µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 11657 | Time: 236.80µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.85ms---
+[INFO]   1. [Shuffle, Zstd { level: 3 }]                                 | Size: 4209
+[INFO]   2. [Dictionary, Zstd { level: 3 }]                              | Size: 4295
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 4665
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 116824 | Time: 2.51ms
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 115797 | Time: 3.86ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 122574 | Time: 2.99ms
+[INFO] --- Empirical scoring total time: 9.40ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 4525 | Time: 302.20µs
+[INFO]   - Candidate: [Dictionary, Ans]                                            | Score (Size): 8062 | Time: 181.10µs
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 5088 | Time: 234.80µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 13005 | Time: 246.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 7257 | Time: 285.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 12951 | Time: 254.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 7089 | Time: 286.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 8405 | Time: 259.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 5034 | Time: 216.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 6786 | Time: 90.70µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 5212 | Time: 249.90µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 13006 | Time: 246.80µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.92ms---
+[INFO]   1. [Dictionary, Zstd { level: 3 }]                              | Size: 4525
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 5034
+[INFO]   3. [Shuffle, Zstd { level: 3 }]                                 | Size: 5088
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Dictionary, Zstd { level: 3 }]                              | Score (Size): 130396 | Time: 4.07ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 144140 | Time: 3.19ms
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 144871 | Time: 2.69ms
+[INFO] --- Empirical scoring total time: 9.98ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 12171 | Time: 282.30µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 20838 | Time: 276.70µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 15241 | Time: 337.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 21013 | Time: 250.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 13122 | Time: 319.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 15490 | Time: 261.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 11719 | Time: 224.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 12797 | Time: 102.20µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 12588 | Time: 299.10µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 20838 | Time: 237.00µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.65ms---
+[INFO]   1. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 11719
+[INFO]   2. [Shuffle, Zstd { level: 3 }]                                 | Size: 12171
+[INFO]   3. [Zstd { level: 3 }]                                          | Size: 12588
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 222036 | Time: 3.15ms
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 378799 | Time: 4.55ms
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 222414 | Time: 3.38ms
+[INFO] --- Empirical scoring total time: 11.12ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for UInt64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 17184 | Time: 340.80µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 33828 | Time: 269.90µs
+[INFO]   - Candidate: [XorDelta, Zstd { level: 3 }]                                | Score (Size): 18678 | Time: 385.50µs
+[INFO]   - Candidate: [XorDelta, Ans]                                              | Score (Size): 33018 | Time: 274.90µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 15239 | Time: 341.50µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 33828 | Time: 266.80µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 1.92ms---
+[INFO]   1. [Zstd { level: 3 }]                                          | Size: 15239
+[INFO]   2. [Shuffle, Zstd { level: 3 }]                                 | Size: 17184
+[INFO]   3. [XorDelta, Zstd { level: 3 }]                                | Size: 18678
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for UInt64) ---
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 433285 | Time: 4.96ms
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 445797 | Time: 4.74ms
+[INFO]   - Candidate: [XorDelta, Zstd { level: 3 }]                                | Score (Size): 529420 | Time: 6.65ms
+[INFO] --- Empirical scoring total time: 16.42ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 10510 | Time: 289.00µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 21138 | Time: 228.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 13569 | Time: 348.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 19067 | Time: 263.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 12627 | Time: 351.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 13211 | Time: 275.50µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 9304 | Time: 239.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 10236 | Time: 85.70µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 11591 | Time: 320.50µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 21139 | Time: 243.30µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.72ms---
+[INFO]   1. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 9304
+[INFO]   2. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 10236
+[INFO]   3. [Shuffle, Zstd { level: 3 }]                                 | Size: 10510
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 291931 | Time: 3.54ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 299775 | Time: 2.87ms
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 283692 | Time: 2.68ms
+[INFO] --- Empirical scoring total time: 9.14ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 3841 | Time: 275.20µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 9465 | Time: 213.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 6791 | Time: 292.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 11133 | Time: 247.40µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 5492 | Time: 332.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 5577 | Time: 247.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 3691 | Time: 250.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 3881 | Time: 60.50µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 4118 | Time: 328.50µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 9465 | Time: 226.00µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 2.55ms---
+[INFO]   1. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 3691
+[INFO]   2. [Shuffle, Zstd { level: 3 }]                                 | Size: 3841
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 3881
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 145117 | Time: 2.90ms
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 137850 | Time: 2.55ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 151631 | Time: 2.41ms
+[INFO] --- Empirical scoring total time: 7.89ms ---
+[INFO] 
+--- STAGE 1: find_top_n_candidates_by_trial EMPIRICAL SCORING ON SAMPLE (for Int64) ---
+[INFO]   - Candidate: [Shuffle, Zstd { level: 3 }]                                 | Score (Size): 10546 | Time: 331.30µs
+[INFO]   - Candidate: [Shuffle, Ans]                                               | Score (Size): 21213 | Time: 218.30µs
+[INFO]   - Candidate: [Delta { order: 1 }, Zstd { level: 3 }]                      | Score (Size): 13440 | Time: 388.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, Ans]                                    | Score (Size): 19035 | Time: 257.10µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Zstd { level: 3 }]              | Score (Size): 12756 | Time: 361.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Ans]                            | Score (Size): 13244 | Time: 260.20µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 9297 | Time: 235.00µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 10215 | Time: 81.60µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, BitPack { bit_width: 14 }, Zstd { level: 3 }] | Score (Size): 10190 | Time: 571.90µs
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, BitPack { bit_width: 14 }, Ans] | Score (Size): 10886 | Time: 399.80µs
+[INFO]   - Candidate: [Zstd { level: 3 }]                                          | Score (Size): 11956 | Time: 363.30µs
+[INFO]   - Candidate: [Ans]                                                        | Score (Size): 21222 | Time: 233.20µs
+[INFO] 
+--- TOP 3 CANDIDATES BY SAMPLE SIZE 3.79ms---
+[INFO]   1. [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Size: 9297
+[INFO]   2. [Delta { order: 1 }, ZigZag, BitPack { bit_width: 14 }, Zstd { level: 3 }] | Size: 10190
+[INFO]   3. [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Size: 10215
+[INFO] 
+--- find_best_pipeline_by_trial EMPIRICAL PLANNER SCORING (for Int64) ---
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Zstd { level: 3 }]      | Score (Size): 279862 | Time: 4.66ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, BitPack { bit_width: 14 }, Zstd { level: 3 }] | Score (Size): 292465 | Time: 12.66ms
+[INFO]   - Candidate: [Delta { order: 1 }, ZigZag, Leb128, Ans]                    | Score (Size): 284723 | Time: 3.38ms
+[INFO] --- Empirical scoring total time: 20.77ms ---

@@ -9,15 +9,33 @@ import logging
 import json
 import zstandard
 
-# ... (All setup and helper functions are the same) ...
-logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
 logger = logging.getLogger(__name__)
-
 try:
     import phoenix_cache
 except ImportError:
     logger.error("Could not import 'phoenix_cache'. Make sure it is installed correctly.")
     sys.exit(1)
+logger.setLevel(logging.DEBUG)  # Set logger level globally
+
+# Console handler: DEBUG and above
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+console_formatter = logging.Formatter('%(message)s')
+console_handler.setFormatter(console_formatter)
+
+# File handler: INFO and above
+file_handler = logging.FileHandler(f"test_cols_{phoenix_cache.__version__}.txt", mode='w', encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_formatter = logging.Formatter('%(message)s')
+file_handler.setFormatter(file_formatter)
+
+# Remove any existing handlers
+if logger.hasHandlers():
+    logger.handlers.clear()
+
+# Add new handlers
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
 
 TUBUIN_PROCESSOR_PATH = "V:/Github/tubuin-processor/src"
 sys.path.append(TUBUIN_PROCESSOR_PATH)
@@ -49,7 +67,7 @@ def write_phoenix_frame(output_path: pathlib.Path, compressed_columns: dict):
         f.write(toc_json_bytes)
         for blob in data_blobs:
             f.write(blob)
-    logger.info(f"✅ Successfully wrote Phoenix frame to: {output_path}")
+    logger.debug(f"✅ Successfully wrote Phoenix frame to: {output_path}")
 
 
 def main(aspect_name):
@@ -61,10 +79,10 @@ def main(aspect_name):
         logger.error(f"MPK file not found at '{MPK_FILE_PATH}'")
         return
 
-    logger.info(f"--- Starting MPK Compression Test for: {MPK_FILE_PATH.name} (Aspect: {aspect_name}) ---")
+    logger.debug(f"--- Starting MPK Compression Test for: {MPK_FILE_PATH.name} (Aspect: {aspect_name}) ---")
     mpk_bytes = MPK_FILE_PATH.read_bytes()
-    logger.info(f"  - Loaded {len(mpk_bytes):,} bytes from disk.")
-    logger.info("  - Decoding and transforming records...")
+    logger.debug(f"  - Loaded {len(mpk_bytes):,} bytes from disk.")
+    logger.debug("  - Decoding and transforming records...")
     start_time = time.perf_counter()
     try:
         raw_model_stream = stream_decode_aspect(aspect_name, mpk_bytes)
@@ -74,13 +92,13 @@ def main(aspect_name):
         logger.error(f"An error occurred during the decode/transform phase: {e}", exc_info=True)
         return
     transform_time = time.perf_counter() - start_time
-    logger.info(f"  - Transformation complete in {transform_time:.2f}s. Found {len(clean_data_list):,} records.")
+    logger.debug(f"  - Transformation complete in {transform_time:.2f}s. Found {len(clean_data_list):,} records.")
 
     if not clean_data_list:
         logger.warning("  - No data to compress after transformation. Exiting.")
         return
 
-    logger.info("  - Creating PyArrow Table...")
+    logger.debug("  - Creating PyArrow Table...")
     try:
         arrow_table = pa.Table.from_pylist(clean_data_list)
     except Exception as e:
@@ -88,11 +106,12 @@ def main(aspect_name):
         return
 
     # --- BENCHMARKING ---
-    logger.info("  - Running all benchmarks...")
+    logger.debug("  - Running all benchmarks...")
     
     all_column_results = {}
     phoenix_compressed_columns = {}
     zstd_compressor = zstandard.ZstdCompressor(level=3)
+    phoenix_cache.enable_verbose_logging(f"test_cols_{phoenix_cache.__version__}.txt")
 
     for column_name in arrow_table.column_names:
         # ... (This loop is unchanged, it populates all_column_results) ...
@@ -102,6 +121,9 @@ def main(aspect_name):
         all_column_results[column_name] = {}
         try:
             analysis_result = phoenix_cache.compress_analyze(column_array)
+            logger.info(f"\nRunning Aspect:{aspect} Column:{column_name}")
+            for handler in logger.handlers:
+                handler.flush()
             phoenix_compressed_columns[column_name] = analysis_result['artifact']
             all_column_results[column_name]["phoenix_size"] = len(analysis_result['artifact'])
             all_column_results[column_name]["plan"] = analysis_result['plan']
