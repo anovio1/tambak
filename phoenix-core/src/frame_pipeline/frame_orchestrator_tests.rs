@@ -2,7 +2,7 @@
 mod tests {
     use std::sync::Arc;
 
-    use crate::chunk_pipeline::frame_orchestrator::{
+    use crate::frame_pipeline::frame_orchestrator::{
         compress_frame, decompress_frame, get_frame_diagnostics,
     };
     use crate::chunk_pipeline::models::{Operation, Plan}; // For plan inspection

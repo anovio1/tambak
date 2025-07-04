@@ -12,7 +12,7 @@ use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 // Use an alias for clarity, as we now interact with the chunk-level orchestrator.
-use super::orchestrator;
+use crate::chunk_pipeline::orchestrator;
 use crate::bridge;
 use crate::error::PhoenixError;
 use crate::chunk_pipeline::artifact::CompressedChunk;

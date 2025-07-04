@@ -22,6 +22,7 @@ mod error;
 mod ffi;
 mod kernels;
 mod null_handling;
+mod frame_pipeline;
 mod chunk_pipeline;
 mod traits;
 mod types;

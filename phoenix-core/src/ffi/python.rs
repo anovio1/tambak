@@ -13,7 +13,8 @@ use std::sync::{Arc, Once};
 
 use crate::error::PhoenixError;
 use crate::ffi::ioadapters::{self, PyRecordBatchReader, PythonFileReader, PythonFileWriter};
-use crate::chunk_pipeline::{frame_orchestrator, orchestrator, planner};
+use crate::chunk_pipeline::{orchestrator, planner};
+use crate::frame_pipeline::{frame_orchestrator};
 // NEW: Import PlanningContext
 use crate::chunk_pipeline::planner::PlanningContext;
 use crate::types::PhoenixDataType;
