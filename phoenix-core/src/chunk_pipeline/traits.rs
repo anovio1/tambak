@@ -10,7 +10,7 @@
 //! executor to be driven directly by the described behavior.
 
 use crate::error::PhoenixError;
-use crate::pipeline::models::Operation;
+use crate::chunk_pipeline::models::Operation;
 use crate::types::PhoenixDataType;
 
 // --- NEW: A richer enum to describe the outcome of an operation ---
@@ -100,7 +100,7 @@ impl OperationBehavior for Operation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::models::Operation;
+    use crate::chunk_pipeline::models::Operation;
     use crate::types::PhoenixDataType;
 
     #[test]

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use super::orchestrator;
 use crate::bridge;
 use crate::error::PhoenixError;
-use crate::pipeline::artifact::CompressedChunk;
+use crate::chunk_pipeline::artifact::CompressedChunk;
 
 //==================================================================================
 // 1. Phoenix Frame Format (.phnx)

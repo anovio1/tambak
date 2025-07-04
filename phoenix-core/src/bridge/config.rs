@@ -5,7 +5,7 @@
 
 use arrow::datatypes::SchemaRef;
 // TODO: Re-export the PlannerStrategy from the pipeline/models.rs when it exists.
-// use crate::pipeline::models::PlannerStrategy;
+// use crate::chunk_pipeline::models::PlannerStrategy;
 
 /// Defines the output format strategy for the Compressor.
 #[derive(Debug, Clone, Copy, Default)]

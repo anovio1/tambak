@@ -14,9 +14,9 @@
 
 use crate::error::PhoenixError;
 use crate::kernels::zigzag;
-use crate::pipeline::context::PipelineInput;
-use crate::pipeline::models::{Operation, Plan};
-use crate::pipeline::{self, executor};
+use crate::chunk_pipeline::context::PipelineInput;
+use crate::chunk_pipeline::models::{Operation, Plan};
+use crate::chunk_pipeline::{self, executor};
 use crate::types::PhoenixDataType;
 use crate::utils::safe_bytes_to_typed_slice;
 

@@ -8,9 +8,9 @@
 
 use crate::error::PhoenixError;
 use crate::kernels;
-use crate::pipeline::models::Operation;
+use crate::chunk_pipeline::models::Operation;
 // --- USE THE NEW TRAIT ---
-use crate::pipeline::traits::{OperationBehavior, StreamTransform};
+use crate::chunk_pipeline::traits::{OperationBehavior, StreamTransform};
 use crate::types::PhoenixDataType;
 use colored::*;
 

@@ -6,7 +6,7 @@
 //! aware of the system's operation set and type transformation rules.
 
 use crate::error::PhoenixError;
-use crate::pipeline::models::Operation;
+use crate::chunk_pipeline::models::Operation;
 use crate::types::PhoenixDataType; // Using the shared type from the library
 use std::collections::HashSet;
 

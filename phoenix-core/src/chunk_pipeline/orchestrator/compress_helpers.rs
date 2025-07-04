@@ -3,14 +3,14 @@ use std::collections::HashMap;
 
 use crate::error::PhoenixError;
 use crate::kernels;
-use crate::pipeline::artifact::CompressedChunk;
-use crate::pipeline::context::PipelineInput;
-use crate::pipeline::models::{Operation, Plan};
-use crate::pipeline::orchestrator::helpers::StrategyResult;
-use crate::pipeline::planner::PlanningContext;
-use crate::pipeline::traits::StreamTransform;
-use crate::pipeline::OperationBehavior;
-use crate::pipeline::{executor, planner};
+use crate::chunk_pipeline::artifact::CompressedChunk;
+use crate::chunk_pipeline::context::PipelineInput;
+use crate::chunk_pipeline::models::{Operation, Plan};
+use crate::chunk_pipeline::orchestrator::helpers::StrategyResult;
+use crate::chunk_pipeline::planner::PlanningContext;
+use crate::chunk_pipeline::traits::StreamTransform;
+use crate::chunk_pipeline::OperationBehavior;
+use crate::chunk_pipeline::{executor, planner};
 use crate::types::PhoenixDataType;
 
 //==================================================================================

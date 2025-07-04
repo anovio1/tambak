@@ -4,11 +4,11 @@ use std::collections::HashMap;
 
 use crate::error::PhoenixError;
 use crate::kernels;
-use crate::pipeline::executor;
-use crate::pipeline::models::{Operation, Plan};
-use crate::pipeline::orchestrator::helpers::*;
-use crate::pipeline::traits::StreamTransform;
-use crate::pipeline::OperationBehavior;
+use crate::chunk_pipeline::executor;
+use crate::chunk_pipeline::models::{Operation, Plan};
+use crate::chunk_pipeline::orchestrator::helpers::*;
+use crate::chunk_pipeline::traits::StreamTransform;
+use crate::chunk_pipeline::OperationBehavior;
 use crate::types::PhoenixDataType;
 
 //==================================================================================

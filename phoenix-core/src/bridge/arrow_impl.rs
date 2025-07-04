@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::error::PhoenixError;
 use crate::null_handling::bitmap;
-use crate::pipeline::context::{PipelineInput, PipelineOutput};
+use crate::chunk_pipeline::context::{PipelineInput, PipelineOutput};
 use crate::types::PhoenixDataType;
 use crate::utils::typed_slice_to_bytes;
 

@@ -3,12 +3,12 @@
 //!
 //! It declares all kernel sub-modules and provides a single, unified `dispatch`
 //! function for both encoding and decoding. This dispatcher is the sole entry
-//! point for the `pipeline::executor`. It takes a strongly-typed `Operation`
+//! point for the `chunk_pipeline::executor`. It takes a strongly-typed `Operation`
 //! and `PhoenixDataType` and calls the appropriate generic kernel implementation,
 //! ensuring type safety at compile time.
 
 use crate::error::PhoenixError;
-use crate::pipeline::models::Operation;
+use crate::chunk_pipeline::models::Operation;
 use crate::types::PhoenixDataType;
 use crate::utils::typed_slice_to_bytes;
 
@@ -439,7 +439,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        pipeline::{traits::StreamTransform, OperationBehavior},
+        chunk_pipeline::{traits::StreamTransform, OperationBehavior},
         utils::typed_slice_to_bytes,
     };
 

@@ -5,16 +5,16 @@ use std::collections::HashMap;
 
 use crate::error::PhoenixError;
 use crate::kernels;
-use crate::pipeline::artifact::CompressedChunk;
-use crate::pipeline::context::{PipelineInput, PipelineOutput};
-use crate::pipeline::models::{Operation, Plan};
-use crate::pipeline::orchestrator::compress_helpers::*;
-use crate::pipeline::orchestrator::decompress_helpers::*;
-use crate::pipeline::orchestrator::helpers::*;
-use crate::pipeline::planner::PlanningContext;
-use crate::pipeline::traits::StreamTransform;
-use crate::pipeline::OperationBehavior;
-use crate::pipeline::{executor, planner};
+use crate::chunk_pipeline::artifact::CompressedChunk;
+use crate::chunk_pipeline::context::{PipelineInput, PipelineOutput};
+use crate::chunk_pipeline::models::{Operation, Plan};
+use crate::chunk_pipeline::orchestrator::compress_helpers::*;
+use crate::chunk_pipeline::orchestrator::decompress_helpers::*;
+use crate::chunk_pipeline::orchestrator::helpers::*;
+use crate::chunk_pipeline::planner::PlanningContext;
+use crate::chunk_pipeline::traits::StreamTransform;
+use crate::chunk_pipeline::OperationBehavior;
+use crate::chunk_pipeline::{executor, planner};
 use crate::types::PhoenixDataType;
 
 //==================================================================================
@@ -93,7 +93,7 @@ pub fn compress_chunk(input: PipelineInput) -> Result<Vec<u8>, PhoenixError> {
         pipeline: final_pipeline,
     };
 
-    let artifact = crate::pipeline::artifact::CompressedChunk {
+    let artifact = crate::chunk_pipeline::artifact::CompressedChunk {
         total_rows: input.total_rows as u64,
         original_type: final_plan_struct.initial_type.to_string(),
         plan_json: serde_json::to_string(&final_plan_struct)?,

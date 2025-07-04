@@ -17,18 +17,18 @@
 //
 //   2. [Stateless API (compress_arrow_chunk)] -> Receives `&dyn Array`
 //         |
-//         `-> a. Calls `arrow_impl` to convert `&dyn Array` -> `pipeline::context::PipelineInput`
+//         `-> a. Calls `arrow_impl` to convert `&dyn Array` -> `chunk_pipeline::context::PipelineInput`
 //         |
 //         `-> b. Calls the pure engine with the `PipelineInput`
 //
-//   3. [Pipeline Engine (pipeline::orchestrator)] -> Returns `Result<Vec<u8>>` (a serialized chunk)
+//   3. [Pipeline Engine (chunk_pipeline::orchestrator)] -> Returns `Result<Vec<u8>>` (a serialized chunk)
 //
 //
 // Data Flow (Decompression):
 //
-//   1. [Pipeline Engine (pipeline::orchestrator)] -> Receives `&[u8]` (a serialized chunk)
+//   1. [Pipeline Engine (chunk_pipeline::orchestrator)] -> Receives `&[u8]` (a serialized chunk)
 //         |
-//         `-> Returns `Result<pipeline::context::PipelineOutput, PhoenixError>`
+//         `-> Returns `Result<chunk_pipeline::context::PipelineOutput, PhoenixError>`
 //
 //   2. [Stateless API (decompress_arrow_chunk)] -> Receives `PipelineOutput` from the engine
 //         |

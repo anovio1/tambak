@@ -7,11 +7,11 @@ use std::collections::HashMap;
 
 use crate::error::PhoenixError;
 use crate::null_handling::bitmap;
-use crate::pipeline::models::Operation;
-use crate::pipeline::planner::PlanningContext;
-use crate::pipeline::traits::StreamTransform;
-use crate::pipeline::OperationBehavior;
-use crate::pipeline::{executor, planner};
+use crate::chunk_pipeline::models::Operation;
+use crate::chunk_pipeline::planner::PlanningContext;
+use crate::chunk_pipeline::traits::StreamTransform;
+use crate::chunk_pipeline::OperationBehavior;
+use crate::chunk_pipeline::{executor, planner};
 use crate::types::PhoenixDataType;
 use crate::utils::typed_slice_to_bytes;
 

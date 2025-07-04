@@ -3,8 +3,8 @@
 #[cfg(test)]
 mod tests {
     // MODIFIED: Import PlanningContext
-    use crate::pipeline::planner::{plan_pipeline, PlanningContext};
-    use crate::pipeline::{executor, models::Operation};
+    use crate::chunk_pipeline::planner::{plan_pipeline, PlanningContext};
+    use crate::chunk_pipeline::{executor, models::Operation};
     use crate::types::PhoenixDataType;
     use crate::utils::typed_slice_to_bytes;
 

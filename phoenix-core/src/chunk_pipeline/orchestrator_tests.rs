@@ -1,10 +1,10 @@
 use std::any::TypeId;
 
 use crate::bridge;
-use crate::pipeline::artifact::CompressedChunk;
-use crate::pipeline::context::{PipelineInput, PipelineOutput};
-use crate::pipeline::orchestrator::{compress_chunk, decompress_chunk};
-use crate::pipeline::{Operation, Plan};
+use crate::chunk_pipeline::artifact::CompressedChunk;
+use crate::chunk_pipeline::context::{PipelineInput, PipelineOutput};
+use crate::chunk_pipeline::orchestrator::{compress_chunk, decompress_chunk};
+use crate::chunk_pipeline::{Operation, Plan};
 use crate::types::PhoenixDataType;
 
 // We also need to bring in any external test dependencies.
