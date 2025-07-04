@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::error::PhoenixError;
 use crate::kernels;
 use crate::chunk_pipeline::executor;
-use crate::chunk_pipeline::models::{Operation, Plan};
+use crate::chunk_pipeline::models::{Operation, ChunkPlan};
 use crate::chunk_pipeline::orchestrator::helpers::*;
 use crate::chunk_pipeline::traits::StreamTransform;
 use crate::chunk_pipeline::OperationBehavior;
@@ -17,7 +17,7 @@ use crate::types::PhoenixDataType;
 
 /// Decompresses only the null mask stream from the artifact.
 pub fn decompress_null_mask_stream(
-    plan: &Plan,
+    plan: &ChunkPlan,
     streams: &mut HashMap<String, Vec<u8>>,
     total_rows: usize,
 ) -> Result<Option<Vec<u8>>, PhoenixError> {
@@ -38,7 +38,7 @@ pub fn decompress_null_mask_stream(
 
 /// Decompresses only the sparsity mask stream from the artifact.
 pub fn decompress_sparsity_mask_stream(
-    plan: &Plan,
+    plan: &ChunkPlan,
     streams: &mut HashMap<String, Vec<u8>>,
     num_valid_rows: usize,
 ) -> Result<Option<Vec<u8>>, PhoenixError> {
@@ -61,7 +61,7 @@ pub fn decompress_sparsity_mask_stream(
 /// Handles the complete decompression logic for a sparse pipeline.
 /// This logic is preserved from the original implementation but now lives in its own function.
 pub fn decompress_sparse_pipeline(
-    plan: &Plan,
+    plan: &ChunkPlan,
     main_data: Vec<u8>,
     sparsity_mask_bytes: Option<Vec<u8>>,
     num_valid_rows: usize,
@@ -143,7 +143,7 @@ pub fn decompress_sparse_pipeline(
 /// Handles the complete decompression logic for a dense (non-sparse) pipeline.
 /// This implementation includes the architect's O(N) performance optimization.
 pub fn decompress_dense_pipeline(
-    plan: &Plan,
+    plan: &ChunkPlan,
     main_data: Vec<u8>,
     num_valid_rows: usize,
 ) -> Result<Vec<u8>, PhoenixError> {

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// The top-level container for a complete, multi-stage compression plan.
 /// It is serialized to JSON and stored in the final artifact.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Plan {
+pub struct ChunkPlan {
     /// Semantic version of the plan format; incremented when the JSON schema changes.
     pub plan_version: u32,
     /// The data type of the stream before any operations are applied.

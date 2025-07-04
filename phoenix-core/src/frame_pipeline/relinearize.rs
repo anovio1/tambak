@@ -1,17 +1,24 @@
-//! This module contains the v4.0 "Time-Series Re-linearization Engine".
+//! This module contains the v4.0 "Time-Series Re-linearization Engine" (updated in 4.).
 //!
-//! Its purpose is to transform a flattened, multiplexed dataset into a collection
-//! of independent, sorted time-series streams, making them highly compressible.
-//! This is a classic "group-by/sort" operation guided by user hints.
+//! This module contains the "Time-Series Re-linearization Engine" for `RecordBatch`es.
+//! Its purpose is to transform RecordBatch data into a more compressible format
+//! by re-ordering based on key and timestamp columns within a single batch.
 
 use arrow::array::{as_primitive_array, Array, PrimitiveArray};
 use arrow::compute::kernels::take;
 use arrow::datatypes::{ArrowPrimitiveType, Int64Type};
-use arrow::record_batch::RecordBatch;
+use arrow::record_batch::RecordBatch; // Only for relinearize_all_streams, which might be deprecated or internal
 use std::collections::HashMap;
 
 use crate::error::PhoenixError;
 use crate::log_metric;
+
+use arrow::array::{ArrayRef, BooleanArray, BooleanBuilder, PrimitiveBuilder};
+use arrow::datatypes::{
+    BooleanType, DataType, Float32Type, Float64Type, Int16Type, Int32Type, Int8Type, UInt16Type,
+    UInt32Type, UInt64Type, UInt8Type,
+};
+use std::sync::Arc;
 
 /// A collection of relinearized data streams for a single stream_id.
 #[derive(Debug, Default)]
@@ -28,6 +35,9 @@ struct TempStreamData {
     original_index: u32,
 }
 
+// --- (Optional: Deprecate/Re-purpose `relinearize_all_streams` if no longer used by new architecture) ---
+// If it's only used by `frame_pipeline::profiler` for simulation, that's fine.
+// Its implementation needs to be compatible with the new structure.
 /// Takes a full RecordBatch and reconstructs the independent streams for ALL columns.
 ///
 /// This is the workhorse for the "Multiplexed Stream" strategy. It performs a
@@ -129,6 +139,106 @@ pub fn relinearize_all_streams(
         "num_streams_found" = final_streams.len()
     );
     Ok(final_streams)
+}
+
+/// Groups and sorts a single value column from a RecordBatch based on provided key and timestamp columns.
+/// This produces a single, re-linearized value array.
+/// This is used on the compression side for `PerBatchRelinearization`.
+pub fn relinearize_single_column_in_batch(
+    value_array: &dyn Array,
+    key_array: &dyn Array,
+    timestamp_array: &dyn Array,
+) -> Result<ArrayRef, PhoenixError> {
+    let num_rows = value_array.len();
+    if num_rows == 0 {
+        return Ok(Arc::from(value_array.to_data().into_array()));
+    }
+    if key_array.len() != num_rows || timestamp_array.len() != num_rows {
+        return Err(PhoenixError::RelinearizationError(
+            "Key, timestamp, and value arrays must have the same length in a RecordBatch."
+                .to_string(),
+        ));
+    }
+
+    let keys = as_primitive_array::<Int64Type>(key_array);
+    let timestamps = as_primitive_array::<Int64Type>(timestamp_array);
+
+    let mut temp_data: Vec<(i64, i64, u32)> = Vec::with_capacity(num_rows);
+    for i in 0..num_rows {
+        if keys.is_valid(i) && timestamps.is_valid(i) {
+            temp_data.push((keys.value(i), timestamps.value(i), i as u32));
+        }
+    }
+
+    temp_data.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+    let gather_indices: Vec<u32> = temp_data
+        .into_iter()
+        .map(|(_, _, original_idx)| original_idx)
+        .collect();
+    let gather_array = Arc::new(arrow::array::UInt32Array::from_iter_values(gather_indices));
+
+    let re_linearized_array =
+        take::take(value_array, gather_array.as_ref(), None).map_err(|e| {
+            PhoenixError::RelinearizationError(format!("Failed to re-linearize value array: {}", e))
+        })?;
+
+    Ok(re_linearized_array.into())
+}
+
+/// Reconstructs a single logical column from its re-linearized value array and
+/// the original key/timestamp arrays for the batch.
+/// This is used on the decompression side for `PerBatchRelinearization`.
+pub fn reconstruct_relinearized_column(
+    re_linearized_value_array: ArrayRef, // Already decompressed value array, in re-linearized order
+    key_array: ArrayRef,                 // Original key column for this batch
+    timestamp_array: ArrayRef,           // Original timestamp column for this batch
+    original_logical_column_dtype: &DataType, // Target final Arrow DataType
+) -> Result<ArrayRef, PhoenixError> {
+    let num_rows = key_array.len();
+    if num_rows == 0 {
+        return Ok(Arc::from(arrow::array::new_empty_array(
+            original_logical_column_dtype,
+        )));
+    }
+    if timestamp_array.len() != num_rows || re_linearized_value_array.len() != num_rows {
+        return Err(PhoenixError::RelinearizationError(
+            "Key, timestamp, and re-linearized value arrays must have the same length for reconstruction.".to_string()
+        ));
+    }
+
+    let keys = as_primitive_array::<Int64Type>(key_array.as_ref());
+    let timestamps = as_primitive_array::<Int64Type>(timestamp_array.as_ref());
+
+    let mut temp_data: Vec<(i64, i64, u32)> = Vec::with_capacity(num_rows);
+    for i in 0..num_rows {
+        if keys.is_valid(i) && timestamps.is_valid(i) {
+            temp_data.push((keys.value(i), timestamps.value(i), i as u32));
+        }
+    }
+    temp_data.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+    let mut inverse_permutation_indices: Vec<u32> = vec![0; num_rows];
+    for (sorted_pos, (_, _, original_idx)) in temp_data.into_iter().enumerate() {
+        inverse_permutation_indices[original_idx as usize] = sorted_pos as u32;
+    }
+    let inverse_gather_array = Arc::new(arrow::array::UInt32Array::from_iter_values(
+        inverse_permutation_indices,
+    ));
+
+    let reconstructed_array = take::take(
+        re_linearized_value_array.as_ref(),
+        inverse_gather_array.as_ref(),
+        None,
+    )
+    .map_err(|e| {
+        PhoenixError::RelinearizationError(format!(
+            "Failed to reconstruct re-linearized column: {}",
+            e
+        ))
+    })?;
+
+    Ok(reconstructed_array.into())
 }
 
 //==================================================================================

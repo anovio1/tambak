@@ -5,7 +5,7 @@ use crate::error::PhoenixError;
 use crate::kernels;
 use crate::chunk_pipeline::artifact::CompressedChunk;
 use crate::chunk_pipeline::context::PipelineInput;
-use crate::chunk_pipeline::models::{Operation, Plan};
+use crate::chunk_pipeline::models::{Operation, ChunkPlan};
 use crate::chunk_pipeline::orchestrator::helpers::StrategyResult;
 use crate::chunk_pipeline::planner::PlanningContext;
 use crate::chunk_pipeline::traits::StreamTransform;
@@ -45,7 +45,7 @@ pub fn compress_empty_main_data_stream(input: &PipelineInput) -> Result<Vec<u8>,
         vec![]
     };
 
-    let plan = Plan {
+    let plan = ChunkPlan {
         plan_version: 1,
         initial_type: input.initial_dtype,
         pipeline: plan_pipeline,

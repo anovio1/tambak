@@ -1,72 +1,96 @@
 // In: src/ffi/python.rs
 
-use arrow::array::{make_array, ArrayData, RecordBatch};
-use arrow::error::{ArrowError, Result as ArrowResult};
+use arrow::array::{make_array, Array, ArrayData, RecordBatch, RecordBatchReader};
 use arrow::pyarrow::{FromPyArrow, PyArrowType, ToPyArrow};
-use arrow_schema::Schema;
-use core::fmt;
 use log::LevelFilter;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
-use std::error::Error as StdError;
-use std::sync::{Arc, Once};
-
-use crate::error::PhoenixError;
-use crate::ffi::ioadapters::{self, PyRecordBatchReader, PythonFileReader, PythonFileWriter};
-use crate::chunk_pipeline::{orchestrator, planner};
-use crate::frame_pipeline::{frame_orchestrator};
-// NEW: Import PlanningContext
-use crate::chunk_pipeline::planner::PlanningContext;
-use crate::types::PhoenixDataType;
-use crate::utils;
-use arrow::record_batch::RecordBatchReader;
-
-use crate::bridge::{self, Compressor, CompressorConfig, Decompressor};
 use std::io;
+use std::sync::Once;
 
-// =================================================================================
-// === THE MAGIC: A Rust struct that wraps a Python reader.
-// =================================================================================
-#[pyclass(name = "CompressorConfig")]
+use crate::bridge::{self, Compressor, CompressorConfig, Decompressor, TimeSeriesStrategy};
+use crate::chunk_pipeline;
+use crate::error::PhoenixError;
+use crate::ffi::ioadapters::{PyRecordBatchReader, PythonFileReader, PythonFileWriter};
+use crate::utils;
+
+//==================================================================================
+// I. Stateful File-Level API (The recommended approach)
+//==================================================================================
+
+#[pyclass(name = "CompressorConfig", module = "phoenix_cache")]
 #[derive(Default, Clone)]
-pub struct PyCompressorConfig {}
+pub struct PyCompressorConfig {
+    // This is where user-configurable options will live.
+    pub time_series_strategy: TimeSeriesStrategy,
+    pub stream_id_column: Option<String>,
+    pub timestamp_column: Option<String>,
+}
 
 #[pymethods]
 impl PyCompressorConfig {
     #[new]
-    fn new() -> Self {
-        Self::default()
+    #[pyo3(signature = (*, time_series_strategy="none", stream_id_column=None, timestamp_column=None))]
+    fn new(
+        time_series_strategy: &str,
+        stream_id_column: Option<String>,
+        timestamp_column: Option<String>,
+    ) -> PyResult<Self> {
+        let strategy = match time_series_strategy.to_lowercase().as_str() {
+            "none" => TimeSeriesStrategy::None,
+            "per_batch_relinearize" => TimeSeriesStrategy::PerBatchRelinearization,
+            "global_sort" => TimeSeriesStrategy::GlobalSorting,
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Invalid time_series_strategy. Must be one of 'none', 'per_batch_relinearize', 'global_sort'.",
+                ))
+            }
+        };
+        Ok(Self {
+            time_series_strategy: strategy,
+            stream_id_column,
+            timestamp_column,
+        })
     }
 }
 
-#[pyclass(name = "Compressor")]
+#[pyclass(name = "Compressor", module = "phoenix_cache")]
 pub struct PyCompressor {
+    // The inner Compressor now holds a writer that can write to a Python file-like object.
     inner: Compressor<PythonFileWriter>,
 }
 
 #[pymethods]
 impl PyCompressor {
     #[new]
-    fn new(py_writer: PyObject, _config: &PyCompressorConfig) -> PyResult<Self> {
+    fn new(py_writer: PyObject, config: &PyCompressorConfig) -> PyResult<Self> {
         let writer = PythonFileWriter { obj: py_writer };
-        let rust_config = CompressorConfig::default();
-        let compressor = Compressor::new(writer, rust_config)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        // Convert the Python config to the Rust config.
+        let rust_config = CompressorConfig {
+            time_series_strategy: config.time_series_strategy,
+            stream_id_column_name: config.stream_id_column.clone(),
+            timestamp_column_name: config.timestamp_column.clone(),
+            ..Default::default()
+        };
+        let compressor = Compressor::new(writer, rust_config).map_err(PhoenixError::into_pyerr)?;
         Ok(Self { inner: compressor })
     }
 
+    /// Compresses a PyArrow RecordBatchReader into the Phoenix file format.
     #[pyo3(name = "compress")]
     pub fn compress_py(&mut self, py: Python, reader: &PyAny) -> PyResult<()> {
+        // Adapt the Python RecordBatchReader to a Rust one.
         let mut rust_reader = PyRecordBatchReader {
             inner: reader.to_object(py),
         };
+        // Delegate the entire compression process to the bridge.
         py.allow_threads(|| self.inner.compress(&mut rust_reader))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+            .map_err(PhoenixError::into_pyerr)?;
         Ok(())
     }
 }
 
-#[pyclass(name = "Decompressor")]
+#[pyclass(name = "Decompressor", module = "phoenix_cache")]
 pub struct PyDecompressor {
     // Wrap in an option to allow `.batched()` to take ownership once.
     inner: Option<Decompressor<PythonFileReader>>,
@@ -77,8 +101,7 @@ impl PyDecompressor {
     #[new]
     fn new(py_reader: PyObject) -> PyResult<Self> {
         let reader = PythonFileReader { obj: py_reader };
-        let decompressor = Decompressor::new(reader)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        let decompressor = Decompressor::new(reader).map_err(PhoenixError::into_pyerr)?;
         Ok(Self {
             inner: Some(decompressor),
         })
@@ -95,10 +118,31 @@ impl PyDecompressor {
             ))
         }
     }
+
+    /// If the file was globally sorted, this returns the permutation array needed to
+    /// restore the original row order. Returns `None` otherwise.
+    pub fn get_global_unsort_indices(&mut self, py: Python) -> PyResult<Option<PyObject>> {
+        if let Some(decompressor) = self.inner.as_mut() {
+            let maybe_array = py
+                .allow_threads(move || decompressor.get_global_unsort_indices())
+                .map_err(PhoenixError::into_pyerr)?;
+
+            if let Some(array) = maybe_array {
+                let py_array = array.to_data().to_pyarrow(py)?;
+                Ok(Some(py_array))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Decompressor has already been consumed by .batched()",
+            ))
+        }
+    }
 }
 
 //==================================================================================
-// 1. Public Python Functions (v4.3 Corrected)
+// II. Stateless Chunk-Level API (for advanced/FFI use cases)
 //==================================================================================
 
 #[pyfunction]
@@ -136,81 +180,50 @@ pub fn compress_analyze_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
     Ok(result_dict.into())
 }
 
+/// Compresses a single PyArrow Array into a raw Phoenix chunk.
 #[pyfunction]
-#[pyo3(name = "decompress")]
-pub fn decompress_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
-    // Correctly call the stable bridge API.
-    let reconstructed_array = py.allow_threads(move || bridge::decompress_arrow_chunk(bytes))?;
-    utils::arrow_array_to_py(py, reconstructed_array)
-}
-
-#[pyfunction]
-#[pyo3(name = "decompress_bridge")]
-pub fn decompress_bridge_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
-    // --- THE ONLY CHANGE IS HERE ---
-    let reconstructed_array = py.allow_threads(move || bridge::decompress_arrow_chunk(bytes))?;
-    utils::arrow_array_to_py(py, reconstructed_array)
-}
-
-#[pyfunction]
-#[pyo3(name = "plan")]
-pub fn plan_py(py: Python, bytes: &[u8], original_type: &str) -> PyResult<String> {
-    py.allow_threads(move || {
-        // 1. Convert the Python string to our internal, type-safe enum.
-        let dtype = match original_type {
-            "Int8" => PhoenixDataType::Int8,
-            "Int16" => PhoenixDataType::Int16,
-            "Int32" => PhoenixDataType::Int32,
-            "Int64" => PhoenixDataType::Int64,
-            "UInt8" => PhoenixDataType::UInt8,
-            "UInt16" => PhoenixDataType::UInt16,
-            "UInt32" => PhoenixDataType::UInt32,
-            "UInt64" => PhoenixDataType::UInt64,
-            "Float32" => PhoenixDataType::Float32,
-            "Float64" => PhoenixDataType::Float64,
-            "Boolean" => PhoenixDataType::Boolean,
-            _ => return Err(PhoenixError::UnsupportedType(original_type.to_string()).into()),
-        };
-
-        // --- THIS IS THE CORE CHANGE ---
-        // 2. Construct the PlanningContext. For this simple FFI helper,
-        //    the initial and physical types are the same.
-        let context = PlanningContext {
-            initial_dtype: dtype,
-            physical_dtype: dtype,
-        };
-
-        // 3. Call the refactored planner with the context.
-        let plan_struct = planner::plan_pipeline(bytes, context)?;
-
-        // 4. Serialize the `Plan` struct back to a JSON string for Python.
-        serde_json::to_string(&plan_struct).map_err(|e| PhoenixError::from(e).into())
-    })
-}
-
-// --- Frame-level functions are unchanged as they call the stable orchestrator facade ---
-
-#[pyfunction]
-#[pyo3(name = "compress_frame")]
-pub fn compress_frame_py<'py>(py: Python<'py>, batch_py: &PyAny) -> PyResult<&'py PyBytes> {
-    let rust_batch = RecordBatch::from_pyarrow(batch_py)?;
+#[pyo3(name = "compress_chunk")]
+pub fn compress_chunk_py<'py>(py: Python<'py>, array_py: &PyAny) -> PyResult<&'py PyBytes> {
+    let array_data = ArrayData::from_pyarrow(array_py)?;
+    let rust_array = make_array(array_data.into());
     let compressed_vec =
-        py.allow_threads(move || frame_orchestrator::compress_frame(&rust_batch, &None))?;
+        py.allow_threads(move || bridge::compress_arrow_chunk(rust_array.as_ref()))?;
     Ok(PyBytes::new(py, &compressed_vec))
 }
 
+/// Decompresses a raw Phoenix chunk into a PyArrow Array.
 #[pyfunction]
-pub fn decompress_frame_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
-    let batch = py.allow_threads(move || frame_orchestrator::decompress_frame(bytes))?;
-    batch.to_pyarrow(py)
+#[pyo3(name = "decompress_chunk")]
+pub fn decompress_chunk_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
+    let reconstructed_array = py.allow_threads(move || bridge::decompress_arrow_chunk(bytes))?;
+    utils::arrow_array_to_py(py, reconstructed_array)
 }
 
+/// Compresses a single PyArrow Array and returns detailed statistics about the result.
 #[pyfunction]
-pub fn get_frame_diagnostics_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
-    use pyo3::types::PyString;
-    let diagnostics_json = frame_orchestrator::get_frame_diagnostics(bytes)?;
-    Ok(PyString::new(py, &diagnostics_json).into())
+#[pyo3(name = "analyze_chunk")]
+pub fn analyze_chunk_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
+    let array_data = ArrayData::from_pyarrow(array_py)?;
+    let rust_array = make_array(array_data.into());
+
+    let artifact_bytes =
+        py.allow_threads(move || bridge::compress_arrow_chunk(rust_array.as_ref()))?;
+    let stats = bridge::analyze_chunk(&artifact_bytes)?;
+
+    let result_dict = PyDict::new(py);
+    result_dict.set_item("artifact", PyBytes::new(py, &artifact_bytes))?;
+    result_dict.set_item("header_size", stats.header_size)?;
+    result_dict.set_item("data_size", stats.data_size)?;
+    result_dict.set_item("total_size", stats.total_size)?;
+    result_dict.set_item("plan", stats.plan_json)?;
+    result_dict.set_item("original_type", stats.original_type)?;
+
+    Ok(result_dict.into())
 }
+
+//==================================================================================
+// III. Misc Functions
+//==================================================================================
 
 static INIT_LOGGER: Once = Once::new();
 

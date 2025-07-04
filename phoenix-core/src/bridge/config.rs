@@ -2,7 +2,6 @@
 /// Configuration options for compression.
 /// Currently under development and not fully implemented.
 /// Expected to include planner strategies, chunk sizing, and lossy compression parameters.
-
 use arrow::datatypes::SchemaRef;
 // TODO: Re-export the PlannerStrategy from the pipeline/models.rs when it exists.
 // use crate::chunk_pipeline::models::PlannerStrategy;
@@ -29,9 +28,18 @@ pub enum LossyConfig {
     FixedTolerance { absolute_error: f64 },
 }
 
+/// Defines the time-series optimization strategy for compression.
+/// This enum directly influences the `FramePlan` written to the file footer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeSeriesStrategy {
+    #[default]
+    None, // No special frame-level strategy. File contains only `StandardColumn` FrameOperations.
+    PerBatchRelinearization, // File contains `PerBatchRelinearizedColumn` FrameOperations for applicable columns.
+    GlobalSorting,           // File contains a single `GlobalSortedFile` FrameOperation.
+}
+
 // TODO: CompressorConfig is currently a placeholder for future configuration options.
 // It is not yet fully integrated into the compression pipeline.
-
 /// The main configuration object for the `Compressor`.
 #[derive(Default, Debug)]
 pub struct CompressorConfig {
@@ -51,4 +59,13 @@ pub struct CompressorConfig {
 
     // /// The planning strategy to use. If None, the default planner is used.
     // pub planner_strategy: Option<PlannerStrategy>,
+
+    // --- NEW FIELDS FOR TIME-SERIES OPTIMIZATION ---
+    pub time_series_strategy: TimeSeriesStrategy,
+    /// Name of the column to use as the primary sorting key (e.g., "unit_id").
+    /// Only relevant if `time_series_strategy` is not `None`.
+    pub stream_id_column_name: Option<String>,
+    /// Name of the column to use as the secondary sorting key (e.g., "timestamp").
+    /// Only relevant if `time_series_strategy` is not `None`.
+    pub timestamp_column_name: Option<String>,
 }

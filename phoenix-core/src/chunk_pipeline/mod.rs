@@ -22,6 +22,7 @@ pub mod executor;
 
 pub mod context;
 pub mod models;
+pub mod profiler;
 pub mod traits;
 
 //==================================================================================
@@ -34,7 +35,8 @@ pub use self::orchestrator::{compress_chunk, decompress_chunk, get_compressed_ch
 
 pub use self::planner::plan_pipeline;
 
-pub use self::models::{Operation, Plan};
+pub use self::models::Operation;
+pub use self::models::ChunkPlan;
 
 pub use self::traits::OperationBehavior;
 

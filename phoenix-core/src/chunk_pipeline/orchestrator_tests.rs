@@ -4,7 +4,7 @@ use crate::bridge;
 use crate::chunk_pipeline::artifact::CompressedChunk;
 use crate::chunk_pipeline::context::{PipelineInput, PipelineOutput};
 use crate::chunk_pipeline::orchestrator::{compress_chunk, decompress_chunk};
-use crate::chunk_pipeline::{Operation, Plan};
+use crate::chunk_pipeline::{Operation, ChunkPlan};
 use crate::types::PhoenixDataType;
 
 // We also need to bring in any external test dependencies.
@@ -441,7 +441,7 @@ fn test_sparsity_strategy_is_triggered_and_correct() {
     // --- 4. VERIFY PLAN: Check that the planner made the correct choice ---
     let artifact =
         CompressedChunk::from_bytes(&compressed_artifact_bytes).expect("Failed to parse artifact");
-    let plan: Plan = serde_json::from_str(&artifact.plan_json).unwrap();
+    let plan: ChunkPlan = serde_json::from_str(&artifact.plan_json).unwrap();
 
     let sparsify_op_exists = plan
         .pipeline
@@ -474,7 +474,7 @@ fn test_dense_strategy_is_correctly_chosen() {
 
     // --- 4. VERIFY PLAN: Check that the planner made the correct choice ---
     let artifact = CompressedChunk::from_bytes(&compressed_artifact_bytes).unwrap();
-    let plan: Plan = serde_json::from_str(&artifact.plan_json).unwrap();
+    let plan: ChunkPlan = serde_json::from_str(&artifact.plan_json).unwrap();
 
     let sparsify_op_exists = plan
         .pipeline

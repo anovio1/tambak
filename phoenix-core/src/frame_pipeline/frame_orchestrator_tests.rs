@@ -5,7 +5,7 @@ mod tests {
     use crate::frame_pipeline::frame_orchestrator::{
         compress_frame, decompress_frame, get_frame_diagnostics,
     };
-    use crate::chunk_pipeline::models::{Operation, Plan}; // For plan inspection
+    use crate::chunk_pipeline::models::{Operation, ChunkPlan}; // For plan inspection
 
     use crate::types::PhoenixDataType;
     use arrow::array::{Array, Float64Array, Int32Array, RecordBatch};
@@ -126,7 +126,7 @@ mod tests {
 
         // --- CHECKPOINT for Column A (Int32) ---
         let plan_json_a = &diagnostics[0]["plan"];
-        let plan_a: Plan = serde_json::from_value(plan_json_a.clone()).unwrap();
+        let plan_a: ChunkPlan = serde_json::from_value(plan_json_a.clone()).unwrap();
         println!("\n--- CHECKPOINT (from diagnostics): test_diagnostics_reveal_correct_planning_strategies ---");
         println!("  - Plan for Column A (Int32): {:?}", plan_a.pipeline);
 
@@ -138,7 +138,7 @@ mod tests {
 
         // --- CHECKPOINT for Column B (Float64) ---
         let plan_json_b = &diagnostics[1]["plan"];
-        let plan_b: Plan = serde_json::from_value(plan_json_b.clone()).unwrap();
+        let plan_b: ChunkPlan = serde_json::from_value(plan_json_b.clone()).unwrap();
         println!("  - Plan for Column B (Float64): {:?}", plan_b.pipeline);
 
         // Assert that the float pipeline contains the required preprocessing steps.

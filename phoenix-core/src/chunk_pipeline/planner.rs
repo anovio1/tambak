@@ -12,10 +12,11 @@
 //! This decouples the logic of "what is a valid pipeline?" from the heuristic
 //! of "what is the best pipeline for this data?".
 
+use crate::chunk_pipeline::profiler::find_stride_by_autocorrelation;
 use crate::error::PhoenixError;
 use crate::kernels::zigzag;
 use crate::chunk_pipeline::context::PipelineInput;
-use crate::chunk_pipeline::models::{Operation, Plan};
+use crate::chunk_pipeline::models::{Operation, ChunkPlan};
 use crate::chunk_pipeline::{self, executor};
 use crate::types::PhoenixDataType;
 use crate::utils::safe_bytes_to_typed_slice;
@@ -70,71 +71,6 @@ impl LogicalType {
             _ => LogicalType::Other,
         }
     }
-}
-
-//==================================================================================
-// 1. Stride Discovery (Refactored for Type Safety)
-//==================================================================================
-pub fn find_stride_by_autocorrelation(
-    bytes: &[u8],
-    dtype: PhoenixDataType,
-) -> Result<usize, PhoenixError> {
-    macro_rules! to_f64_vec {
-        ($T:ty, $bytes:expr) => {{
-            safe_bytes_to_typed_slice::<$T>($bytes)?
-                .iter()
-                .filter_map(|&x| x.to_f64())
-                .collect::<Vec<f64>>()
-        }};
-    }
-
-    let data_f64 = match dtype {
-        PhoenixDataType::Int8 => to_f64_vec!(i8, bytes),
-        PhoenixDataType::Int16 => to_f64_vec!(i16, bytes),
-        PhoenixDataType::Int32 => to_f64_vec!(i32, bytes),
-        PhoenixDataType::Int64 => to_f64_vec!(i64, bytes),
-        PhoenixDataType::UInt8 => to_f64_vec!(u8, bytes),
-        PhoenixDataType::UInt16 => to_f64_vec!(u16, bytes),
-        PhoenixDataType::UInt32 => to_f64_vec!(u32, bytes),
-        PhoenixDataType::UInt64 => to_f64_vec!(u64, bytes),
-        PhoenixDataType::Float32 => to_f64_vec!(f32, bytes),
-        PhoenixDataType::Float64 => to_f64_vec!(f64, bytes),
-        PhoenixDataType::Boolean => return Ok(1), // Autocorrelation not meaningful for booleans
-    };
-
-    let calculate = |data: &[f64]| -> Option<usize> {
-        let n = data.len();
-        if n < 8 {
-            return None;
-        }
-        let data_arr = Array1::from_vec(data.to_vec());
-        let mean = data_arr.mean()?;
-        let centered_data = data_arr - mean;
-        let variance = centered_data.dot(&centered_data);
-        if variance < 1e-9 {
-            return None;
-        }
-        let mut best_lag = 0;
-        let mut max_corr = -1.0;
-        let upper_bound = (n / 4).max(3).min(256);
-        for lag in 1..upper_bound {
-            let acf = centered_data
-                .slice(s![..n - lag])
-                .dot(&centered_data.slice(s![lag..]));
-            if acf > max_corr {
-                max_corr = acf;
-                best_lag = lag;
-            }
-        }
-        const CORRELATION_THRESHOLD: f64 = 0.25;
-        if (max_corr / variance) > CORRELATION_THRESHOLD {
-            Some(best_lag)
-        } else {
-            None
-        }
-    };
-
-    Ok(calculate(&data_f64).unwrap_or(1))
 }
 
 //==================================================================================
@@ -670,7 +606,7 @@ fn plan_bytes(
 /// Analyzes a byte stream and its type to produce an optimal, self-contained `Plan`.
 // In: src/pipeline/planner.rs
 
-pub fn plan_pipeline(bytes: &[u8], context: PlanningContext) -> Result<Plan, PhoenixError> {
+pub fn plan_pipeline(bytes: &[u8], context: PlanningContext) -> Result<ChunkPlan, PhoenixError> {
     // --- THE AUTHORITATIVE FIX: SPECIALIZED BOOLEAN PLANNING ---
     // The main planner is optimized for numeric data. For boolean streams,
     // the best strategy is almost always RLE followed by an entropy coder.
@@ -712,7 +648,7 @@ pub fn plan_pipeline(bytes: &[u8], context: PlanningContext) -> Result<Plan, Pho
             best_pipeline = rle_ans_plan;
         }
 
-        return Ok(Plan {
+        return Ok(ChunkPlan {
             plan_version: PLAN_VERSION,
             initial_type: context.initial_dtype,
             pipeline: best_pipeline,
@@ -724,7 +660,7 @@ pub fn plan_pipeline(bytes: &[u8], context: PlanningContext) -> Result<Plan, Pho
     let stride = find_stride_by_autocorrelation(bytes, context.physical_dtype)?;
     let (pipeline, _cost) = plan_bytes(bytes, &context.clone(), stride)?;
 
-    Ok(Plan {
+    Ok(ChunkPlan {
         plan_version: PLAN_VERSION,
         initial_type: context.initial_dtype,
         pipeline,

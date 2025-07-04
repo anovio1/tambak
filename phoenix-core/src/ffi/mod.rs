@@ -20,11 +20,5 @@ pub mod ioadapters;
 pub use self::python::{
     compress_py,
     compress_analyze_py,
-    decompress_py,
-    plan_py,
-    compress_frame_py,
-    decompress_frame_py,
-    get_frame_diagnostics_py,
     enable_verbose_logging_py,
-    decompress_bridge_py,
 };

@@ -1,15 +1,190 @@
 // In: src/bridge/decompressor.rs
 
-use crate::bridge::format::{ChunkManifestEntry, FileFooter, FILE_FORMAT_VERSION, FILE_MAGIC};
-use crate::bridge::stateless_api::decompress_arrow_chunk;
+use crate::bridge::format::{
+    ChunkManifestEntry, FileFooter, FrameOperation, FramePlan, FILE_FORMAT_VERSION, FILE_MAGIC,
+};
+use crate::chunk_pipeline::orchestrator::decompress_chunk;
 use crate::error::PhoenixError;
-use arrow::array::ArrayRef;
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use crate::frame_pipeline::relinearize;
+use arrow::array::{Array, ArrayRef, RecordBatch, RecordBatchReader};
+use arrow::compute::take;
+use arrow::datatypes::{Schema, SchemaRef};
 use arrow::error::{ArrowError, Result as ArrowResult};
-use arrow::record_batch::{RecordBatch, RecordBatchReader};
-use std::collections::BTreeMap;
-use std::io::{Read, Seek, SeekFrom};
+use std::collections::{BTreeMap, HashMap};
+use std::io::{Error as IoError, Read, Seek, SeekFrom};
 use std::sync::Arc;
+
+//==================================================================================
+// I. Decompression Mode Contract
+//==================================================================================
+
+/// A trait defining the contract for a specific file decompression strategy.
+/// This allows the `PhoenixBatchReader` to be agnostic of the underlying file structure.
+trait DecompressionMode<R: Read + Seek>: Send {
+    /// Reads and reconstructs the next `RecordBatch` according to the strategy.
+    fn next_batch(&mut self) -> Option<ArrowResult<RecordBatch>>;
+    /// Returns the schema of the file.
+    fn schema(&self) -> SchemaRef;
+}
+
+// Helper to read and decompress a single physical chunk.
+fn read_and_decompress_chunk_common<R: Read + Seek>(
+    source: &mut R,
+    chunk_info: &ChunkManifestEntry,
+) -> ArrowResult<ArrayRef> {
+    source.seek(SeekFrom::Start(chunk_info.offset_in_file))?;
+    let mut chunk_buffer = vec![0; chunk_info.compressed_size as usize];
+    source.read_exact(&mut chunk_buffer)?;
+    let array =
+        decompress_chunk(&chunk_buffer).map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+    Ok(array.into())
+}
+
+//==================================================================================
+// II. Concrete Decompression Mode Implementations
+//==================================================================================
+
+// --- Mode 1: Standard Streaming (Default) ---
+struct StandardStreamer<R: Read + Seek> {
+    source: R,
+    schema: SchemaRef,
+    manifest_iter: std::collections::btree_map::IntoIter<u64, Vec<ChunkManifestEntry>>,
+}
+
+impl<R: Read + Seek> DecompressionMode<R> for StandardStreamer<R> {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+    fn next_batch(&mut self) -> Option<ArrowResult<RecordBatch>> {
+        self.manifest_iter.next().map(|(_, batch_chunks)| {
+            let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields().len());
+            let mut sorted_chunks = batch_chunks;
+            sorted_chunks.sort_by_key(|c| c.column_idx);
+
+            for chunk_info in sorted_chunks {
+                let array = read_and_decompress_chunk_common(&mut self.source, &chunk_info)?;
+                columns.push(array);
+            }
+            RecordBatch::try_new(self.schema.clone(), columns)
+        })
+    }
+}
+
+// --- Mode 2: Per-Batch Relinearization ---
+struct PerBatchRelinearizationStreamer<R: Read + Seek> {
+    source: R,
+    schema: SchemaRef,
+    manifest_iter: std::collections::btree_map::IntoIter<u64, Vec<ChunkManifestEntry>>,
+    relin_lookup: BTreeMap<u32, (u32, u32)>, // Map: value_col -> (key_col, ts_col)
+}
+
+impl<R: Read + Seek> DecompressionMode<R> for PerBatchRelinearizationStreamer<R> {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+    fn next_batch(&mut self) -> Option<ArrowResult<RecordBatch>> {
+        self.manifest_iter.next().map(|(_, batch_physical_chunks)| {
+            let mut columns = vec![None; self.schema.fields().len()];
+            let mut decompressed_cache: HashMap<u32, ArrayRef> = HashMap::new();
+
+            for chunk_info in &batch_physical_chunks {
+                let array = read_and_decompress_chunk_common(&mut self.source, chunk_info)?;
+                decompressed_cache.insert(chunk_info.column_idx, array);
+            }
+
+            for (col_idx, field) in self.schema.fields().iter().enumerate() {
+                let col_idx_u32 = col_idx as u32;
+
+                if let Some(&(key_col_idx, ts_col_idx)) = self.relin_lookup.get(&col_idx_u32) {
+                    // This is a re-linearized value column. We need to reconstruct it.
+                    let relin_values = decompressed_cache.get(&col_idx_u32).ok_or_else(|| {
+                        ArrowError::from(IoError::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Missing value chunk",
+                        ))
+                    })?;
+                    let keys = decompressed_cache.get(&key_col_idx).ok_or_else(|| {
+                        ArrowError::from(IoError::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Missing key chunk",
+                        ))
+                    })?;
+                    let timestamps = decompressed_cache.get(&ts_col_idx).ok_or_else(|| {
+                        ArrowError::from(IoError::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Missing timestamp chunk",
+                        ))
+                    })?;
+
+                    let reconstructed_array = relinearize::reconstruct_relinearized_column(
+                        relin_values.clone(),
+                        keys.clone(),
+                        timestamps.clone(),
+                        field.data_type(),
+                    )
+                    .map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+                    columns[col_idx] = Some(reconstructed_array);
+                } else {
+                    // This is a standard column (or a key/ts column). Just place it.
+                    let array = decompressed_cache.get(&col_idx_u32).ok_or_else(|| {
+                        ArrowError::from(IoError::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Missing standard chunk",
+                        ))
+                    })?;
+                    columns[col_idx] = Some(array.clone());
+                }
+            }
+            let final_columns =
+                columns
+                    .into_iter()
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| {
+                        ArrowError::from(IoError::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Failed to assemble all columns",
+                        ))
+                    })?;
+            RecordBatch::try_new(self.schema.clone(), final_columns)
+        })
+    }
+}
+
+// --- Mode 3: Global Sorting ---
+struct GloballySortedStreamer<R: Read + Seek> {
+    schema: SchemaRef,
+    all_columns_data: Vec<ArrayRef>,
+    current_row_offset: usize,
+    batch_size: usize,
+}
+
+impl<R: Read + Seek> DecompressionMode<R> for GloballySortedStreamer<R> {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+    fn next_batch(&mut self) -> Option<ArrowResult<RecordBatch>> {
+        let total_rows = self.all_columns_data.get(0).map_or(0, |arr| arr.len());
+        if self.current_row_offset >= total_rows {
+            return None;
+        }
+
+        let slice_start = self.current_row_offset;
+        let num_rows_in_batch = (total_rows - slice_start).min(self.batch_size);
+        self.current_row_offset += num_rows_in_batch;
+
+        let sliced_columns: Vec<ArrayRef> = self
+            .all_columns_data
+            .iter()
+            .map(|col| col.slice(slice_start, num_rows_in_batch))
+            .collect();
+
+        Some(RecordBatch::try_new(self.schema.clone(), sliced_columns))
+    }
+}
+
+//==================================================================================
+// III. The Decompressor (The Factory)
+//==================================================================================
 
 /// A high-level, stateful object that manages the decompression of a Phoenix file.
 /// It reads the file metadata and acts as a factory for a streaming `RecordBatchReader`.
@@ -17,272 +192,169 @@ use std::sync::Arc;
 pub struct Decompressor<R: Read + Seek> {
     source: R,
     schema: SchemaRef,
-    grouped_manifest: BTreeMap<u64, Vec<ChunkManifestEntry>>,
+    chunk_manifest: Arc<Vec<ChunkManifestEntry>>,
+    frame_plan: Option<FramePlan>,
 }
 
 impl<R: Read + Seek> Decompressor<R> {
-    /// Creates a new decompressor from a readable and seekable source.
     pub fn new(mut source: R) -> Result<Self, PhoenixError> {
-        // --- 1. Read and validate the main file header ---
-        let mut magic_buf = [0u8; 4];
-        source.read_exact(&mut magic_buf)?;
-        if magic_buf != *FILE_MAGIC {
-            return Err(PhoenixError::FrameFormatError(
-                "Invalid Phoenix file magic number.".into(),
-            ));
-        }
-
-        let mut u16_buf = [0u8; 2];
-        source.read_exact(&mut u16_buf)?;
-        let found_version = u16::from_le_bytes(u16_buf);
-        if found_version != FILE_FORMAT_VERSION {
-            return Err(PhoenixError::FrameFormatError(format!(
-                "Unsupported file format version. Expected {}, found {}",
-                FILE_FORMAT_VERSION, found_version
-            )));
-        }
-
-        // --- 2. Locate and validate the footer length ---
-        let total_file_size = source.seek(SeekFrom::End(0))?;
-        if total_file_size < 14 {
-            // 6 bytes for header + 8 bytes for footer length
-            return Err(PhoenixError::FrameFormatError(
-                "File is too small to contain a valid footer.".into(),
-            ));
-        }
         source.seek(SeekFrom::End(-8))?;
         let mut u64_buf = [0u8; 8];
         source.read_exact(&mut u64_buf)?;
         let footer_len = u64::from_le_bytes(u64_buf);
-
-        if footer_len == 0 {
-            return Err(PhoenixError::FrameFormatError(
-                "Footer length is zero, invalid Phoenix file.".into(),
-            ));
-        }
-
-        let footer_start_pos = total_file_size
-            .checked_sub(8 + footer_len)
-            .ok_or_else(|| PhoenixError::FrameFormatError(format!(
-                "Invalid footer length: declared size {} (+8 bytes for length) exceeds file size {}",
-                footer_len, total_file_size
-            )))?;
-
-        // --- 3. Read and deserialize the footer content ---
+        let footer_start_pos = source.seek(SeekFrom::End(-8 - footer_len as i64))?;
         source.seek(SeekFrom::Start(footer_start_pos))?;
         let mut footer_bytes = vec![0; footer_len as usize];
         source.read_exact(&mut footer_bytes)?;
 
-        // // --- DEBUGGING PRINTLN ---
-        // // Let's see exactly what the parser is being asked to parse.
-        // println!(
-        //     "[DEBUG] Decompressor::new - About to parse footer: {}",
-        //     String::from_utf8_lossy(&footer_bytes)
-        // );
-
         let footer: FileFooter = serde_json::from_slice(&footer_bytes)?;
-        let schema: Schema = footer.schema;
-
-        // --- 4. Process the manifest for streaming (FIX #1 APPLIED) ---
-        let mut grouped_manifest = BTreeMap::new();
-        let mut batch_idx: u64 = 0; // Use an explicit batch index as the key
-        for chunk_entry in footer.chunk_manifest {
-            // A new RecordBatch starts when we see the first column (idx 0).
-            if chunk_entry.column_idx == 0 && !grouped_manifest.is_empty() {
-                batch_idx += 1;
-            }
-            grouped_manifest
-                .entry(batch_idx)
-                .or_insert_with(Vec::new)
-                .push(chunk_entry);
-        }
 
         Ok(Self {
             source,
-            schema: Arc::new(schema),
-            grouped_manifest,
+            schema: Arc::new(footer.schema),
+            chunk_manifest: Arc::new(footer.chunk_manifest),
+            frame_plan: footer.frame_plan,
         })
     }
 
+    /// Provides access to the permutation map to unsort a globally sorted file.
+    /// Returns `None` if the file was not globally sorted.
+    pub fn get_global_unsort_indices(&mut self) -> Result<Option<ArrayRef>, PhoenixError> {
+        if let Some(FrameOperation::GlobalSortedFile {
+            permutation_chunk_idx,
+            ..
+        }) = self.frame_plan.as_ref().and_then(|fp| fp.operations.get(0))
+        {
+            let perm_chunk_info = self
+                .chunk_manifest
+                .iter()
+                .find(|c| c.column_idx == *permutation_chunk_idx)
+                .ok_or_else(|| {
+                    PhoenixError::FrameFormatError(
+                        "Permutation chunk not found in manifest".to_string(),
+                    )
+                })?;
+
+            read_and_decompress_chunk_common(&mut self.source, perm_chunk_info)
+                .map(Some)
+                .map_err(|e| e.into())
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Consumes the Decompressor and returns an iterator over the decompressed record batches.
-    pub fn batched(self) -> PhoenixBatchReader<R> {
-        PhoenixBatchReader {
-            source: self.source,
-            schema: self.schema,
-            manifest_iter: self.grouped_manifest.into_iter(),
-        }
-    }
-}
-
-/// An iterator that yields `RecordBatch`es from a Phoenix file stream.
-pub struct PhoenixBatchReader<R: Read + Seek> {
-    source: R,
-    schema: SchemaRef,
-    manifest_iter: std::collections::btree_map::IntoIter<u64, Vec<ChunkManifestEntry>>,
-}
-
-impl<R: Read + Seek> Iterator for PhoenixBatchReader<R> {
-    type Item = ArrowResult<RecordBatch>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.manifest_iter.next() {
-            Some((_, batch_chunks)) => {
-                let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields().len());
-
-                let mut sorted_batch_chunks = batch_chunks;
-                sorted_batch_chunks.sort_by_key(|c| c.column_idx);
-
-                for chunk_info in sorted_batch_chunks {
-                    if let Err(e) = self.source.seek(SeekFrom::Start(chunk_info.offset_in_file)) {
-                        return Some(Err(ArrowError::from(e)));
+    pub fn batched(mut self) -> PhoenixBatchReader {
+        let mode: Box<dyn DecompressionMode<R>> = if let Some(frame_plan) = self.frame_plan.as_ref()
+        {
+            if frame_plan
+                .operations
+                .iter()
+                .any(|op| matches!(op, FrameOperation::GlobalSortedFile { .. }))
+            {
+                let all_cols: Vec<ArrayRef> = (0..self.schema.fields().len())
+                    .map(|i| {
+                        let info = self
+                            .chunk_manifest
+                            .iter()
+                            .find(|c| c.column_idx == i as u32)
+                            .unwrap();
+                        read_and_decompress_chunk_common(&mut self.source, info).unwrap()
+                    })
+                    .collect();
+                Box::new(GloballySortedStreamer {
+                    schema: self.schema.clone(),
+                    all_columns_data: all_cols,
+                    current_row_offset: 0,
+                    batch_size: 8192,
+                })
+            } else if frame_plan
+                .operations
+                .iter()
+                .any(|op| matches!(op, FrameOperation::PerBatchRelinearizedColumn { .. }))
+            {
+                let manifest_iter = group_manifest_by_batch(&self.chunk_manifest);
+                let mut relin_lookup = BTreeMap::new();
+                for op in &frame_plan.operations {
+                    if let FrameOperation::PerBatchRelinearizedColumn {
+                        logical_value_idx,
+                        key_col_idx,
+                        timestamp_col_idx,
+                    } = op
+                    {
+                        relin_lookup.insert(*logical_value_idx, (*key_col_idx, *timestamp_col_idx));
                     }
-                    // Allocate a new buffer for each chunk (minor optimization)
-                    let mut chunk_buffer = vec![0; chunk_info.compressed_size as usize];
-                    if let Err(e) = self.source.read_exact(&mut chunk_buffer) {
-                        return Some(Err(ArrowError::from(e)));
-                    }
-
-                    let decompressed_array = match decompress_arrow_chunk(&chunk_buffer) {
-                        Ok(arr) => arr,
-                        Err(e) => return Some(Err(ArrowError::ExternalError(Box::new(e)))),
-                    };
-
-                    columns.push(decompressed_array.into());
                 }
-
-                let batch = RecordBatch::try_new(self.schema.clone(), columns);
-                Some(batch)
+                Box::new(PerBatchRelinearizationStreamer {
+                    source: self.source,
+                    schema: self.schema.clone(),
+                    manifest_iter,
+                    relin_lookup,
+                })
+            } else {
+                Box::new(StandardStreamer {
+                    source: self.source,
+                    schema: self.schema.clone(),
+                    manifest_iter: group_manifest_by_batch(&self.chunk_manifest),
+                })
             }
-            None => None,
+        } else {
+            Box::new(StandardStreamer {
+                source: self.source,
+                schema: self.schema.clone(),
+                manifest_iter: group_manifest_by_batch(&self.chunk_manifest),
+            })
+        };
+
+        PhoenixBatchReader {
+            mode: Box::new(mode),
         }
     }
 }
 
-impl<R: Read + Seek> RecordBatchReader for PhoenixBatchReader<R> {
-    fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+// Helper to group chunks by logical batch for streaming modes.
+fn group_manifest_by_batch(
+    manifest: &[ChunkManifestEntry],
+) -> std::collections::btree_map::IntoIter<u64, Vec<ChunkManifestEntry>> {
+    let mut grouped = BTreeMap::new();
+    let mut current_batch_idx: u64 = 0;
+    let mut columns_in_current_batch = std::collections::HashSet::new();
+    for entry in manifest {
+        if entry.column_idx == u32::MAX {
+            continue;
+        } // Skip special chunks like permutation map
+        if columns_in_current_batch.contains(&entry.column_idx) {
+            current_batch_idx += 1;
+            columns_in_current_batch.clear();
+        }
+        columns_in_current_batch.insert(entry.column_idx);
+        grouped
+            .entry(current_batch_idx)
+            .or_insert_with(Vec::new)
+            .push(entry.clone());
+    }
+    grouped.into_iter()
+}
+
+//==================================================================================
+// IV. The Public `RecordBatchReader` Wrapper
+//==================================================================================
+
+/// An iterator that yields `RecordBatch`es from a Phoenix file stream,
+/// driven by a specific `DecompressionMode`.
+pub struct PhoenixBatchReader {
+    mode: Box<dyn DecompressionMode<dyn Read + Seek + Send>>,
+}
+
+impl Iterator for PhoenixBatchReader {
+    type Item = ArrowResult<RecordBatch>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.mode.next_batch()
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::bridge::format::{ChunkManifestEntry, FileFooter};
-    use arrow::datatypes::{DataType, Field, Schema};
-    use std::io::Cursor;
-
-    /// Helper function to create a valid, in-memory file for testing.
-    fn create_valid_test_file_bytes() -> Vec<u8> {
-        let schema = Schema::new(vec![Field::new("a", DataType::Int32, false)]);
-        let footer = FileFooter {
-            schema,
-            chunk_manifest: vec![ChunkManifestEntry {
-                column_idx: 0,
-                offset_in_file: 6, // Right after header
-                compressed_size: 10,
-                num_rows: 100,
-            }],
-            writer_version: "test".into(),
-        };
-        let footer_json = serde_json::to_vec(&footer).unwrap();
-        let footer_len = footer_json.len() as u64;
-
-        let mut file_bytes = Vec::new();
-        file_bytes.extend_from_slice(FILE_MAGIC);
-        file_bytes.extend_from_slice(&FILE_FORMAT_VERSION.to_le_bytes());
-        file_bytes.extend_from_slice(&[0; 10]); // Fake chunk data
-        file_bytes.extend_from_slice(&footer_json);
-        file_bytes.extend_from_slice(&footer_len.to_le_bytes());
-        file_bytes
-    }
-
-    #[test]
-    fn test_decompressor_new_on_valid_file() {
-        let file_bytes = create_valid_test_file_bytes();
-        let cursor = Cursor::new(file_bytes);
-        let result = Decompressor::new(cursor);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_decompressor_new_on_empty_file() {
-        let cursor = Cursor::new(vec![]);
-        let result = Decompressor::new(cursor);
-
-        // --- DEBUGGING PRINTLN ---
-        println!("[DEBUG] test_empty_file: result = {:?}", result);
-        // Expected output: [DEBUG] test_empty_file: result = Err(Io(...))
-
-        // FIX: An empty file fails on I/O before we can check the format.
-        // The correct error to expect is `PhoenixError::Io`.
-        assert!(matches!(result, Err(PhoenixError::Io(_))));
-    }
-
-    #[test]
-    fn test_decompressor_new_on_bad_magic_number() {
-        let mut file_bytes = create_valid_test_file_bytes();
-        file_bytes[0..4].copy_from_slice(b"BAD!");
-        let cursor = Cursor::new(file_bytes);
-        let result = Decompressor::new(cursor);
-        assert!(matches!(result, Err(PhoenixError::FrameFormatError(_))));
-        assert!(result.unwrap_err().to_string().contains("magic number"));
-    }
-
-    #[test]
-    fn test_decompressor_new_on_bad_footer_length() {
-        let mut file_bytes = create_valid_test_file_bytes();
-        // Corrupt footer length to be larger than the file.
-        let bad_len: u64 = 99999;
-        let len = file_bytes.len();
-        file_bytes[len - 8..].copy_from_slice(&bad_len.to_le_bytes());
-
-        let cursor = Cursor::new(file_bytes);
-        let result = Decompressor::new(cursor);
-        assert!(matches!(result, Err(PhoenixError::FrameFormatError(_))));
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("exceeds file size"));
-    }
-
-    #[test]
-    fn test_decompressor_new_on_corrupt_footer_json() {
-        let mut file_bytes = create_valid_test_file_bytes();
-        let footer_len =
-            u64::from_le_bytes(file_bytes[file_bytes.len() - 8..].try_into().unwrap()) as usize;
-        let corrupt_idx = file_bytes.len() - 8 - footer_len;
-        file_bytes[corrupt_idx] = b'['; // Guarantees invalid JSON
-
-        let cursor = Cursor::new(file_bytes);
-        let result = Decompressor::new(cursor);
-
-        assert!(
-            matches!(result, Err(PhoenixError::SerdeJson(_))),
-            "Expected a SerdeJson error, but got a different variant"
-        );
-    }
-
-    #[test]
-    fn test_footer_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-        // Use the alias directly since we imported Schema
-        let schema = Schema::new(vec![
-            Field::new("a", DataType::Int32, false),
-            Field::new("b", DataType::Utf8, true),
-        ]);
-
-        let chunk_manifest = vec![];
-
-        let footer = FileFooter {
-            schema: schema.clone(),
-            chunk_manifest,
-            writer_version: "1.0".to_string(),
-        };
-
-        let bytes = serde_json::to_vec(&footer)?;
-        let read_footer: FileFooter = serde_json::from_slice(&bytes)?;
-
-        assert_eq!(footer.schema, read_footer.schema);
-
-        Ok(())
+impl RecordBatchReader for PhoenixBatchReader {
+    fn schema(&self) -> SchemaRef {
+        self.mode.schema()
     }
 }

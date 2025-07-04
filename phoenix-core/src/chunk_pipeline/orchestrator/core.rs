@@ -7,7 +7,7 @@ use crate::error::PhoenixError;
 use crate::kernels;
 use crate::chunk_pipeline::artifact::CompressedChunk;
 use crate::chunk_pipeline::context::{PipelineInput, PipelineOutput};
-use crate::chunk_pipeline::models::{Operation, Plan};
+use crate::chunk_pipeline::models::{Operation, ChunkPlan};
 use crate::chunk_pipeline::orchestrator::compress_helpers::*;
 use crate::chunk_pipeline::orchestrator::decompress_helpers::*;
 use crate::chunk_pipeline::orchestrator::helpers::*;
@@ -87,7 +87,7 @@ pub fn compress_chunk(input: PipelineInput) -> Result<Vec<u8>, PhoenixError> {
     }
 
     // 6. Assemble and serialize the final artifact.
-    let final_plan_struct = Plan {
+    let final_plan_struct = ChunkPlan {
         plan_version: 1,
         initial_type: input.initial_dtype,
         pipeline: final_pipeline,
@@ -143,7 +143,7 @@ pub fn compress_chunk(input: PipelineInput) -> Result<Vec<u8>, PhoenixError> {
 pub fn decompress_chunk(bytes: &[u8]) -> Result<PipelineOutput, PhoenixError> {
     // 1. Deserialization: The Orchestrator's core responsibility.
     let artifact = CompressedChunk::from_bytes(bytes)?;
-    let plan: Plan = serde_json::from_str(&artifact.plan_json)?;
+    let plan: ChunkPlan = serde_json::from_str(&artifact.plan_json)?;
     let total_rows = artifact.total_rows as usize;
     let mut streams = artifact.compressed_streams;
 
@@ -193,7 +193,7 @@ pub fn get_compressed_chunk_info(
     let artifact = CompressedChunk::from_bytes(bytes)?;
     let data_size = artifact.compressed_streams.values().map(|v| v.len()).sum();
     let header_size = bytes.len() - data_size;
-    let plan: Plan = serde_json::from_str(&artifact.plan_json)?;
+    let plan: ChunkPlan = serde_json::from_str(&artifact.plan_json)?;
     let pretty_plan = serde_json::to_string(&plan)?;
     Ok((header_size, data_size, pretty_plan, artifact.original_type))
 }
