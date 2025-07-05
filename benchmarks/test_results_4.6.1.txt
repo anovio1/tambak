@@ -1,0 +1,408 @@
+
+================================================================================
+                      --- Phoenix 4.6.1 unit_positions ---                      
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---                  
+            --- (The 'CEO' View: Which final file is smallest?) ---             
+================================================================================
+  - Original MPK File:                         6,641,915 bytes (100.00%)
+  - Zstd on original MPK:                      3,804,423 bytes ( 57.28%)
+  - Parquet (Zstd) File:                       3,305,379 bytes ( 49.77%)
+  - Phoenix Stitched File (.phx):              3,301,118 bytes ( 49.70%)
+  - Phoenix none File (.phx):                  3,302,761 bytes ( 49.73%)
+  - Phoenix relin File (.phx):                 2,879,236 bytes ( 43.35%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---                  
+         --- (The 'Engineering' View: How effective is our logic?) ---          
+================================================================================
+  - Parquet Columnar Data:           3,303,041 bytes (100.00%)
+  - Zstd-per-Column Data:            3,966,937 bytes (120.10%)
+  - Phoenix Columnar Data:           3,300,475 bytes ( 99.92%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                       1,199        2,799        3,393 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"Ans"}]}
+unit_id                   145,638      145,697      219,116 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
+unit_def_id                95,167      197,427      130,232 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+team_id                    57,893      112,822       70,709 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+x                         370,960      521,282      392,225 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+y                         232,702      330,718      246,887 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+z                         384,616      539,865      424,956 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+vx                        584,698      584,752      465,141 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+vy                        326,636      376,247      292,851 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Zstd","params":{"level":3}}]}}]}
+vz                        553,519      553,464      447,776 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+heading                   547,447      601,864      609,755 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.
+
+================================================================================
+                       --- Phoenix 4.6.1 unit_events ---                        
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---                  
+            --- (The 'CEO' View: Which final file is smallest?) ---             
+================================================================================
+  - Original MPK File:                         2,499,651 bytes (100.00%)
+  - Zstd on original MPK:                        778,603 bytes ( 31.15%)
+  - Parquet (Zstd) File:                       1,044,567 bytes ( 41.79%)
+  - Phoenix Stitched File (.phx):                802,963 bytes ( 32.12%)
+  - Phoenix none File (.phx):                    805,168 bytes ( 32.21%)
+  - Phoenix relin File (.phx):                   608,550 bytes ( 24.35%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---                  
+         --- (The 'Engineering' View: How effective is our logic?) ---          
+================================================================================
+  - Parquet Columnar Data:           1,041,139 bytes (100.00%)
+  - Zstd-per-Column Data:            1,036,406 bytes ( 99.55%)
+  - Phoenix Columnar Data:             802,016 bytes ( 77.03%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                      24,657       60,226      162,483 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"BitPack","params":{"bit_width":8}},{"op":"Ans"}]}
+unit_id                   177,283      185,304      229,917 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+unit_def_id                74,707       90,883       57,292 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+unit_team_id               43,182       44,104       41,409 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+x                         141,099      183,609      160,794 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+y                          68,126       82,560       84,252 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+z                         146,272      178,438      166,613 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+attacker_unit_id           25,381       41,415       31,179 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Zstd","params":{"level":3}}]}
+attacker_unit_def_id       17,232       35,113       19,039 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+attacker_team_id           13,101       29,089       14,336 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+event_type                 27,004       26,865       27,727 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
+old_team_id                   576          832          404 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+new_team_id                   585          816          413 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+builder_id                 30,462       49,606       29,879 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Zstd","params":{"level":3}}]}
+factory_queue_len          12,349       27,546       15,402 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.
+
+================================================================================
+                        --- Phoenix 4.6.1 damage_log ---                        
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---                  
+            --- (The 'CEO' View: Which final file is smallest?) ---             
+================================================================================
+  - Original MPK File:                         6,531,861 bytes (100.00%)
+  - Zstd on original MPK:                      2,011,629 bytes ( 30.80%)
+  - Parquet (Zstd) File:                       2,699,725 bytes ( 41.33%)
+  - Phoenix Stitched File (.phx):              2,341,269 bytes ( 35.84%)
+  - Phoenix none File (.phx):                  2,343,336 bytes ( 35.88%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---                  
+         --- (The 'Engineering' View: How effective is our logic?) ---          
+================================================================================
+  - Parquet Columnar Data:           2,696,435 bytes (100.00%)
+  - Zstd-per-Column Data:            2,652,788 bytes ( 98.38%)
+  - Phoenix Columnar Data:           2,340,336 bytes ( 86.79%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                      29,383       86,950      207,551 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
+victim_team_id             75,744       93,024       81,508 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+attacker_team_id           73,681       97,166       76,898 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+victim_unit_id            214,144      214,330      314,756 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
+victim_def_id             129,167      149,775       95,822 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Dictionary"},{"op":"Zstd","params":{"level":3}}]}
+attacker_unit_id          205,582      212,341      300,152 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Zstd","params":{"level":3}}]}
+attacker_def_id           121,080      147,696      129,584 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Dictionary"},{"op":"Zstd","params":{"level":3}}]}
+weapon_def_id             130,550      153,573       94,723 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Dictionary"},{"op":"Zstd","params":{"level":3}}]}
+projectile_id             222,238      225,732      223,854 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+damage                    433,497      433,364      338,792 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+is_paralyzer                3,362        2,897        2,943 {"plan_version":1,"initial_type":"Boolean","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}
+victim_pos_x              283,843      332,516      334,050 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+victim_pos_y              138,001      163,957      160,036 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+victim_pos_z              280,064      339,467      335,766 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.
+
+================================================================================
+                       --- Phoenix 4.6.1 commands_log ---                       
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---                  
+            --- (The 'CEO' View: Which final file is smallest?) ---             
+================================================================================
+  - Original MPK File:                        14,424,289 bytes (100.00%)
+  - Zstd on original MPK:                      2,320,317 bytes ( 16.09%)
+  - Parquet (Zstd) File:                       2,840,316 bytes ( 19.69%)
+  - Phoenix Stitched File (.phx):              1,392,337 bytes (  9.65%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---                  
+         --- (The 'Engineering' View: How effective is our logic?) ---          
+================================================================================
+  - Parquet Columnar Data:           2,836,403 bytes (100.00%)
+  - Zstd-per-Column Data:            3,914,687 bytes (138.02%)
+  - Phoenix Columnar Data:           1,391,249 bytes ( 49.05%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                      35,285       69,952      164,662 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
+teamId                     56,590      120,579       66,741 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
+unitId                    268,993      268,585      337,166 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
+cmd_id                     72,443       89,330       60,226 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+cmd_name                   44,687      110,604       52,163 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Zstd","params":{"level":3}}]}
+cmd_tag                    27,200       65,588       34,563 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}}]}
+target_unit_id             40,086       64,622       49,965 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Zstd","params":{"level":3}}]}
+x                         288,641      379,251      368,300 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+y                         110,786      183,524      143,326 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+z                         276,285      354,814      373,718 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+params                        N/A    1,939,960          N/A Failed
+playerID                   59,691      104,901       77,595 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
+opt_alt                     5,051        5,039        5,092 {"plan_version":1,"initial_type":"Boolean","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}
+opt_ctrl                      540          440          487 {"plan_version":1,"initial_type":"Boolean","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}
+opt_internal                  120           20           64 {"plan_version":1,"initial_type":"Boolean","pipeline":[{"op":"Rle"}]}
+opt_coded                  52,499      106,840       48,545 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+opt_right                  24,992       23,527       23,573 {"plan_version":1,"initial_type":"Boolean","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}
+opt_meta                    8,509        8,480        8,525 {"plan_version":1,"initial_type":"Boolean","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}
+opt_shift                  18,851       18,631       18,677 {"plan_version":1,"initial_type":"Boolean","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.
+
+================================================================================
+                     --- Phoenix 4.6.1 construction_log ---                     
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---                  
+            --- (The 'CEO' View: Which final file is smallest?) ---             
+================================================================================
+  - Original MPK File:                        11,062,038 bytes (100.00%)
+  - Zstd on original MPK:                      2,278,007 bytes ( 20.59%)
+  - Parquet (Zstd) File:                       2,565,435 bytes ( 23.19%)
+  - Phoenix Stitched File (.phx):              2,648,866 bytes ( 23.95%)
+  - Phoenix none File (.phx):                  2,650,222 bytes ( 23.96%)
+  - Phoenix relin File (.phx):                 1,163,358 bytes ( 10.52%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---                  
+         --- (The 'Engineering' View: How effective is our logic?) ---          
+================================================================================
+  - Parquet Columnar Data:           2,563,197 bytes (100.00%)
+  - Zstd-per-Column Data:            3,269,977 bytes (127.57%)
+  - Phoenix Columnar Data:           2,648,256 bytes (103.32%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                       2,175        5,759        7,342 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
+event                     107,757      111,192      102,176 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+builder_unit_id           656,058      657,338      593,359 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
+builder_unit_def_id       225,535      356,038      193,266 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+builder_player_id         215,212      339,702      214,607 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+target_unit_id            627,959      628,166      799,192 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
+target_unit_def_id        363,029      511,939      284,031 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+target_player_id          216,383      336,435      215,932 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"ExtractNulls","params":{"output_stream_id":"null_mask","null_mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+buildpower                234,148      323,408      153,292 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Dictionary"},{"op":"Ans"}]}
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.
+
+================================================================================
+                       --- Phoenix 4.6.1 scouting_log ---                       
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---                  
+            --- (The 'CEO' View: Which final file is smallest?) ---             
+================================================================================
+  - Original MPK File:                         1,117,720 bytes (100.00%)
+  - Zstd on original MPK:                        221,395 bytes ( 19.81%)
+  - Parquet (Zstd) File:                         161,049 bytes ( 14.41%)
+  - Phoenix Stitched File (.phx):                126,987 bytes ( 11.36%)
+  - Phoenix none File (.phx):                    127,912 bytes ( 11.44%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---                  
+         --- (The 'Engineering' View: How effective is our logic?) ---          
+================================================================================
+  - Parquet Columnar Data:             159,505 bytes (100.00%)
+  - Zstd-per-Column Data:              185,566 bytes (116.34%)
+  - Phoenix Columnar Data:             126,596 bytes ( 79.37%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                         615          804          988 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
+enemy_unit_id              53,688       53,604       93,789 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
+enemy_unit_def_id          33,541       57,205       22,301 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+enemy_team_id              16,970       38,105       20,895 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+spotting_ally_team_id        6,883       21,088        7,150 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":3}}]}}]}
+losMask                    14,899       14,760       14,382 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.
+
+================================================================================
+                        --- Phoenix 4.6.1 team_stats ---                        
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---                  
+            --- (The 'CEO' View: Which final file is smallest?) ---             
+================================================================================
+  - Original MPK File:                           541,516 bytes (100.00%)
+  - Zstd on original MPK:                        269,764 bytes ( 49.82%)
+  - Parquet (Zstd) File:                         389,728 bytes ( 71.97%)
+  - Phoenix Stitched File (.phx):                286,886 bytes ( 52.98%)
+  - Phoenix none File (.phx):                    292,481 bytes ( 54.01%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---                  
+         --- (The 'Engineering' View: How effective is our logic?) ---          
+================================================================================
+  - Parquet Columnar Data:             381,172 bytes (100.00%)
+  - Zstd-per-Column Data:              283,212 bytes ( 74.30%)
+  - Phoenix Columnar Data:             284,372 bytes ( 74.60%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                         232          961        1,561 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+team_id                       245           85          320 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":17}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+metal_used                 18,183       17,973       25,515 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+metal_produced             18,318       18,118       25,775 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+metal_excess                  309           90          266 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+metal_received              6,778        6,563       10,591 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+metal_sent                  2,426        2,207        3,440 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+energy_used                20,335       20,123       27,765 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+energy_produced            20,446       20,251       27,890 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+energy_excess               2,506        2,287        3,037 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+energy_received            14,971       15,382       20,592 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+energy_sent                 7,807        7,580       10,459 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+damage_dealt               11,875       11,665       14,559 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+damage_received            11,841       11,629       14,316 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+units_killed                1,713        2,444        6,250 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":17}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
+units_died                  2,038        3,069        7,294 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":17}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
+units_captured                174           20          113 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":3}}]}
+units_out_captured            174           20          113 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":3}}]}
+units_received                292          166          857 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":17}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
+units_sent                    290          170          873 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":17}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
+current_unit_count            174           20          113 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":3}}]}
+metal_current              16,000       15,801       20,191 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+metal_storage               1,895        1,676        1,710 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+metal_pull                 12,303       12,114       12,325 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+metal_income               10,375       10,151       11,500 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+metal_expense              12,394       12,205       12,317 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+metal_share                   302          112          147 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+metal_Rsent                 1,267        1,156        1,283 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Zstd","params":{"level":3}}]}}]}
+metal_Rreceived             3,197        3,429        2,836 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Zstd","params":{"level":3}}]}}]}
+metal_Rexcess                 257           43          144 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Shuffle"},{"op":"Ans"}]}
+energy_current             17,588       17,380       23,953 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+energy_storage              4,173        3,954       10,443 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+energy_pull                16,117       15,914       21,139 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+energy_income              15,451       15,549       21,852 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+energy_expense             16,228       16,010       21,455 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Zstd","params":{"level":3}}]}
+energy_share                  281          101          130 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+energy_Rsent                4,114        4,968        5,401 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Zstd","params":{"level":3}}]}}]}
+energy_Rreceived            9,650       10,311       10,879 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Zstd","params":{"level":3}}]}}]}
+energy_Rexcess              1,653        1,515        1,768 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Zstd","params":{"level":3}}]}}]}
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.
+
+================================================================================
+                       --- Phoenix 4.6.1 unit_economy ---                       
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---                  
+            --- (The 'CEO' View: Which final file is smallest?) ---             
+================================================================================
+  - Original MPK File:                        10,926,575 bytes (100.00%)
+  - Zstd on original MPK:                      1,811,695 bytes ( 16.58%)
+  - Parquet (Zstd) File:                       1,250,335 bytes ( 11.44%)
+  - Phoenix Stitched File (.phx):              1,056,702 bytes (  9.67%)
+  - Phoenix none File (.phx):                  1,058,064 bytes (  9.68%)
+  - Phoenix relin File (.phx):                   683,178 bytes (  6.25%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---                  
+         --- (The 'Engineering' View: How effective is our logic?) ---          
+================================================================================
+  - Parquet Columnar Data:           1,248,254 bytes (100.00%)
+  - Zstd-per-Column Data:            2,177,016 bytes (174.40%)
+  - Phoenix Columnar Data:           1,056,138 bytes ( 84.61%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                      14,044       20,366       56,255 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+unit_id                   171,593      182,433      328,524 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+unit_def_id               105,846      350,363       75,006 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
+team_id                    62,058      392,090       82,944 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+event_type                  5,621        5,483        4,259 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
+metal_make                 75,238      179,940       78,355 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Zstd","params":{"level":3}}]}}]}
+metal_use                 183,479      269,492      183,284 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Zstd","params":{"level":3}}]}}]}
+energy_make                99,445      341,948      154,866 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Dictionary"},{"op":"Zstd","params":{"level":3}}]}}]}
+energy_use                338,814      434,901      284,761 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Zstd","params":{"level":3}}]}}]}
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.
+
+================================================================================
+                   --- Phoenix 4.6.1 unit_state_snapshots ---                   
+================================================================================
+
+================================================================================
+                  --- 📊 TOTAL ON-DISK FILE SIZE COMPARISON ---                  
+            --- (The 'CEO' View: Which final file is smallest?) ---             
+================================================================================
+  - Original MPK File:                         1,700,312 bytes (100.00%)
+  - Zstd on original MPK:                        557,157 bytes ( 32.77%)
+  - Parquet (Zstd) File:                         558,380 bytes ( 32.84%)
+  - Phoenix Stitched File (.phx):                475,894 bytes ( 27.99%)
+  - Phoenix none File (.phx):                    477,673 bytes ( 28.09%)
+  - Phoenix relin File (.phx):                   352,101 bytes ( 20.71%)
+================================================================================
+
+================================================================================
+                 --- 📈 TOTAL COLUMNAR DATA SIZE COMPARISON ---                  
+         --- (The 'Engineering' View: How effective is our logic?) ---          
+================================================================================
+  - Parquet Columnar Data:             555,757 bytes (100.00%)
+  - Zstd-per-Column Data:              553,544 bytes ( 99.60%)
+  - Phoenix Columnar Data:             475,123 bytes ( 85.49%)
+================================================================================
+
+--- 🔬 PER-COLUMN DIAGNOSTICS ---
+Column                    Phoenix         Zstd     Parquet* Plan
+-------------------- ------------ ------------ ------------ ----------------------------------------
+frame                       1,068        2,054        3,158 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"Ans"}]}
+unit_id                   111,638      111,690      166,472 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
+team_id                    32,451       43,088       35,048 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+currentHealth             122,460      163,806      149,917 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+currentMaxHealth           98,902      107,113      112,490 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
+experience                 43,903       50,984       33,194 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Sparsify","params":{"mask_stream_id":"sparsity_mask","mask_pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}],"values_pipeline":[{"op":"Zstd","params":{"level":3}}]}}]}
+is_being_built                321          180          199 {"plan_version":1,"initial_type":"Boolean","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}
+is_stunned                  9,696        7,523        7,566 {"plan_version":1,"initial_type":"Boolean","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}
+is_cloaked                    655          600          646 {"plan_version":1,"initial_type":"Boolean","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}
+is_transporting_count          177           73          145 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Dictionary"},{"op":"Ans"}]}
+current_max_range          51,800       64,606       45,043 {"plan_version":1,"initial_type":"Float64","pipeline":[{"op":"CanonicalizeZeros"},{"op":"BitCast","params":{"to_type":"UInt64"}},{"op":"Dictionary"},{"op":"Zstd","params":{"level":3}}]}
+is_firing                   2,052        1,827        1,879 {"plan_version":1,"initial_type":"Boolean","pipeline":[{"op":"Rle"},{"op":"Zstd","params":{"level":19}}]}
+--------------------------------------------------------------------------------
+*Parquet size is the on-disk compressed size for that column's data chunks.

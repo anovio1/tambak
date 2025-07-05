@@ -34,7 +34,7 @@ RustLib/target/**/*
 
 phoenix-core/src-copy/**/*
 /*.md
-/*.mpk
-/*.zst
-/*.phx
-/*.parquet
+/**/*.mpk
+/**/*.zst
+/**/*.phx
+/**/*.parquet

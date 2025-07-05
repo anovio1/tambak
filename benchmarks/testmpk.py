@@ -1,4 +1,4 @@
-# In: test_mpk_compression.py
+# In: test_mpk.py
 
 import pathlib
 import pyarrow as pa
@@ -9,6 +9,18 @@ import logging
 import json
 import zstandard
 
+ASPECT_NAMES = [
+    "unit_positions",
+    "unit_events",
+    "damage_log",
+    "commands_log",
+    "construction_log",
+    "scouting_log",
+    "team_stats",
+    "unit_economy",
+    "unit_state_snapshots"
+]
+
 
 def save_and_print_report(
     aspect_name,
@@ -16,6 +28,7 @@ def save_and_print_report(
     mpk_bytes_len,
     zstd_on_mpk_size,
     parquet_file_size,
+    phoenix_strategy_sizes,
     phoenix_frame_size,
     total_parquet_columnar_size,
     total_zstd_columnar_size,
@@ -31,6 +44,8 @@ def save_and_print_report(
             print(*args, **kwargs)  # print to console
             print(*args, **kwargs, file=f)  # print to file
 
+        left_len = 40
+
         dual_print("\n" + "=" * 80)
         dual_print(f"--- Phoenix {phoenix_cache_version} {aspect_name} ---".center(80))
         dual_print("=" * 80)
@@ -40,18 +55,29 @@ def save_and_print_report(
         dual_print("--- (The 'CEO' View: Which final file is smallest?) ---".center(80))
         dual_print("=" * 80)
         dual_print(
-            f"  - Original MPK File:         {mpk_bytes_len:>15,} bytes (100.00%)"
+            f"{'  - Original MPK File:':<{left_len}} {mpk_bytes_len:>15,} bytes (100.00%)"
         )
         dual_print(
-            f"  - Zstd on original MPK:      {zstd_on_mpk_size:>15,} bytes ({zstd_on_mpk_size/mpk_bytes_len*100:6.2f}%)"
+            f"{'  - Zstd on original MPK:':<{left_len}} {zstd_on_mpk_size:>15,} bytes ({zstd_on_mpk_size/mpk_bytes_len*100:6.2f}%)"
         )
         if parquet_file_size != -1:
             dual_print(
-                f"  - Parquet (Zstd) File:       {parquet_file_size:>15,} bytes ({parquet_file_size/mpk_bytes_len*100:6.2f}%)"
+                f"{'  - Parquet (Zstd) File:':<{left_len}} {parquet_file_size:>15,} bytes ({parquet_file_size/mpk_bytes_len*100:6.2f}%)"
             )
         dual_print(
-            f"  - Phoenix Frame File (.phx): {phoenix_frame_size:>15,} bytes ({phoenix_frame_size/mpk_bytes_len*100:6.2f}%)"
+            f"{'  - Phoenix Stitched File (.phx):':<{left_len}} {phoenix_frame_size:>15,} bytes ({phoenix_frame_size/mpk_bytes_len*100:6.2f}%)"
         )
+        for strategy_name in phoenix_strategy_sizes:
+            size = phoenix_strategy_sizes[strategy_name]
+            if size is None or size <= 0 or strategy_name is None:
+                continue
+            label = strategy_name
+            if strategy_name == "per_batch_relinearize":
+                label = "relin"
+            print_string = f"  - Phoenix {label} File (.phx):"
+            dual_print(
+                f"{print_string:<{left_len}} {size:>15,} bytes ({size/mpk_bytes_len*100:6.2f}%)"
+            )
         dual_print("=" * 80)
 
         dual_print("\n" + "=" * 80)
@@ -117,8 +143,6 @@ except ImportError as e:
         f"Failed to import from tubuin-processor. Check the TUBUIN_PROCESSOR_PATH. Error: {e}"
     )
     sys.exit(1)
-
-ASPECT_NAMES = ["unit_positions", "unit_events", "damage_log"]
 
 
 def write_phoenix_frame(output_path: pathlib.Path, compressed_columns: dict):
@@ -227,6 +251,78 @@ def main(aspect_name):
     zstd_on_mpk_bytes = zstd_compressor.compress(mpk_bytes)
     zstd_on_mpk_size = len(zstd_on_mpk_bytes)
 
+    strategies_to_test = ["none", "per_batch_relinearize"]  # , "partitioned"]
+    phoenix_strategy_sizes = {}
+
+    for strategy_name in strategies_to_test:
+        logger.info(f"  -> Testing Phoenix strategy: '{strategy_name}'...")
+        phx_output_path = pathlib.Path(f"./{aspect_name}_{strategy_name}.phx")
+
+        # 1. Create the correct config for the current strategy
+        config = None
+        if strategy_name == "partitioned":
+            key = "unit_id" if "unit_id" in arrow_table.column_names else None
+            if not key:
+                logger.warning(
+                    f"     -> Skipping 'partitioned': 'unit_id' column missing."
+                )
+                phoenix_strategy_sizes[strategy_name] = -1
+                continue
+            config = phoenix_cache.CompressorConfig(
+                time_series_strategy="partitioned", partition_key_column=key
+            )
+        elif strategy_name == "per_batch_relinearize":
+            key = "unit_id" if "unit_id" in arrow_table.column_names else None
+            ts = "frame" if "frame" in arrow_table.column_names else None
+            if aspect_name == "damage_log":
+                key = (
+                    "victim_unit_id"
+                    if "victim_unit_id" in arrow_table.column_names
+                    else None
+                )
+            if aspect_name == "damage_log":
+                key = "unitId" if "unitId" in arrow_table.column_names else None
+            if aspect_name == "construction_log":
+                key = (
+                    "builder_unit_id"
+                    if "builder_unit_id" in arrow_table.column_names
+                    else None
+                )
+            if not key or not ts:
+                logger.warning(
+                    f"     -> Skipping 'per_batch_relinearize': 'unit_id' or 'frame' missing."
+                )
+                phoenix_strategy_sizes[strategy_name] = -1
+                continue
+            config = phoenix_cache.CompressorConfig(
+                time_series_strategy="per_batch_relinearize",
+                stream_id_column=key,
+                timestamp_column=ts,
+            )
+        elif strategy_name == "none":
+            config = phoenix_cache.CompressorConfig(time_series_strategy="none")
+
+        # 2. Run the stateful compressor to generate the file
+        try:
+            with open(phx_output_path, "wb") as f:
+                compressor = phoenix_cache.Compressor(f, config)
+                reader = pa.RecordBatchReader.from_batches(
+                    arrow_table.schema, arrow_table.to_batches()
+                )
+                compressor.compress(reader)
+
+            # 3. Record the final on-disk size
+            phoenix_strategy_sizes[strategy_name] = phx_output_path.stat().st_size
+            logger.info(
+                f"     -> Generated '{phx_output_path.name}': {phoenix_strategy_sizes[strategy_name]:,} bytes"
+            )
+        except Exception as e:
+            logger.error(
+                f"     -> FAILED to generate file for strategy '{strategy_name}': {e}",
+                exc_info=True,
+            )
+            phoenix_strategy_sizes[strategy_name] = -1
+
     try:
         pq.write_table(
             arrow_table, PARQUET_OUTPUT_PATH, compression="ZSTD", compression_level=3
@@ -269,6 +365,7 @@ def main(aspect_name):
         mpk_bytes_len=len(mpk_bytes),
         zstd_on_mpk_size=zstd_on_mpk_size,
         parquet_file_size=parquet_file_size,
+        phoenix_strategy_sizes=phoenix_strategy_sizes,
         phoenix_frame_size=phoenix_frame_size,
         total_parquet_columnar_size=total_parquet_columnar_size,
         total_zstd_columnar_size=total_zstd_columnar_size,
