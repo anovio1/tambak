@@ -30,10 +30,6 @@ pub mod bitmap;
 // of the Rust crate should only interact with the `null_handling` module through
 // these re-exported items.
 
-pub use self::bitmap::{
-    reapply_bitmap,
-    strip_valid_data_to_buffer, // <-- CORRECTED: No longer exporting a non-existent struct
-};
 
 //==================================================================================
 // 3. Unit Tests (Module-level integration tests)

@@ -8,7 +8,7 @@
 
 use crate::error::PhoenixError;
 use bytemuck::Pod;
-use num_traits::{PrimInt, Zero};
+use num_traits::Zero;
 
 /// Splits a sparse data stream into a boolean mask and a dense data vector.
 ///

@@ -6,7 +6,7 @@
 use crate::bridge::config::CompressorConfig;
 use crate::bridge::format::{ChunkManifestEntry, FramePlan};
 use crate::error::PhoenixError;
-use arrow::record_batch::{RecordBatch, RecordBatchReader};
+use arrow::record_batch::RecordBatchReader;
 
 //==================================================================================
 // 1. Module Declarations
@@ -22,10 +22,6 @@ mod util;
 //==================================================================================
 // 2. Public API Re-exports
 //==================================================================================
-pub use self::column_strategies::{
-    ColumnCompressionResult, ColumnCompressor, RelinearizationDecorator, StandardColumnCompressor,
-};
-pub use self::profiler::PlannerHints;
 pub use self::strategies::{
     PartitioningStrategy, PerBatchRelinearizationStrategy, StandardStreamingStrategy,
 };

@@ -87,14 +87,14 @@ fn build_normalized_symbols(
         let freq = ((count * ANS_NORMALIZATION_FACTOR as u64) / total_input_len) as u32;
         // Ensure every symbol present gets at least one slot.
         let freq = freq.max(1);
-        norm_symbols_for_header.push(((*byte, freq as u16)));
+        norm_symbols_for_header.push((*byte, freq as u16));
         total_norm_freq += freq;
     }
 
     // --- Distribute Remainder ---
     // The integer division above might leave a remainder. We distribute this
     // remainder to the most frequent symbols to maintain an accurate probability model.
-    let mut remainder = ANS_NORMALIZATION_FACTOR.saturating_sub(total_norm_freq);
+    let remainder = ANS_NORMALIZATION_FACTOR.saturating_sub(total_norm_freq);
 
     let num_symbols_to_distribute = norm_symbols_for_header.len();
     if remainder > 0 && num_symbols_to_distribute > 0 {

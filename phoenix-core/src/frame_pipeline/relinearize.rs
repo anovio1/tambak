@@ -4,20 +4,17 @@
 //! Its purpose is to transform RecordBatch data into a more compressible format
 //! by re-ordering based on key and timestamp columns within a single batch.
 
-use arrow::array::{as_primitive_array, Array, PrimitiveArray};
+use arrow::array::{as_primitive_array, Array};
 use arrow::compute::kernels::take;
-use arrow::datatypes::{ArrowPrimitiveType, Int64Type};
+use arrow::datatypes::Int64Type;
 use arrow::record_batch::RecordBatch; // Only for relinearize_all_streams, which might be deprecated or internal
 use std::collections::HashMap;
 
 use crate::error::PhoenixError;
 use crate::log_metric;
 
-use arrow::array::{ArrayRef, BooleanArray, BooleanBuilder, PrimitiveBuilder};
-use arrow::datatypes::{
-    BooleanType, DataType, Float32Type, Float64Type, Int16Type, Int32Type, Int8Type, UInt16Type,
-    UInt32Type, UInt64Type, UInt8Type,
-};
+use arrow::array::ArrayRef;
+use arrow::datatypes::DataType;
 use std::sync::Arc;
 
 /// A collection of relinearized data streams for a single stream_id.

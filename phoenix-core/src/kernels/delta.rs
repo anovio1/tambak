@@ -6,7 +6,7 @@
 //! this logic to conform to the `executor`'s buffer-swapping strategy.
 
 use crate::error::PhoenixError;
-use crate::utils::{safe_bytes_to_typed_slice, typed_slice_to_bytes};
+use crate::utils::typed_slice_to_bytes;
 
 //==================================================================================
 // 1. Generic Core Logic (The "Engine" - In-Place & Performant)
@@ -115,6 +115,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::safe_bytes_to_typed_slice;
+
     use super::*;
 
     #[test]

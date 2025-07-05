@@ -81,8 +81,7 @@ mod tests {
     use super::*;
     use crate::{
         bridge::{
-            compressor::MockRecordBatchReader,
-            format::{ChunkManifestEntry, FileFooter},
+            compressor::MockRecordBatchReader, config::CompressorConfig, format::{ChunkManifestEntry, FileFooter, FILE_FORMAT_VERSION, FILE_MAGIC}
         },
         error::PhoenixError,
     };

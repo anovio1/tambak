@@ -3,10 +3,8 @@
 //! Utility functions for the frame pipeline.
 
 use crate::error::PhoenixError;
-use arrow::array::{Array, ArrayRef, AsArray, Int64Array, RecordBatch, UInt32Array};
-use arrow::compute::take;
+use arrow::array::{Array, Int64Array, RecordBatch};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Creates an index map from a `RecordBatch` based on a key column.
 ///

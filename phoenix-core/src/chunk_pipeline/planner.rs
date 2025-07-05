@@ -15,13 +15,11 @@
 use crate::chunk_pipeline::profiler::find_stride_by_autocorrelation;
 use crate::error::PhoenixError;
 use crate::kernels::zigzag;
-use crate::chunk_pipeline::context::PipelineInput;
 use crate::chunk_pipeline::models::{Operation, ChunkPlan};
-use crate::chunk_pipeline::{self, executor};
+use crate::chunk_pipeline::executor;
 use crate::types::PhoenixDataType;
 use crate::utils::safe_bytes_to_typed_slice;
 
-use ndarray::{s, Array1};
 use num_traits::{PrimInt, Signed, ToPrimitive, Unsigned, WrappingSub};
 use std::collections::HashSet;
 use std::ops::{BitXor, Shl, Shr};

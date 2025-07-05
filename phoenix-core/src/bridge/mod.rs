@@ -47,16 +47,12 @@ pub(crate) mod format;
 mod stateless_api;
 
 // --- High-Level Stateful API ---
-pub use compressor::Compressor;
-pub use config::{CompressionFormat, CompressorConfig, LossyConfig, TimeSeriesStrategy};
-pub use decompressor::Decompressor;
+pub use config::TimeSeriesStrategy;
 
 // --- Low-Level Stateless API (for FFI and testing) ---
 pub use stateless_api::{analyze_chunk, compress_arrow_chunk, decompress_arrow_chunk};
 
 // --- Format Constants and Structs ---
-pub use format::{ChunkManifestEntry, CompressionStats, FILE_FORMAT_VERSION, FILE_MAGIC};
-pub use format::{FrameOperation, FramePlan};
 
 #[cfg(test)]
 mod tests;

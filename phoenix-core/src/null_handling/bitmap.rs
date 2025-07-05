@@ -5,9 +5,9 @@
 //! official `NullBuffer` and non-generic `Buffer` types.
 
 use arrow::array::{
-    ArrayBuilder, ArrayData, BooleanArray, BooleanBuilder, PrimitiveArray, PrimitiveBuilder,
+    ArrayBuilder, BooleanArray, BooleanBuilder, PrimitiveArray, PrimitiveBuilder,
 };
-use arrow::buffer::{Buffer, NullBuffer, ScalarBuffer};
+use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::{ArrowNumericType, ToByteSlice}; // ToByteSlice is needed for tests
 
 use crate::error::PhoenixError;

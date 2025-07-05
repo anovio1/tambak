@@ -1,7 +1,6 @@
 // phoenix-core\src\pipeline\orchestrator\core.rs
 
 use arrow::array::Array;
-use std::collections::HashMap;
 
 use crate::error::PhoenixError;
 use crate::kernels;
@@ -10,11 +9,7 @@ use crate::chunk_pipeline::context::{PipelineInput, PipelineOutput};
 use crate::chunk_pipeline::models::{Operation, ChunkPlan};
 use crate::chunk_pipeline::orchestrator::compress_helpers::*;
 use crate::chunk_pipeline::orchestrator::decompress_helpers::*;
-use crate::chunk_pipeline::orchestrator::helpers::*;
-use crate::chunk_pipeline::planner::PlanningContext;
-use crate::chunk_pipeline::traits::StreamTransform;
-use crate::chunk_pipeline::OperationBehavior;
-use crate::chunk_pipeline::{executor, planner};
+use crate::chunk_pipeline::executor;
 use crate::types::PhoenixDataType;
 
 //==================================================================================

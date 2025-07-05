@@ -1,12 +1,10 @@
-use arrow::array::{Array, BooleanArray, PrimitiveArray};
-use arrow::buffer::BooleanBuffer;
+use arrow::array::Array;
 use arrow::datatypes::*;
 use bytemuck::Pod;
 use num_traits::{PrimInt, Zero};
 use std::collections::HashMap;
 
 use crate::error::PhoenixError;
-use crate::null_handling::bitmap;
 use crate::chunk_pipeline::models::Operation;
 use crate::chunk_pipeline::planner::PlanningContext;
 use crate::chunk_pipeline::traits::StreamTransform;

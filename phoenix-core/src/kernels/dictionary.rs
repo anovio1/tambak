@@ -6,7 +6,7 @@
 //! with a much smaller stream of indices pointing to the dictionary entries.
 
 use crate::error::PhoenixError;
-use bytemuck::{bytes_of, from_bytes, try_cast_slice, Pod};
+use bytemuck::{bytes_of, Pod};
 use std::collections::HashMap;
 use std::hash::Hash;
 

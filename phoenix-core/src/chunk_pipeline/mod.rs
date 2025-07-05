@@ -31,13 +31,6 @@ pub mod traits;
 // This section defines the public, stable API of the `pipeline` module.
 // The FFI layer should only need to interact with the `orchestrator`.
 
-pub use self::orchestrator::{compress_chunk, decompress_chunk, get_compressed_chunk_info};
-
-pub use self::planner::plan_pipeline;
-
-pub use self::models::Operation;
-pub use self::models::ChunkPlan;
-
 pub use self::traits::OperationBehavior;
 
 #[cfg(test)]

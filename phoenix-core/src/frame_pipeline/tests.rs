@@ -5,7 +5,7 @@
 mod tests {
     use crate::frame_pipeline::profiler::discover_structure;
     use crate::frame_pipeline::profiler::DataStructure;
-    use crate::frame_pipeline::PlannerHints;
+    use crate::frame_pipeline::profiler::PlannerHints;
 
     use super::*;
     use arrow::array::{Float64Array, Int32Array};

@@ -7,7 +7,7 @@
 //! panic-free, and relies on `bytemuck` for safety.
 
 use crate::error::PhoenixError;
-use bytemuck::{Pod, Zeroable};
+use bytemuck::Pod;
 
 //==================================================================================
 // 1. Private Core Logic

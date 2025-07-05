@@ -1,9 +1,8 @@
 // In: src/bridge/arrow_impl.rs
 
-use arrow::array::{Array, AsArray, BooleanArray, PrimitiveArray};
+use arrow::array::{Array, BooleanArray, PrimitiveArray};
 use arrow::buffer::{BooleanBuffer, NullBuffer};
 use arrow::datatypes::*;
-use std::collections::HashMap;
 
 use crate::error::PhoenixError;
 use crate::null_handling::bitmap;

@@ -1,19 +1,17 @@
 // In: src/ffi/python.rs
 
-use arrow::array::{make_array, Array, ArrayData, RecordBatch, RecordBatchReader};
+use arrow::array::{make_array, ArrayData, RecordBatchReader};
 use arrow::pyarrow::{FromPyArrow, PyArrowType, ToPyArrow};
 use log::LevelFilter;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
 use std::fs::OpenOptions;
-use std::io;
 use std::sync::Once;
 
 use crate::bridge::{
     self, compressor::Compressor, config::CompressorConfig, decompressor::Decompressor,
     TimeSeriesStrategy,
 };
-use crate::error::PhoenixError;
 use crate::ffi::ioadapters::{PyRecordBatchReader, PythonFileReader, PythonFileWriter};
 use crate::utils;
 

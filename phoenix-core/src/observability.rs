@@ -10,10 +10,12 @@
 
 /// Logs a structured key-value metric string to stdout, only in debug builds.
 ///
+/// Logs a structured key-value metric string to stdout, only in debug builds.
+///
 /// # Example
 /// ```
-/// // In a debug build, this will print:
-/// // PHOENIX_METRIC: {"event": "discover_structure", "outcome": "FixedStride", "stride": "4"}
+/// use phoenix_cache::log_metric;
+/// let stride = 4;
 /// log_metric!("event"="discover_structure", "outcome"="FixedStride", "stride"=&stride);
 /// ```
 #[macro_export]
