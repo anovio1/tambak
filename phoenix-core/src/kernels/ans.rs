@@ -35,6 +35,11 @@ struct AnsSymbol {
 ///s
 /// This function counts symbol occurrences, normalizes them to a fixed total
 /// (`ANS_NORMALIZATION_FACTOR`), and prepares tables for both encoding and header serialization.
+/// Analyzes input data to build a normalized frequency model for ANS encoding.
+///
+/// This function counts symbol occurrences and normalizes them to a fixed total
+/// (`ANS_NORMALIZATION_FACTOR`) using robust integer arithmetic to avoid floating-point
+/// rounding errors.
 fn build_normalized_symbols(
     input_bytes: &[u8],
 ) -> Result<([AnsSymbol; 256], Vec<(u8, u16)>), PhoenixError> {
@@ -44,39 +49,60 @@ fn build_normalized_symbols(
         ));
     }
 
-    let mut freqs = [0u32; 256];
+    let mut freqs = [0u64; 256];
     for &byte in input_bytes {
         freqs[byte as usize] += 1;
     }
 
-    let unique_symbol_count = freqs.iter().filter(|&&c| c > 0).count();
-    if unique_symbol_count <= 1 {
-        // ANS requires a dynamic probability distribution. A single symbol stream
-        // is better handled by RLE.
+    let unique_symbols: Vec<_> = freqs
+        .iter()
+        .enumerate()
+        .filter(|(_, &c)| c > 0)
+        .map(|(byte, &count)| (byte as u8, count))
+        .collect();
+
+    if unique_symbols.len() <= 1 {
         return Err(PhoenixError::AnsError(
             "ANS requires at least two unique symbols.".to_string(),
         ));
     }
 
-    let mut norm_symbols_for_header = Vec::with_capacity(unique_symbol_count);
+    let total_input_len = input_bytes.len() as u64;
+    let mut norm_symbols_for_header = Vec::with_capacity(unique_symbols.len());
     let mut total_norm_freq = 0;
-    let total_input_len = input_bytes.len() as f64;
 
-    // Normalize frequencies to fit within the ANS_NORMALIZATION_FACTOR budget.
-    for (byte, &count) in freqs.iter().enumerate().filter(|(_, &c)| c > 0) {
-        let freq =
-            (((count as f64 / total_input_len) * ANS_NORMALIZATION_FACTOR as f64) as u32).max(1);
-        norm_symbols_for_header.push((byte as u8, freq as u16));
+    // --- Integer-based Normalization ---
+    // This calculates `(count * NORM_FACTOR) / total_len` for each symbol.
+    // This method is robust against floating point errors. The sum of these
+    // frequencies is guaranteed to be <= ANS_NORMALIZATION_FACTOR.
+    for (byte, count) in &unique_symbols {
+        let freq = ((count * ANS_NORMALIZATION_FACTOR as u64) / total_input_len) as u32;
+        // Ensure every symbol present gets at least one slot.
+        let freq = freq.max(1);
+        norm_symbols_for_header.push(((*byte, freq as u16)));
         total_norm_freq += freq;
     }
 
-    // Distribute any rounding error to the last symbol to ensure the sum is exact.
-    let remainder = ANS_NORMALIZATION_FACTOR.saturating_sub(total_norm_freq);
-    if let Some((_, freq)) = norm_symbols_for_header.last_mut() {
-        *freq = freq.saturating_add(remainder as u16);
-    }
+    // --- Distribute Remainder ---
+    // The integer division above might leave a remainder. We distribute this
+    // remainder to the most frequent symbols to maintain an accurate probability model.
+    let mut remainder = ANS_NORMALIZATION_FACTOR.saturating_sub(total_norm_freq);
 
-    // Build the final table used for encoding, containing cumulative frequencies.
+    let num_symbols_to_distribute = norm_symbols_for_header.len();
+    if remainder > 0 && num_symbols_to_distribute > 0 {
+        // Sort by frequency (desc) to give remainder to most probable symbols first.
+        norm_symbols_for_header.sort_unstable_by_key(|&(_, freq)| core::cmp::Reverse(freq));
+
+        for i in 0..remainder as usize {
+            // We now use the pre-calculated length, avoiding the simultaneous borrow.
+            let entry = &mut norm_symbols_for_header[i % num_symbols_to_distribute];
+            entry.1 += 1;
+        }
+    }
+    // Sort back by symbol value to ensure a canonical header format.
+    norm_symbols_for_header.sort_unstable_by_key(|&(byte, _)| byte);
+
+    // --- Build Final Encoding Table ---
     let mut encode_table = [AnsSymbol::default(); 256];
     let mut cum_freq = 0;
     for (byte, freq) in &norm_symbols_for_header {
