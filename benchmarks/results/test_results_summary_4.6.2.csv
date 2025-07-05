@@ -1,0 +1,10 @@
+Aspect,Original MPK (bytes),Original MPK (%),Zstd on original MPK (bytes),Zstd on original MPK (%),Parquet (Zstd) File (bytes),Parquet (Zstd) File (%),Phoenix Stitched File (.phx) (bytes),Phoenix Stitched File (.phx) (%),Phoenix none File (.phx) (bytes),Phoenix none File (.phx) (%),Phoenix relin File (.phx) (bytes),Phoenix relin File (.phx) (%)
+unit_positions,6641915,100.00,3804423,57.28,3305379,49.77,3301118,49.70,3302761,49.73,2879223,43.35
+unit_events,2499651,100.00,778603,31.15,1044567,41.79,803028,32.13,805233,32.21,608580,24.35
+damage_log,6531861,100.00,2011629,30.80,2699725,41.33,2350068,35.98,2352135,36.01,N/A,N/A
+commands_log,14424289,100.00,2320317,16.09,2840316,19.69,1392678,9.66,N/A,N/A,N/A,N/A
+construction_log,11062038,100.00,2278007,20.59,2565435,23.19,2738856,24.76,2740212,24.77,1212439,10.96
+scouting_log,1117720,100.00,221395,19.81,161049,14.41,126991,11.36,127916,11.44,N/A,N/A
+team_stats,541516,100.00,269764,49.82,389728,71.97,286891,52.98,292486,54.01,N/A,N/A
+unit_economy,10926575,100.00,1811695,16.58,1250335,11.44,1067366,9.77,1068728,9.78,695651,6.37
+unit_state_snapshots,1700312,100.00,557157,32.77,558380,32.84,475938,27.99,477717,28.10,352100,20.71

@@ -17,12 +17,13 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[macro_use]
 mod observability; // Make macros available throughout the crate
 
-mod bridge;
+pub mod bridge;
+pub mod kernels;
+
 mod chunk_pipeline;
 mod error;
 mod ffi;
 mod frame_pipeline;
-pub mod kernels;
 mod null_handling;
 mod traits;
 mod types;

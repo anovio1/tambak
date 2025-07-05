@@ -9,8 +9,8 @@
 //! meta-operations like `Sparsify`. This eliminates ambiguity and enables the
 //! executor to be driven directly by the described behavior.
 
-use crate::error::PhoenixError;
 use crate::chunk_pipeline::models::Operation;
+use crate::error::PhoenixError;
 use crate::types::PhoenixDataType;
 
 // --- NEW: A richer enum to describe the outcome of an operation ---
@@ -50,22 +50,9 @@ impl OperationBehavior for Operation {
         use StreamTransform::*;
 
         match self {
-            // --- Operations that preserve the logical data type ---
-            // These operations only modify the values or byte layout, not the fundamental type.
-            Operation::CanonicalizeZeros
-            | Operation::Delta { .. }
-            | Operation::XorDelta
-            | Operation::Rle
-            | Operation::Dictionary
-            | Operation::Leb128
-            | Operation::BitPack { .. }
-            | Operation::Shuffle
-            | Operation::Zstd { .. }
-            | Operation::Ans => Ok(PreserveType),
-
-            // --- Operations that explicitly change the type ---
-            Operation::BitCast { to_type } => Ok(TypeChange(*to_type)),
-
+            //======================================================================
+            // Group 1: Operations that TRULY change the logical type.
+            //======================================================================
             Operation::ZigZag => match input {
                 Int8 => Ok(TypeChange(UInt8)),
                 Int16 => Ok(TypeChange(UInt16)),
@@ -76,9 +63,35 @@ impl OperationBehavior for Operation {
                     input
                 ))),
             },
+            Operation::BitCast { to_type } => Ok(TypeChange(*to_type)),
 
-            // --- Meta-operations that restructure the stream ---
-            // These operations create or require additional data streams.
+            //======================================================================
+            // Group 2: Operations that change the PHYSICAL representation to
+            // an unstructured byte stream. The logical type is lost.
+            // Subsequent operations MUST treat the output as opaque bytes (UInt8).
+            //======================================================================
+            Operation::Rle
+            | Operation::Dictionary 
+            | Operation::Leb128
+            | Operation::BitPack { .. }
+            | Operation::Ans
+            | Operation::Zstd { .. } => Ok(TypeChange(PhoenixDataType::UInt8)),
+
+
+            //======================================================================
+            // Group 3: Operations that preserve the logical type AND byte layout.
+            // The output is still a valid slice of the original type.
+            //======================================================================
+            Operation::CanonicalizeZeros
+            | Operation::Delta { .. }
+            | Operation::XorDelta { .. }
+            | Operation::Shuffle => {
+                Ok(PreserveType)
+            }
+
+            //======================================================================
+            // Group 4: Meta-operations that restructure the entire stream.
+            //======================================================================
             Operation::Sparsify { .. } => Ok(Restructure {
                 // The primary output (the `values_pipeline`) operates on the original type.
                 primary_output_type: input,

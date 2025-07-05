@@ -6,9 +6,9 @@
 //! It acts as the "Pure Byte Engine," a non-strategic component that faithfully
 //! executes a linear sequence of operations from a plan.
 
+use crate::chunk_pipeline::models::Operation;
 use crate::error::PhoenixError;
 use crate::kernels;
-use crate::chunk_pipeline::models::Operation;
 // --- USE THE NEW TRAIT ---
 use crate::chunk_pipeline::traits::{OperationBehavior, StreamTransform};
 use crate::types::PhoenixDataType;
@@ -31,7 +31,18 @@ pub(crate) fn execute_linear_encode_pipeline(
     let mut buffer_b = Vec::with_capacity(buffer_a.len());
     let mut current_type = initial_type;
 
-    for op in pipeline {
+    for (i, op) in pipeline.iter().enumerate(){
+        // --- START OF NEW DEBUG BLOCK ---
+        #[cfg(debug_assertions)]
+        {
+            println!("\n");
+            println!("[EXECUTOR] Executing step {}: {:?} Input Type: {:?} Input Length (bytes): {}", i, op, current_type, buffer_a.len());
+            if buffer_a.len() < 64 {
+                // Print small buffers to inspect them
+                println!("[EXECUTOR]   Input Data (sample): {:?}", buffer_a);
+            }
+        }
+        // --- END OF NEW DEBUG BLOCK ---
         kernels::dispatch_encode(op, &buffer_a, &mut buffer_b, current_type)?;
 
         // Use the new trait to determine the output type.

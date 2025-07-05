@@ -1100,7 +1100,7 @@ dependencies = [
 
 [[package]]
 name = "phoenix-core"
-version = "4.6.1"
+version = "4.6.2"
 dependencies = [
  "arrow",
  "arrow-schema",

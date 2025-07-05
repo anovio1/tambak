@@ -1,7 +1,7 @@
 # This is the manifest for the Rust core of the Phoenix library.
 [package]
 name = "phoenix-core"
-version = "4.6.1"
+version = "4.6.2"
 edition = "2021"
 authors = ["anovio1 <anastace.novio@gmail.com>"]
 description = "Core Rust library for the Phoenix high-performance compression protocol."
@@ -63,3 +63,7 @@ dans = []
 [[bench]]
 name = "ans_bench"   # This MUST match your filename: ans_bench.rs
 harness = false      # This is CRITICAL for using the unstable #![feature(test)]
+
+[[bench]]
+name = "end_to_end_bench" # Must match the new filename
+harness = false

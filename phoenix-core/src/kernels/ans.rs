@@ -34,20 +34,6 @@ struct AnsSymbol {
 }
 
 /// Analyzes input data to build a normalized frequency model for ANS encoding.
-///s
-/// This function counts symbol occurrences, normalizes them to a fixed total
-/// (`ANS_NORMALIZATION_FACTOR`), and prepares tables for both encoding and header serialization.
-/// Analyzes input data to build a normalized frequency model for ANS encoding.
-///
-/// This function counts symbol occurrences and normalizes them to a fixed total
-/// (`ANS_NORMALIZATION_FACTOR`) using robust integer arithmetic to avoid floating-point
-/// rounding errors.
-/// Analyzes input data to build a normalized frequency model for ANS encoding.
-///
-/// This function uses the "Largest Remainder Method" to normalize frequencies.
-/// This is a standard, robust algorithm that avoids the edge cases and errors
-/// found in simpler normalization attempts by ensuring the final sum of frequencies
-/// is *exactly* the normalization factor.
 fn build_normalized_symbols(
     input_bytes: &[u8],
 ) -> Result<([AnsSymbol; 256], Vec<(u8, u16)>), PhoenixError> {
@@ -62,12 +48,26 @@ fn build_normalized_symbols(
         freqs[byte as usize] += 1;
     }
 
-    let unique_symbols: Vec<_> = freqs
+    let mut unique_symbols: Vec<(u8, u64)> = freqs
         .iter()
         .enumerate()
         .filter(|(_, &c)| c > 0)
         .map(|(byte, &count)| (byte as u8, count))
         .collect();
+
+    // --- DEBUG BLOCK #1 ---
+    #[cfg(debug_assertions)]
+    {
+        println!("\n==========================================================");
+        println!(
+            "[ANS_DEBUG] Optimized-Robust Normalization started for stream of {} bytes.",
+            input_bytes.len()
+        );
+        println!(
+            "[ANS_DEBUG]   Found {} unique symbols.",
+            unique_symbols.len()
+        );
+    }
 
     if unique_symbols.len() <= 1 {
         return Err(PhoenixError::AnsError(
@@ -76,52 +76,142 @@ fn build_normalized_symbols(
     }
 
     let total_input_len = input_bytes.len() as u64;
-    let mut norm_symbols_for_header = Vec::with_capacity(unique_symbols.len());
-    let mut total_norm_freq = 0;
 
-    // --- Integer-based Normalization ---
-    // This calculates `(count * NORM_FACTOR) / total_len` for each symbol.
-    // This method is robust against floating point errors. The sum of these
-    // frequencies is guaranteed to be <= ANS_NORMALIZATION_FACTOR.
+    // --- The Correct, Integer-Only Largest Remainder Method ---
+
+    // Step 1: Calculate base frequencies and remainders using integer arithmetic.
+    let mut norm_symbols: Vec<(u8, u16, u64)> = Vec::with_capacity(unique_symbols.len());
+    let mut current_sum: u32 = 0;
+
     for (byte, count) in &unique_symbols {
-        let freq = ((count * ANS_NORMALIZATION_FACTOR as u64) / total_input_len) as u32;
-        // Ensure every symbol present gets at least one slot.
-        let freq = freq.max(1);
-        norm_symbols_for_header.push((*byte, freq as u16));
-        total_norm_freq += freq;
+        let base_freq = ((count * ANS_NORMALIZATION_FACTOR as u64) / total_input_len) as u16;
+        let remainder = (count * ANS_NORMALIZATION_FACTOR as u64) % total_input_len;
+        norm_symbols.push((*byte, base_freq, remainder));
+        current_sum += base_freq as u32;
     }
 
-    // --- Distribute Remainder ---
-    // The integer division above might leave a remainder. We distribute this
-    // remainder to the most frequent symbols to maintain an accurate probability model.
-    let remainder = ANS_NORMALIZATION_FACTOR.saturating_sub(total_norm_freq);
+    // Step 2: Distribute the deficit based on the largest remainders using an O(N) algorithm.
+    let remainder_to_distribute = ANS_NORMALIZATION_FACTOR - current_sum;
 
-    let num_symbols_to_distribute = norm_symbols_for_header.len();
-    if remainder > 0 && num_symbols_to_distribute > 0 {
-        // Sort by frequency (desc) to give remainder to most probable symbols first.
-        norm_symbols_for_header.sort_unstable_by_key(|&(_, freq)| core::cmp::Reverse(freq));
+    // --- DEBUG BLOCK #2 ---
+    #[cfg(debug_assertions)]
+    {
+        println!(
+            "[ANS_DEBUG]   Base sum: {}. Distributing remaining {} slots.",
+            current_sum, remainder_to_distribute
+        );
+    }
 
-        for i in 0..remainder as usize {
-            // We now use the pre-calculated length, avoiding the simultaneous borrow.
-            let entry = &mut norm_symbols_for_header[i % num_symbols_to_distribute];
-            entry.1 += 1;
+    // --- PERFORMANCE OPTIMIZATION ---
+    // Instead of a full O(N log N) sort, we use a O(N) partial sort (select_nth_unstable_by)
+    // to find the `remainder_to_distribute` symbols with the largest remainders.
+    if remainder_to_distribute > 0 {
+        let num_to_promote = remainder_to_distribute as usize;
+
+        // Only partition if we aren't promoting every single symbol.
+        // If num_to_promote >= norm_symbols.len(), every symbol gets +1 (or more),
+        // so no partitioning is needed. The loop below handles this case.
+        if num_to_promote < norm_symbols.len() {
+            // This partitions the slice such that the top `num_to_promote` elements
+            // (by descending remainder) are at the start of the slice.
+            norm_symbols.select_nth_unstable_by(num_to_promote - 1, |a, b| {
+                // We want descending order of remainder (item .2), so we compare b to a.
+                b.2.cmp(&a.2)
+            });
+        }
+
+        // Give +1 to the top `num_to_promote` symbols. The .min() handles the
+        // case where remainder_to_distribute >= norm_symbols.len().
+        for i in 0..num_to_promote.min(norm_symbols.len()) {
+            norm_symbols[i].1 += 1;
         }
     }
-    // Sort back by symbol value to ensure a canonical header format.
-    norm_symbols_for_header.sort_unstable_by_key(|&(byte, _)| byte);
+    // --- END OF OPTIMIZATION ---
 
-    // --- Build Final Encoding Table ---
-    let mut encode_table = [AnsSymbol::default(); 256];
-    let mut cum_freq = 0;
-    for (byte, freq) in &norm_symbols_for_header {
-        encode_table[*byte as usize] = AnsSymbol {
-            freq: *freq as u32,
-            cum_freq,
-        };
-        cum_freq += *freq as u32;
+    // Step 3: Handle the zero-frequency case with a zero-sum swap.
+    // This logic is still essential for robustness and is unaffected by the performance optimization.
+    let zero_freq_indices: Vec<usize> = norm_symbols
+        .iter()
+        .enumerate()
+        .filter(|(_, &(_, freq, _))| freq == 0)
+        .map(|(i, _)| i)
+        .collect();
+
+    if !zero_freq_indices.is_empty() {
+        // --- DEBUG BLOCK #3 ---
+        #[cfg(debug_assertions)]
+        {
+            println!(
+                "[ANS_DEBUG]   Found {} symbols with zero frequency. Performing zero-sum swaps.",
+                zero_freq_indices.len()
+            );
+        }
+
+        // Sort by original raw count to find the richest symbols to steal from.
+        unique_symbols.sort_unstable_by_key(|a| std::cmp::Reverse(a.1));
+        let richest_symbols_order: Vec<u8> = unique_symbols.iter().map(|s| s.0).collect();
+
+        for zero_idx in zero_freq_indices {
+            norm_symbols[zero_idx].1 = 1; // Give 1 to the poor symbol.
+
+            let mut stolen = false;
+            for rich_byte in &richest_symbols_order {
+                // Find the index of the rich symbol in our (partially sorted) norm_symbols vec
+                if let Some(rich_idx) = norm_symbols.iter().position(|s| s.0 == *rich_byte) {
+                    if norm_symbols[rich_idx].1 > 1 {
+                        norm_symbols[rich_idx].1 -= 1; // Steal 1 from the rich symbol.
+                        stolen = true;
+                        break;
+                    }
+                }
+            }
+            if !stolen {
+                return Err(PhoenixError::AnsError(
+                    "Normalization failed: could not find a symbol with freq > 1 to rebalance zero-frequency symbols.".to_string()
+                ));
+            }
+        }
     }
 
-    Ok((encode_table, norm_symbols_for_header))
+    // --- Final Assembly ---
+    // Sort back by symbol value to ensure a canonical header format for the decompressor.
+    norm_symbols.sort_unstable_by_key(|a| a.0);
+
+    let header_symbols: Vec<(u8, u16)> = norm_symbols.iter().map(|(b, f, _)| (*b, *f)).collect();
+    let mut encode_table = [AnsSymbol::default(); 256];
+    let mut final_cum_freq: u32 = 0;
+
+    for (byte, freq) in &header_symbols {
+        encode_table[*byte as usize] = AnsSymbol {
+            freq: *freq as u32,
+            cum_freq: final_cum_freq,
+        };
+        final_cum_freq += *freq as u32;
+    }
+
+    // --- DEBUG BLOCK #4 (Final Check) ---
+    #[cfg(debug_assertions)]
+    {
+        println!("[ANS_DEBUG]   Final calculated sum: {}", final_cum_freq);
+        if final_cum_freq != ANS_NORMALIZATION_FACTOR {
+            eprintln!(
+                "[ANS_DEBUG]   ERROR: Mismatch! Expected {}",
+                ANS_NORMALIZATION_FACTOR
+            );
+        } else {
+            println!("[ANS_DEBUG]   SUCCESS: Sum matches normalization factor.");
+        }
+        println!("==========================================================");
+    }
+
+    if final_cum_freq != ANS_NORMALIZATION_FACTOR {
+        return Err(PhoenixError::AnsError(format!(
+            "Internal normalization error: final frequency sum was {}, expected {}. This is a bug.",
+            final_cum_freq, ANS_NORMALIZATION_FACTOR
+        )));
+    }
+
+    Ok((encode_table, header_symbols))
 }
 
 /// A faster version of `build_normalized_symbols` using a more efficient partial sort.
@@ -331,6 +421,12 @@ pub fn decode(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
         // Fill the fast lookup table for decoding.
         let end_slot = cum_freq + freq;
         for j in (cum_freq as usize)..(end_slot as usize) {
+            if j >= decode_lookup.len() {
+                return Err(PhoenixError::AnsError(format!(
+                    "Frequency table out of bounds: cum_freq {} + freq {} exceeds normalization factor {}",
+                    cum_freq, freq, ANS_NORMALIZATION_FACTOR
+                )));
+            }
             decode_lookup[j] = byte;
         }
         cum_freq = end_slot;
@@ -516,11 +612,13 @@ pub fn decode_fast(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
 /// (partial sort, inlining) but does NOT use interleaving. Its compression
 /// ratio is identical to the simple kernel, but it should be faster.
 pub fn encode_fast_no_interleave(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
-    if input_bytes.is_empty() { return Ok(Vec::new()); }
+    if input_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
 
     // OPTIMIZATION: Use the faster symbol building function.
     let (encode_table, header_symbols) = build_normalized_symbols_fast(input_bytes)?;
-    
+
     let mut output_buf = Vec::with_capacity(input_bytes.len() / 2);
     output_buf.extend_from_slice(&(input_bytes.len() as u64).to_le_bytes());
     output_buf.extend_from_slice(&(header_symbols.len() as u16).to_le_bytes());
@@ -546,7 +644,9 @@ pub fn encode_fast_no_interleave(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixE
 /// The corresponding single-stream optimized decoder. It uses stack allocation
 /// and unsafe gets for maximum performance within a single stream.
 pub fn decode_fast_no_interleave(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
-    if input_bytes.is_empty() { return Ok(Vec::new()); }
+    if input_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let mut cursor = 0;
     let mut read_bytes = |len: usize| -> Result<&[u8], PhoenixError> {
@@ -557,11 +657,13 @@ pub fn decode_fast_no_interleave(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixE
         cursor = end;
         Ok(slice)
     };
-    
+
     // --- Header Parsing with Optimizations ---
     let num_values_to_decode = u64::from_le_bytes(read_bytes(8)?.try_into().unwrap()) as usize;
-    if num_values_to_decode == 0 { return Ok(Vec::new()); }
-    
+    if num_values_to_decode == 0 {
+        return Ok(Vec::new());
+    }
+
     // Decompression bomb check
     const MAX_DECOMPRESSION_SIZE: usize = 1 << 30; // 1 GiB
     if num_values_to_decode > MAX_DECOMPRESSION_SIZE {
@@ -575,7 +677,7 @@ pub fn decode_fast_no_interleave(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixE
 
     let num_symbols = u16::from_le_bytes(read_bytes(2)?.try_into().unwrap()) as usize;
     let mut symbol_table = [AnsSymbol::default(); 256];
-    
+
     // OPTIMIZATION: Use a stack-allocated array to avoid a heap allocation.
     let mut decode_lookup = [0u8; ANS_NORMALIZATION_FACTOR as usize];
     let mut cum_freq = 0;
@@ -584,7 +686,9 @@ pub fn decode_fast_no_interleave(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixE
         let byte = read_bytes(1)?[0];
         let freq = u16::from_le_bytes(read_bytes(2)?.try_into().unwrap()) as u32;
         if cum_freq + freq > ANS_NORMALIZATION_FACTOR {
-             return Err(PhoenixError::AnsError("Corrupt header: frequency sum exceeds normalization factor.".to_string()));
+            return Err(PhoenixError::AnsError(
+                "Corrupt header: frequency sum exceeds normalization factor.".to_string(),
+            ));
         }
         symbol_table[byte as usize] = AnsSymbol { freq, cum_freq };
         for j in (cum_freq as usize)..((cum_freq + freq) as usize) {
@@ -593,7 +697,9 @@ pub fn decode_fast_no_interleave(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixE
         cum_freq += freq;
     }
     if cum_freq != ANS_NORMALIZATION_FACTOR {
-        return Err(PhoenixError::AnsError("Corrupt header: frequencies do not sum correctly.".to_string()));
+        return Err(PhoenixError::AnsError(
+            "Corrupt header: frequencies do not sum correctly.".to_string(),
+        ));
     }
 
     let mut state = u32::from_le_bytes(read_bytes(4)?.try_into().unwrap());
@@ -613,7 +719,9 @@ pub fn decode_fast_no_interleave(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixE
         while state < ANS_STATE_MIN {
             // Check for potential stream truncation before unsafe access
             if data_ptr >= input_bytes.len() {
-                return Err(PhoenixError::AnsError("Input stream is truncated or corrupt during renormalization.".to_string()));
+                return Err(PhoenixError::AnsError(
+                    "Input stream is truncated or corrupt during renormalization.".to_string(),
+                ));
             }
             let data_byte = unsafe { *input_bytes.get_unchecked(data_ptr) };
             state = (state << 8) | (data_byte as u32);

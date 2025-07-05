@@ -44,7 +44,7 @@ pub(crate) mod compressor;
 pub mod config;
 pub(crate) mod decompressor;
 pub(crate) mod format;
-mod stateless_api;
+pub mod stateless_api;
 
 // --- High-Level Stateful API ---
 pub use config::TimeSeriesStrategy;
