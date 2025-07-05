@@ -411,46 +411,20 @@ impl<R: Read + Seek + Send> Decompressor<R> {
     }
 }
 
-/// **ARCHITECTURAL COMMENT (Heuristic for Batch Delimitation):**
-/// This function implements the crucial heuristic for grouping chunks from the flat
-/// manifest back into their original logical `RecordBatch`es for streaming modes.
-///
-/// The core assumption is that the `Compressor` writes all chunks for a batch
-/// sequentially, starting with `column_idx == 0`.
-/// Therefore, encountering a `column_idx == 0` again signifies the start of a *new*
-/// logical batch. The `!is_empty()` check is a critical guard for the very first
-/// chunk in the file. This heuristic replaced a previous, buggier one based on
-/// a `HashSet`, which failed for single-column, multi-batch files.
-// Helper to group chunks by logical batch for streaming modes.
+
+/// **ARCHITECTURAL COMMENT (Robust Batch Delimitation):**
+/// This function implements the robust heuristic for grouping chunks from the flat
+/// manifest back into their original logical `RecordBatch`es. The previous heuristic
+/// (based on `column_idx == 0`) was brittle. This new implementation is trivial and
+/// correct as it relies on the explicit `batch_id` assigned during compression.
 fn group_manifest_by_batch(
     manifest: &[ChunkManifestEntry],
 ) -> std::collections::btree_map::IntoIter<u64, Vec<ChunkManifestEntry>> {
-    let mut grouped = BTreeMap::new();
-    if manifest.is_empty() {
-        return grouped.into_iter();
-    }
-
-    let mut current_batch_idx: u64 = 0;
-    // Start the first batch immediately.
-    grouped.insert(0, Vec::new());
-
+    let mut grouped: BTreeMap<u64, Vec<ChunkManifestEntry>> = BTreeMap::new();
     for entry in manifest {
-        // Skip special chunks like the global permutation map.
-        if entry.column_idx == u32::MAX {
-            continue;
-        }
-
-        // A new batch starts when we see column 0 again, but only if the
-        // current batch is not empty. This handles the very first chunk correctly.
-        if entry.column_idx == 0 && !grouped.get(&current_batch_idx).unwrap().is_empty() {
-            current_batch_idx += 1;
-            grouped.insert(current_batch_idx, Vec::new());
-        }
-
-        // Add the chunk to the current batch.
         grouped
-            .get_mut(&current_batch_idx)
-            .unwrap()
+            .entry(entry.batch_id)
+            .or_default()
             .push(entry.clone());
     }
     grouped.into_iter()
