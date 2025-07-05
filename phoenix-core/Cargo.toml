@@ -1,7 +1,7 @@
 # This is the manifest for the Rust core of the Phoenix library.
 [package]
 name = "phoenix-core"
-version = "4.6.0"
+version = "4.6.1"
 edition = "2021"
 authors = ["anovio1 <anastace.novio@gmail.com>"]
 description = "Core Rust library for the Phoenix high-performance compression protocol."
@@ -10,7 +10,7 @@ repository = "https://github.com/your-repo/phoenix"
 
 [lib]
 name = "phoenix_cache"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # --- FFI & Python Integration ---
@@ -47,6 +47,10 @@ colored = "3.0.0"
 log = "0.4"
 env_logger = "0.11"
 
+[dev-dependencies]
+# --- Benchmark ---
+criterion = "0.5"
+
 [profile.release]
 panic = "abort"
 lto = true
@@ -55,3 +59,7 @@ opt-level = 3
 
 [features]
 dans = []
+
+[[bench]]
+name = "ans_bench"   # This MUST match your filename: ans_bench.rs
+harness = false      # This is CRITICAL for using the unstable #![feature(test)]

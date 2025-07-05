@@ -1,21 +1,96 @@
 use super::*;
 use crate::bridge::compressor::Compressor;
 use crate::bridge::decompressor::Decompressor;
-use arrow::array::{BooleanArray, Float64Array, Int32Array};
+use arrow::array::{BooleanArray, Float64Array, Int32Array, Int64Array};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
-use std::io::Cursor;
 use std::sync::Arc;
 
+fn create_single_partition_test_batches() -> (Vec<RecordBatch>, SchemaRef) {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("partition_key", DataType::Int64, false),
+        Field::new("data", DataType::Int32, false),
+    ]));
+
+    let batch1 = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int64Array::from(vec![101, 101, 101])),
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+        ],
+    )
+    .unwrap();
+
+    let batch2 = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int64Array::from(vec![101, 101])),
+            Arc::new(Int32Array::from(vec![4, 5])),
+        ],
+    )
+    .unwrap();
+
+    (vec![batch1, batch2], schema)
+}
+/// Helper to create interleaved data for multiple partitions.
+fn create_multi_partition_test_batches() -> (Vec<RecordBatch>, SchemaRef) {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("pk", DataType::Int64, false),
+        Field::new("v", DataType::Int32, true),
+    ]));
+
+    // Data is interleaved to simulate a realistic stream.
+    // Key 101 will have 4 rows.
+    // Key 102 will have 5 rows.
+    // Key 103 will have 1 row.
+    let batch1 = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int64Array::from(vec![101, 102, 101, 102, 103])),
+            Arc::new(Int32Array::from(vec![
+                Some(1),
+                Some(10),
+                Some(2),
+                Some(11),
+                Some(100),
+            ])),
+        ],
+    )
+    .unwrap();
+
+    let batch2 = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int64Array::from(vec![102, 101, 102, 101, 102])),
+            Arc::new(Int32Array::from(vec![
+                Some(12),
+                Some(3),
+                None,
+                Some(4),
+                Some(14),
+            ])),
+        ],
+    )
+    .unwrap();
+
+    (vec![batch1, batch2], schema)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        bridge::format::{ChunkManifestEntry, FileFooter},
+        bridge::{
+            compressor::MockRecordBatchReader,
+            format::{ChunkManifestEntry, FileFooter},
+        },
         error::PhoenixError,
     };
-    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::{
+        array::Array,
+        datatypes::{DataType, Field, Schema},
+    };
+    use hashbrown::HashMap;
     use std::io::Cursor;
 
     /// Helper function to create a valid, in-memory file for testing.
@@ -24,10 +99,12 @@ mod tests {
         let footer = FileFooter {
             schema,
             chunk_manifest: vec![ChunkManifestEntry {
+                batch_id: 0,
                 column_idx: 0,
                 offset_in_file: 6, // Right after header
                 compressed_size: 10,
                 num_rows: 100,
+                partition_key: None,
             }],
             writer_version: "test".into(),
             frame_plan: None,
@@ -204,7 +281,7 @@ mod tests {
         let read_cursor = Cursor::new(compressed_bytes);
         let decompressor = Decompressor::new(read_cursor)?;
         let decompressed_batches: Vec<RecordBatch> =
-            decompressor.batched().collect::<Result<_, _>>().unwrap();
+            decompressor.batched()?.collect::<Result<_, _>>().unwrap();
 
         // --- ASSERT ---
         assert_eq!(
@@ -253,13 +330,234 @@ mod tests {
         let read_cursor = Cursor::new(compressed_bytes);
         let decompressor = Decompressor::new(read_cursor)?;
         let decompressed_batches: Vec<RecordBatch> =
-            decompressor.batched().collect::<Result<_, _>>().unwrap();
+            decompressor.batched()?.collect::<Result<_, _>>().unwrap();
 
         // --- ASSERT ---
         assert!(
             decompressed_batches.is_empty(),
             "Decompressing an empty file should result in zero batches"
         );
+
+        Ok(())
+    }
+    /// **API Boundary Test:**
+    /// Verifies that the Compressor correctly returns an error if the user provides
+    /// a partition key column name that does not exist in the schema.
+    #[test]
+    fn test_compressor_partitioned_invalid_key_column_error() -> Result<(), PhoenixError> {
+        // --- ARRANGE ---
+        let (batches, schema) = create_single_partition_test_batches();
+        let mut reader = MockRecordBatchReader::new(batches, schema);
+        let file_buffer = Cursor::new(Vec::new());
+
+        // Configure with a column name that does not exist.
+        let config = CompressorConfig {
+            time_series_strategy: TimeSeriesStrategy::Partitioned {
+                partition_key_column: "this_column_does_not_exist".to_string(),
+                partition_flush_rows: 100,
+            },
+            ..Default::default()
+        };
+
+        let mut compressor = Compressor::new(file_buffer, config)?;
+
+        // --- ACT ---
+        let result = compressor.compress(&mut reader);
+
+        // --- ASSERT ---
+        assert!(
+            result.is_err(),
+            "Compression should fail for a non-existent key column"
+        );
+        // Specifically, schema.index_of() returns an ArrowError.
+        assert!(matches!(result, Err(PhoenixError::Arrow(_))));
+
+        Ok(())
+    }
+
+    /// **Edge Case Test:**
+    /// Verifies that the partitioning strategy works correctly when the input stream
+    /// contains data for only a single partition key.
+    #[test]
+    fn test_compressor_partitioned_with_single_key() -> Result<(), PhoenixError> {
+        // --- ARRANGE ---
+        let (batches, schema) = create_single_partition_test_batches();
+        let mut reader = MockRecordBatchReader::new(batches, schema.clone());
+        let file_buffer = Cursor::new(Vec::new());
+
+        let config = CompressorConfig {
+            time_series_strategy: TimeSeriesStrategy::Partitioned {
+                partition_key_column: "partition_key".to_string(),
+                partition_flush_rows: 100,
+            },
+            ..Default::default()
+        };
+
+        // --- ACT (COMPRESS) ---
+        let mut compressor = Compressor::new(file_buffer, config)?;
+        compressor.compress(&mut reader)?;
+        let compressed_bytes = compressor.into_inner().into_inner();
+
+        // --- ASSERT (DECOMPRESS) ---
+        let read_cursor = Cursor::new(compressed_bytes);
+        let decompressor = Decompressor::new(read_cursor)?;
+        let mut partitions_iter = decompressor.partitions()?;
+
+        // 1. Assert that there is exactly one partition.
+        let (key, partition_reader) = partitions_iter.next().expect("Should have one partition");
+        assert_eq!(key, 101);
+        assert!(
+            partitions_iter.next().is_none(),
+            "Should be no more partitions"
+        );
+
+        // 2. Assert the content of that single partition is correct.
+        let all_partition_batches: Vec<RecordBatch> =
+            partition_reader.collect::<Result<_, _>>().unwrap();
+        assert_eq!(
+            all_partition_batches.len(),
+            1,
+            "The single key should have been flushed as a single batch"
+        );
+        let batch = &all_partition_batches[0];
+        let data_col = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert_eq!(data_col.values(), &[1, 2, 3, 4, 5]);
+
+        Ok(())
+    }
+
+    /// **Edge Case Test:**
+    /// Verifies that the compressor produces a valid, empty file when the input
+    /// reader is empty, even when configured for partitioning.
+    #[test]
+    fn test_compressor_partitioned_on_empty_input() -> Result<(), PhoenixError> {
+        // --- ARRANGE ---
+        // Create an empty reader with a valid schema.
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "partition_key",
+            DataType::Int64,
+            false,
+        )]));
+        let mut reader = MockRecordBatchReader::new(vec![], schema);
+        let file_buffer = Cursor::new(Vec::new());
+
+        let config = CompressorConfig {
+            time_series_strategy: TimeSeriesStrategy::Partitioned {
+                partition_key_column: "partition_key".to_string(),
+                partition_flush_rows: 100,
+            },
+            ..Default::default()
+        };
+
+        // --- ACT (COMPRESS) ---
+        let mut compressor = Compressor::new(file_buffer, config)?;
+        compressor.compress(&mut reader)?;
+        let compressed_bytes = compressor.into_inner().into_inner();
+
+        // --- ASSERT (DECOMPRESS) ---
+        // A valid file should be produced, containing only a header and footer.
+        assert!(compressed_bytes.len() > 14);
+
+        let read_cursor = Cursor::new(compressed_bytes);
+        let decompressor = Decompressor::new(read_cursor)?;
+        let mut partitions_iter = decompressor.partitions()?;
+
+        // The iterator over partitions should be empty.
+        assert!(
+            partitions_iter.next().is_none(),
+            "Decompressing an empty file should result in zero partitions"
+        );
+
+        Ok(())
+    }
+    /// **Primary Partitioning Integration Test:**
+    /// This test verifies the end-to-end partitioning flow with multiple, interleaved
+    /// partition keys, ensuring that data is correctly split during compression
+    /// and correctly reassembled during decompression.
+    #[test]
+    fn test_partitioning_roundtrip_multiple_keys() -> Result<(), PhoenixError> {
+        // --- ARRANGE ---
+        let (batches, schema) = create_multi_partition_test_batches();
+        let mut reader = MockRecordBatchReader::new(batches, schema);
+        let file_buffer = Cursor::new(Vec::new());
+
+        // Configure to flush partitions aggressively to ensure some partitions span multiple batches.
+        let config = CompressorConfig {
+            time_series_strategy: TimeSeriesStrategy::Partitioned {
+                partition_key_column: "pk".to_string(),
+                partition_flush_rows: 3, // Flush after 3 rows
+            },
+            ..Default::default()
+        };
+
+        // --- ACT (COMPRESS) ---
+        let mut compressor = Compressor::new(file_buffer, config)?;
+        compressor.compress(&mut reader)?;
+        let compressed_bytes = compressor.into_inner().into_inner();
+
+        // --- ACT (DECOMPRESS) ---
+        let read_cursor = Cursor::new(compressed_bytes);
+        let decompressor = Decompressor::new(read_cursor)?;
+
+        // Collect all decompressed partitions into a HashMap for easy validation.
+        let mut decompressed_partitions = HashMap::new();
+        for result in decompressor.partitions()? {
+            let (key, partition_reader) = result;
+            let batches: Vec<RecordBatch> = partition_reader.collect::<Result<_, _>>().unwrap();
+            decompressed_partitions.insert(key, batches);
+        }
+
+        // --- ASSERT ---
+        // 1. Check we got the right number of partitions.
+        assert_eq!(decompressed_partitions.len(), 3);
+
+        // 2. Validate content of partition 101.
+        let p101_batches = decompressed_partitions.get(&101).unwrap();
+        let p101_concatenated =
+            arrow::compute::concat_batches(&p101_batches[0].schema(), p101_batches).unwrap();
+        let p101_values = p101_concatenated
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert_eq!(
+            p101_values.iter().map(|v| v.unwrap()).collect::<Vec<_>>(),
+            &[1, 2, 3, 4]
+        );
+
+        // 3. Validate content of partition 102.
+        let p102_batches = decompressed_partitions.get(&102).unwrap();
+        let p102_concatenated =
+            arrow::compute::concat_batches(&p102_batches[0].schema(), p102_batches).unwrap();
+        let p102_values = p102_concatenated
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert_eq!(
+            p102_values.iter().filter_map(|v| v).collect::<Vec<_>>(),
+            &[10, 11, 12, 14]
+        );
+        assert_eq!(p102_concatenated.num_rows(), 5); // Ensure null was preserved
+        assert!(p102_values.is_null(p102_values.len() - 2)); // The 3rd original value was null
+
+        // 4. Validate content of partition 103.
+        let p103_batches = decompressed_partitions.get(&103).unwrap();
+        assert_eq!(
+            p103_batches.len(),
+            1,
+            "Partition 103 should have only one batch"
+        );
+        let p103_values = p103_batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert_eq!(p103_values.values(), &[100]);
 
         Ok(())
     }

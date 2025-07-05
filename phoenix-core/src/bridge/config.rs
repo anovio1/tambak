@@ -30,12 +30,18 @@ pub enum LossyConfig {
 
 /// Defines the time-series optimization strategy for compression.
 /// This enum directly influences the `FramePlan` written to the file footer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TimeSeriesStrategy {
     #[default]
     None, // No special frame-level strategy. File contains only `StandardColumn` FrameOperations.
     PerBatchRelinearization, // File contains `PerBatchRelinearizedColumn` FrameOperations for applicable columns.
-    GlobalSorting,           // File contains a single `GlobalSortedFile` FrameOperation.
+    /// Partitions the entire file by a key column. All data for a given key is co-located.
+    Partitioned {
+        /// The target column to partition by.
+        partition_key_column: String,
+        /// The target number of rows to buffer for a partition before flushing it as a chunk.
+        partition_flush_rows: usize,
+    },
 }
 
 // TODO: CompressorConfig is currently a placeholder for future configuration options.

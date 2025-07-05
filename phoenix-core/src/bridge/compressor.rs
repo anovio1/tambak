@@ -6,30 +6,16 @@ use std::sync::Arc;
 
 use arrow::array::RecordBatch;
 use arrow::record_batch::RecordBatchReader;
+use arrow_schema::Schema;
 
 use crate::error::PhoenixError;
 
 use crate::bridge::config::{CompressorConfig, TimeSeriesStrategy};
-use crate::bridge::format::{
-    ChunkManifestEntry, FileFooter, FramePlan, FILE_FORMAT_VERSION, FILE_MAGIC,
-};
-use crate::bridge::stateless_api;
+use crate::bridge::format::{ChunkManifestEntry, FileFooter, FILE_FORMAT_VERSION, FILE_MAGIC};
 
 use crate::frame_pipeline::{
-    self, FramePipeline, GlobalSortingStrategy, PerBatchRelinearizationStrategy,
-    StandardStreamingStrategy,
+    FramePipeline, PartitioningStrategy, PerBatchRelinearizationStrategy, StandardStreamingStrategy,
 };
-
-//  Notes
-// *   **The "Streaming" Contract (The Most Important Point):**
-//     *   **Observation:** The `compress` method takes a `&mut dyn RecordBatchReader`, which presents a streaming-first API to the user. The code in *this file* honors that by passing the reader down to the strategy.
-//     *   **Implication:** This design places the burden of streaming vs. eager loading squarely on the **concrete `FramePipeline` strategy**. As we discussed, `GlobalSortingStrategy` is *inherently eager*. It *must* consume the entire reader into memory to perform its sort.
-//     *   **Verdict:** This is not a bug; it is a critical architectural characteristic. The `Compressor` code is perfect, but we must be extremely clear in our user-facing documentation that choosing `TimeSeriesStrategy::GlobalSorting` will cause the compressor to buffer the entire dataset in RAM, whereas the other strategies are true streaming processors.
-
-// *   **One-Shot Lifecycle:**
-//     *   **Observation:** The `compress` method takes `&mut self`. This means, in theory, a user could call it more than once.
-//     *   **Implication:** If a user *did* call it twice, the internal state (`chunk_manifest`, `bytes_written`) would not be reset, leading to a corrupted file containing chunks from both calls.
-//     *   **Verdict:** This is a standard design for this type of object. The `Compressor` has a one-shot lifecycle (`new` -> `compress` -> `writer` is consumed/closed). This is perfectly acceptable, but worth noting. An alternative, stricter design would have `compress` take `self` to prevent reuse, but the current approach is also common and fine.
 
 /// A high-level, stateful object that manages the entire compression process.
 #[derive(Debug)]
@@ -58,10 +44,10 @@ impl<W: Write> Compressor<W> {
         // --- FRAME PIPELINE FACTORY ---
         let frame_pipeline: Box<dyn FramePipeline> = match self.config.time_series_strategy {
             TimeSeriesStrategy::None => Box::new(StandardStreamingStrategy),
-            TimeSeriesStrategy::PerBatchRelinearization => {
+            TimeSeriesStrategy::PerBatchRelinearization { .. } => {
                 Box::new(PerBatchRelinearizationStrategy)
             }
-            TimeSeriesStrategy::GlobalSorting => Box::new(GlobalSortingStrategy),
+            TimeSeriesStrategy::Partitioned { .. } => Box::new(PartitioningStrategy),
         };
 
         // --- DELEGATION TO THE FRAME PIPELINE ---
@@ -103,12 +89,22 @@ impl<W: Write> Compressor<W> {
 }
 
 // Helper for `Compressor::compress` to pass Vec<RecordBatch> as a `RecordBatchReader`.
-struct MockRecordBatchReader {
+pub(crate) struct MockRecordBatchReader {
     batches: std::vec::IntoIter<RecordBatch>,
-    schema: Arc<arrow::datatypes::Schema>,
+    schema: Arc<Schema>,
 }
+
+impl MockRecordBatchReader {
+    pub fn new(batches: Vec<RecordBatch>, schema: Arc<Schema>) -> Self {
+        Self {
+            batches: batches.into_iter(),
+            schema,
+        }
+    }
+}
+
 impl RecordBatchReader for MockRecordBatchReader {
-    fn schema(&self) -> Arc<arrow::datatypes::Schema> {
+    fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
     }
 }

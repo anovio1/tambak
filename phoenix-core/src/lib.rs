@@ -18,12 +18,12 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 mod observability; // Make macros available throughout the crate
 
 mod bridge;
+mod chunk_pipeline;
 mod error;
 mod ffi;
-mod kernels;
-mod null_handling;
 mod frame_pipeline;
-mod chunk_pipeline;
+pub mod kernels;
+mod null_handling;
 mod traits;
 mod types;
 mod utils;
@@ -31,8 +31,8 @@ mod utils;
 //==================================================================================
 // 2. Python Module Definition
 //==================================================================================
+use ffi::python::{PyCompressor, PyCompressorConfig, PyDecompressor, PyPartitionIterator};
 use pyo3::prelude::*;
-use ffi::python::{PyCompressor, PyCompressorConfig};
 
 /// The `phoenix_cache` Python module, containing all exposed Rust functions.
 #[pymodule]
@@ -40,10 +40,14 @@ fn phoenix_cache(py: Python, m: &PyModule) -> PyResult<()> {
     // --- V4.5 Refactor Orchestrator ---
     m.add_function(wrap_pyfunction!(ffi::compress_py, m)?)?;
     m.add_function(wrap_pyfunction!(ffi::compress_analyze_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ffi::compress_chunk_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ffi::decompress_chunk_py, m)?)?;
 
-    // --- Add our new stateful writer classes to the Python module ---
+    // --- Add our classes module ---
     m.add_class::<PyCompressorConfig>()?;
     m.add_class::<PyCompressor>()?;
+    m.add_class::<PyDecompressor>()?;
+    m.add_class::<PyPartitionIterator>()?;
 
     // --- Expose the custom error type ---
     m.add(

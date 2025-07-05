@@ -18,14 +18,25 @@ pub const FILE_MAGIC: &[u8; 4] = b"PHXF";
 pub const FILE_FORMAT_VERSION: u16 = 1;
 
 /// Metadata for a single physical chunk stored within the file.
-/// This struct is purely descriptive, containing location and size information.
 /// Its `column_idx` links it to a logical column in the original schema.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChunkManifestEntry {
+    /// A unique ID for the original RecordBatch this chunk belonged to.
+    pub batch_id: u64,
+    /// The index of the column within its batch.
     pub column_idx: u32,
+
+    /// If this chunk belongs to a partition, this holds the key for that partition.
+    /// It is `None` for chunks in non-partitioned files or for global chunks
+    /// like a permutation map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition_key: Option<i64>,
+
+    // Physical location info
     pub offset_in_file: u64,
     pub compressed_size: u64,
     pub num_rows: u64,
+
 }
 
 /// A high-level structural operation within a `FramePlan`. This is the core
@@ -45,14 +56,9 @@ pub enum FrameOperation {
         key_col_idx: u32,
         timestamp_col_idx: u32,
     },
-    /// **Contract:** The entire file's data was globally sorted by `key_col_idx` then `timestamp_col_idx`.
-    /// All column chunks are stored in this sorted order. The chunk identified by `permutation_chunk_idx`
-    /// contains the permutation map needed to restore the original row order as an optional post-processing step.
-    GlobalSortedFile {
-        key_col_idx: u32,
-        timestamp_col_idx: u32,
-        permutation_chunk_idx: u32, // The `column_idx` of the permutation map chunk.
-    },
+    /// **Contract:** The file has been partitioned by `partition_key_col_idx`. All data
+    /// for a given key is stored in one or more contiguous chunks.
+    PartitionedFile { partition_key_col_idx: u32 },
 }
 
 /// The high-level structural plan for the entire Phoenix file. This is the

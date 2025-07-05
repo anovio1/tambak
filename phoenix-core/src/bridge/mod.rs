@@ -40,9 +40,9 @@
 //
 // ====================================================================================
 pub(crate) mod arrow_impl;
-mod compressor;
+pub(crate) mod compressor;
 pub mod config;
-mod decompressor;
+pub(crate) mod decompressor;
 pub(crate) mod format;
 mod stateless_api;
 
@@ -56,8 +56,7 @@ pub use stateless_api::{analyze_chunk, compress_arrow_chunk, decompress_arrow_ch
 
 // --- Format Constants and Structs ---
 pub use format::{ChunkManifestEntry, CompressionStats, FILE_FORMAT_VERSION, FILE_MAGIC};
-pub use format::{FramePlan, FrameOperation}; 
-
+pub use format::{FrameOperation, FramePlan};
 
 #[cfg(test)]
 mod tests;

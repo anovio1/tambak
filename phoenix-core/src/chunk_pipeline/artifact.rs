@@ -2,10 +2,10 @@
 //! This module is the single source of truth for serialization, deserialization,
 //! and efficient metadata peeking of the artifact.
 
+use crate::bridge::format::{CHUNK_FORMAT_VERSION, CHUNK_MAGIC};
 use crate::error::PhoenixError;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
-use crate::bridge::format::{CHUNK_FORMAT_VERSION, CHUNK_MAGIC};
 
 //==================================================================================
 // Format Constants
@@ -109,7 +109,9 @@ impl CompressedChunk {
 
         // Write the fixed-size file header.
         final_buf.write_all(CHUNK_MAGIC).unwrap();
-        final_buf.write_all(&CHUNK_FORMAT_VERSION.to_le_bytes()).unwrap();
+        final_buf
+            .write_all(&CHUNK_FORMAT_VERSION.to_le_bytes())
+            .unwrap();
         final_buf.write_all(&self.total_rows.to_le_bytes()).unwrap();
         final_buf
             .write_all(&(header_buf.len() as u32).to_le_bytes())
@@ -447,7 +449,7 @@ mod tests {
             Err(PhoenixError::FrameFormatError(_))
         ));
     }
-    #[test]
+
     #[test]
     fn test_malformed_inputs_are_rejected() {
         // Test string length exceeds buffer

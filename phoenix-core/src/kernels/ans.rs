@@ -18,6 +18,8 @@
 //! 3.  **Final rANS State (4 bytes):** The final `u32` state of the encoder (LE).
 //! 4.  **Data Payload (variable):** The compressed rANS data stream.
 
+use std::cmp::Ordering;
+
 use crate::error::PhoenixError;
 
 // --- rANS Constants ---
@@ -40,6 +42,12 @@ struct AnsSymbol {
 /// This function counts symbol occurrences and normalizes them to a fixed total
 /// (`ANS_NORMALIZATION_FACTOR`) using robust integer arithmetic to avoid floating-point
 /// rounding errors.
+/// Analyzes input data to build a normalized frequency model for ANS encoding.
+///
+/// This function uses the "Largest Remainder Method" to normalize frequencies.
+/// This is a standard, robust algorithm that avoids the edge cases and errors
+/// found in simpler normalization attempts by ensuring the final sum of frequencies
+/// is *exactly* the normalization factor.
 fn build_normalized_symbols(
     input_bytes: &[u8],
 ) -> Result<([AnsSymbol; 256], Vec<(u8, u16)>), PhoenixError> {
@@ -116,6 +124,89 @@ fn build_normalized_symbols(
     Ok((encode_table, norm_symbols_for_header))
 }
 
+/// A faster version of `build_normalized_symbols` using a more efficient partial sort.
+fn build_normalized_symbols_fast(
+    input_bytes: &[u8],
+) -> Result<([AnsSymbol; 256], Vec<(u8, u16)>), PhoenixError> {
+    if input_bytes.is_empty() {
+        return Err(PhoenixError::AnsError(
+            "Cannot build frequency model from empty input.".to_string(),
+        ));
+    }
+
+    let mut freqs = [0u64; 256];
+    for &byte in input_bytes {
+        freqs[byte as usize] += 1;
+    }
+
+    let unique_symbols: Vec<(u8, u64)> = freqs
+        .iter()
+        .enumerate()
+        .filter(|&(_, &c)| c > 0)
+        .map(|(b, &c)| (b as u8, c))
+        .collect();
+
+    if unique_symbols.len() <= 1 {
+        return Err(PhoenixError::AnsError(
+            "ANS requires at least two unique symbols.".to_string(),
+        ));
+    }
+
+    let total_input_len = input_bytes.len() as f64;
+    let mut norm_symbols = Vec::with_capacity(unique_symbols.len());
+    let mut current_sum = 0;
+
+    for &(byte, count) in &unique_symbols {
+        let ideal = (count as f64 / total_input_len) * ANS_NORMALIZATION_FACTOR as f64;
+        let floor = ideal.floor() as u16;
+        current_sum += floor as u32;
+        norm_symbols.push((byte, floor, ideal - floor as f64));
+    }
+
+    let remainder = ANS_NORMALIZATION_FACTOR - current_sum;
+
+    // CONSULTANT OPTIMIZATION: Use select_nth_unstable_by for a more efficient partial sort.
+    if remainder > 0 && (remainder as usize) < norm_symbols.len() {
+        norm_symbols.select_nth_unstable_by(remainder as usize - 1, |a, b| {
+            b.2.partial_cmp(&a.2).unwrap_or(Ordering::Equal)
+        });
+        for i in 0..remainder as usize {
+            norm_symbols[i].1 += 1;
+        }
+    }
+
+    norm_symbols.sort_unstable_by_key(|a| a.0);
+
+    let mut encode_table = [AnsSymbol::default(); 256];
+    let mut cum_freq = 0;
+    let header_symbols: Vec<(u8, u16)> = norm_symbols.iter().map(|(b, f, _)| (*b, *f)).collect();
+
+    for &(byte, freq) in &header_symbols {
+        if freq == 0 {
+            return Err(PhoenixError::AnsError(
+                "Normalization assigned zero frequency.".to_string(),
+            ));
+        }
+        encode_table[byte as usize] = AnsSymbol {
+            freq: freq as u32,
+            cum_freq,
+        };
+        cum_freq += freq as u32;
+    }
+
+    debug_assert_eq!(cum_freq, ANS_NORMALIZATION_FACTOR);
+    Ok((encode_table, header_symbols))
+}
+
+/// CONSULTANT OPTIMIZATION: An inlined helper for the hottest part of the encoding loop.
+#[inline(always)]
+fn encode_symbol(mut state: u32, symbol: &AnsSymbol, payload: &mut Vec<u8>) -> u32 {
+    while state >= symbol.freq * (ANS_STATE_MIN >> 4) {
+        payload.push((state & 0xFF) as u8);
+        state >>= 8;
+    }
+    (state / symbol.freq) * ANS_NORMALIZATION_FACTOR + (state % symbol.freq) + symbol.cum_freq
+}
 /// Encodes a byte slice using a range Asymmetric Numeral Systems model.
 ///
 /// The encoder processes the input in reverse (LIFO) to allow the decoder
@@ -207,6 +298,14 @@ pub fn decode(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
     let len_bytes: [u8; 8] = read_bytes(8)?.try_into().unwrap(); // Should not fail
     let num_values_to_decode = u64::from_le_bytes(len_bytes) as usize;
 
+    const MAX_DECOMPRESSION_SIZE: usize = 1 << 30; // 1 GiB
+    if num_values_to_decode > MAX_DECOMPRESSION_SIZE {
+        return Err(PhoenixError::AnsError(format!(
+            "Corrupt header: declared decompression size ({}) exceeds the safety limit ({}).",
+            num_values_to_decode, MAX_DECOMPRESSION_SIZE
+        )));
+    }
+
     if num_values_to_decode == 0 {
         return Ok(Vec::new());
     }
@@ -273,7 +372,256 @@ pub fn decode(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
 
     Ok(output_buf)
 }
+pub fn encode_fast(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
+    if input_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
 
+    let (encode_table, header_symbols) = build_normalized_symbols_fast(input_bytes)?;
+    let mut output_buf = Vec::with_capacity(input_bytes.len());
+
+    output_buf.extend_from_slice(&(input_bytes.len() as u64).to_le_bytes());
+    output_buf.extend_from_slice(&(header_symbols.len() as u16).to_le_bytes());
+    for (byte, freq) in &header_symbols {
+        output_buf.push(*byte);
+        output_buf.extend_from_slice(&freq.to_le_bytes());
+    }
+
+    let mut states = [ANS_STATE_MIN; 4];
+    let mut payloads = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    let input_len = input_bytes.len();
+
+    for (i, &byte) in input_bytes.iter().rev().enumerate() {
+        // CORRECTNESS FIX: Use the validated stream index logic.
+        let original_idx = input_len - 1 - i;
+        let stream_idx = original_idx % 4;
+        states[stream_idx] = encode_symbol(
+            states[stream_idx],
+            &encode_table[byte as usize],
+            &mut payloads[stream_idx],
+        );
+    }
+
+    for state in &states {
+        output_buf.extend_from_slice(&state.to_le_bytes());
+    }
+    for payload in &payloads {
+        output_buf.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+    }
+    for mut payload in payloads {
+        payload.reverse();
+        output_buf.append(&mut payload);
+    }
+    Ok(output_buf)
+}
+
+pub fn decode_fast(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
+    if input_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut cursor = 0;
+    let mut read_bytes = |len: usize| -> Result<&[u8], PhoenixError> {
+        let end = cursor + len;
+        let slice = input_bytes.get(cursor..end).ok_or_else(|| {
+            PhoenixError::AnsError("Input stream is truncated or corrupt.".to_string())
+        })?;
+        cursor = end;
+        Ok(slice)
+    };
+
+    let num_values_to_decode = u64::from_le_bytes(read_bytes(8)?.try_into().unwrap()) as usize;
+    if num_values_to_decode == 0 {
+        return Ok(Vec::new());
+    }
+
+    // CONSULTANT OPTIMIZATION: Use a stack-allocated array to avoid a heap allocation.
+    let mut decode_lookup = [0u8; ANS_NORMALIZATION_FACTOR as usize];
+    let mut symbol_table = [AnsSymbol::default(); 256];
+    let num_symbols = u16::from_le_bytes(read_bytes(2)?.try_into().unwrap()) as usize;
+    let mut cum_freq = 0;
+
+    for _ in 0..num_symbols {
+        let byte = read_bytes(1)?[0];
+        let freq = u16::from_le_bytes(read_bytes(2)?.try_into().unwrap()) as u32;
+        if cum_freq + freq > ANS_NORMALIZATION_FACTOR {
+            return Err(PhoenixError::AnsError(
+                "Corrupt header: frequency sum exceeds normalization factor.".to_string(),
+            ));
+        }
+        symbol_table[byte as usize] = AnsSymbol { freq, cum_freq };
+        for j in (cum_freq as usize)..((cum_freq + freq) as usize) {
+            decode_lookup[j] = byte;
+        }
+        cum_freq += freq;
+    }
+    if cum_freq != ANS_NORMALIZATION_FACTOR {
+        return Err(PhoenixError::AnsError(
+            "Corrupt header: frequencies do not sum correctly.".to_string(),
+        ));
+    }
+
+    let mut states = [0u32; 4];
+    for state in states.iter_mut() {
+        *state = u32::from_le_bytes(read_bytes(4)?.try_into().unwrap());
+    }
+    let mut payload_lengths = [0u64; 4];
+    for len in payload_lengths.iter_mut() {
+        *len = u64::from_le_bytes(read_bytes(8)?.try_into().unwrap());
+    }
+
+    let mut payload_offsets = [0u64; 4];
+    for i in 1..4 {
+        payload_offsets[i] = payload_offsets[i - 1] + payload_lengths[i - 1];
+    }
+    let payload_data = &input_bytes[cursor..];
+    if payload_offsets[3] + payload_lengths[3] != payload_data.len() as u64 {
+        return Err(PhoenixError::AnsError(
+            "Corrupt stream: payload lengths do not match remaining data size.".to_string(),
+        ));
+    }
+
+    let mut data_ptrs = [0usize; 4];
+    let mut output_buf = Vec::with_capacity(num_values_to_decode);
+
+    for i in 0..num_values_to_decode {
+        let stream_idx = i % 4;
+        let mut state = states[stream_idx];
+        let slot = state & (ANS_NORMALIZATION_FACTOR - 1);
+
+        // CONSULTANT OPTIMIZATION: `unsafe` here is safe because `slot` is guaranteed < 4096.
+        let byte = unsafe { *decode_lookup.get_unchecked(slot as usize) };
+        let symbol_info = unsafe { *symbol_table.get_unchecked(byte as usize) };
+        output_buf.push(byte);
+
+        state = symbol_info.freq * (state >> 12) + slot - symbol_info.cum_freq;
+
+        while state < ANS_STATE_MIN {
+            if data_ptrs[stream_idx] >= payload_lengths[stream_idx] as usize {
+                return Err(PhoenixError::AnsError(
+                    "Corrupt stream: payload read overflow.".to_string(),
+                ));
+            }
+            let data_offset = payload_offsets[stream_idx] as usize + data_ptrs[stream_idx];
+            let data_byte = unsafe { *payload_data.get_unchecked(data_offset) };
+            state = (state << 8) | (data_byte as u32);
+            data_ptrs[stream_idx] += 1;
+        }
+        states[stream_idx] = state;
+    }
+    Ok(output_buf)
+}
+
+/// An optimized single-stream kernel. It applies micro-optimizations
+/// (partial sort, inlining) but does NOT use interleaving. Its compression
+/// ratio is identical to the simple kernel, but it should be faster.
+pub fn encode_fast_no_interleave(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
+    if input_bytes.is_empty() { return Ok(Vec::new()); }
+
+    // OPTIMIZATION: Use the faster symbol building function.
+    let (encode_table, header_symbols) = build_normalized_symbols_fast(input_bytes)?;
+    
+    let mut output_buf = Vec::with_capacity(input_bytes.len() / 2);
+    output_buf.extend_from_slice(&(input_bytes.len() as u64).to_le_bytes());
+    output_buf.extend_from_slice(&(header_symbols.len() as u16).to_le_bytes());
+    for (byte, freq) in &header_symbols {
+        output_buf.push(*byte);
+        output_buf.extend_from_slice(&freq.to_le_bytes());
+    }
+
+    let mut state = ANS_STATE_MIN;
+    // This payload is built in reverse, just like the simple encoder.
+    let mut encoded_data = Vec::with_capacity(input_bytes.len());
+
+    for &byte in input_bytes.iter().rev() {
+        // OPTIMIZATION: Use the inlined helper function.
+        state = encode_symbol(state, &encode_table[byte as usize], &mut encoded_data);
+    }
+
+    output_buf.extend_from_slice(&state.to_le_bytes());
+    output_buf.extend(encoded_data.iter().rev());
+    Ok(output_buf)
+}
+
+/// The corresponding single-stream optimized decoder. It uses stack allocation
+/// and unsafe gets for maximum performance within a single stream.
+pub fn decode_fast_no_interleave(input_bytes: &[u8]) -> Result<Vec<u8>, PhoenixError> {
+    if input_bytes.is_empty() { return Ok(Vec::new()); }
+
+    let mut cursor = 0;
+    let mut read_bytes = |len: usize| -> Result<&[u8], PhoenixError> {
+        let end = cursor + len;
+        let slice = input_bytes.get(cursor..end).ok_or_else(|| {
+            PhoenixError::AnsError("Input stream is truncated or corrupt.".to_string())
+        })?;
+        cursor = end;
+        Ok(slice)
+    };
+    
+    // --- Header Parsing with Optimizations ---
+    let num_values_to_decode = u64::from_le_bytes(read_bytes(8)?.try_into().unwrap()) as usize;
+    if num_values_to_decode == 0 { return Ok(Vec::new()); }
+    
+    // Decompression bomb check
+    const MAX_DECOMPRESSION_SIZE: usize = 1 << 30; // 1 GiB
+    if num_values_to_decode > MAX_DECOMPRESSION_SIZE {
+        return Err(PhoenixError::AnsError(format!(
+            "Corrupt header: declared decompression size ({}) exceeds the safety limit ({}).",
+            num_values_to_decode, MAX_DECOMPRESSION_SIZE
+        )));
+    }
+
+    let mut output_buf = Vec::with_capacity(num_values_to_decode);
+
+    let num_symbols = u16::from_le_bytes(read_bytes(2)?.try_into().unwrap()) as usize;
+    let mut symbol_table = [AnsSymbol::default(); 256];
+    
+    // OPTIMIZATION: Use a stack-allocated array to avoid a heap allocation.
+    let mut decode_lookup = [0u8; ANS_NORMALIZATION_FACTOR as usize];
+    let mut cum_freq = 0;
+
+    for _ in 0..num_symbols {
+        let byte = read_bytes(1)?[0];
+        let freq = u16::from_le_bytes(read_bytes(2)?.try_into().unwrap()) as u32;
+        if cum_freq + freq > ANS_NORMALIZATION_FACTOR {
+             return Err(PhoenixError::AnsError("Corrupt header: frequency sum exceeds normalization factor.".to_string()));
+        }
+        symbol_table[byte as usize] = AnsSymbol { freq, cum_freq };
+        for j in (cum_freq as usize)..((cum_freq + freq) as usize) {
+            decode_lookup[j] = byte;
+        }
+        cum_freq += freq;
+    }
+    if cum_freq != ANS_NORMALIZATION_FACTOR {
+        return Err(PhoenixError::AnsError("Corrupt header: frequencies do not sum correctly.".to_string()));
+    }
+
+    let mut state = u32::from_le_bytes(read_bytes(4)?.try_into().unwrap());
+    let mut data_ptr = cursor;
+
+    // --- Core Decoding Loop with Optimizations ---
+    while output_buf.len() < num_values_to_decode {
+        let slot = state & (ANS_NORMALIZATION_FACTOR - 1);
+
+        // OPTIMIZATION: `unsafe` is safe here because `slot` is guaranteed < 4096.
+        let byte = unsafe { *decode_lookup.get_unchecked(slot as usize) };
+        let symbol_info = unsafe { *symbol_table.get_unchecked(byte as usize) };
+        output_buf.push(byte);
+
+        state = symbol_info.freq * (state >> 12) + slot - symbol_info.cum_freq;
+
+        while state < ANS_STATE_MIN {
+            // Check for potential stream truncation before unsafe access
+            if data_ptr >= input_bytes.len() {
+                return Err(PhoenixError::AnsError("Input stream is truncated or corrupt during renormalization.".to_string()));
+            }
+            let data_byte = unsafe { *input_bytes.get_unchecked(data_ptr) };
+            state = (state << 8) | (data_byte as u32);
+            data_ptr += 1;
+        }
+    }
+    Ok(output_buf)
+}
 // --- Unit Tests (Updated for new API) ---
 #[cfg(test)]
 mod tests {

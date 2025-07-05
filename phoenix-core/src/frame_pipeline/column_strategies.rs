@@ -18,7 +18,6 @@ use crate::bridge::format::{ChunkManifestEntry, FrameOperation}; // Use the auth
 use crate::chunk_pipeline::artifact::CompressedChunk;
 use crate::chunk_pipeline::orchestrator as chunk_orchestrator;
 use crate::error::PhoenixError;
-use arrow::array::Array;
 use arrow::record_batch::RecordBatch;
 
 /// **CONTRACT:** The result of compressing a single column. It contains the
@@ -70,10 +69,12 @@ impl ColumnCompressor for StandardColumnCompressor {
         Ok(ColumnCompressionResult {
             compressed_chunk,
             manifest_entry: ChunkManifestEntry {
+                batch_id: 0,
                 column_idx: col_idx as u32,
                 offset_in_file: 0, // Placeholder, filled in by the bridge::Compressor
                 compressed_size: 0, // Placeholder
                 num_rows: header_info.total_rows,
+                partition_key: None,
             },
             // The FrameOperation for this is simple: it's a standard column.
             frame_operation: FrameOperation::StandardColumn {
@@ -147,10 +148,12 @@ impl<'a> ColumnCompressor for RelinearizationDecorator<'a> {
                 return Ok(ColumnCompressionResult {
                     compressed_chunk,
                     manifest_entry: ChunkManifestEntry {
+                        batch_id: 0,
                         column_idx: col_idx as u32,
                         offset_in_file: 0,  // Placeholder
                         compressed_size: 0, // Placeholder
                         num_rows: header_info.total_rows,
+                        partition_key: None,
                     },
                     // The FrameOperation clearly states what was done.
                     frame_operation: FrameOperation::PerBatchRelinearizedColumn {

@@ -1,18 +1,19 @@
 // In: src/frame_pipeline/strategies.rs
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 
-use arrow::array::{Array, ArrayRef, RecordBatch, RecordBatchReader, UInt32Array};
-use arrow::compute::{
-    concat_batches, lexsort_to_indices, sort_to_indices, take, SortColumn, SortOptions,
-};
-use std::sync::Arc;
+use arrow::array::{Array, RecordBatch, RecordBatchReader, UInt32Array};
+use arrow::compute::{concat_batches, take};
+use arrow::datatypes::{DataType, SchemaRef};
 
 use super::column_strategies::{
     ColumnCompressor, RelinearizationDecorator, StandardColumnCompressor,
 };
 use super::profiler;
+use super::util::create_index_map;
 use super::{FramePipeline, FramePipelineResult};
 use crate::bridge::arrow_impl;
-use crate::bridge::config::CompressorConfig;
+use crate::bridge::config::{CompressorConfig, TimeSeriesStrategy};
 use crate::bridge::format::{ChunkManifestEntry, FrameOperation, FramePlan};
 use crate::chunk_pipeline::artifact::CompressedChunk;
 use crate::chunk_pipeline::orchestrator as chunk_orchestrator;
@@ -29,15 +30,21 @@ fn compress_array_chunk(
     Ok((
         compressed_bytes,
         ChunkManifestEntry {
+            batch_id: 0,
             column_idx: col_idx,
             offset_in_file: 0,  // Placeholder
             compressed_size: 0, // Placeholder
             num_rows: header_info.total_rows,
+            partition_key: None,
         },
     ))
 }
 
+//
+//==================================================================================
 // --- Strategy 1: Standard Streaming ---
+//==================================================================================
+
 pub struct StandardStreamingStrategy;
 impl FramePipeline for StandardStreamingStrategy {
     fn execute(
@@ -47,12 +54,17 @@ impl FramePipeline for StandardStreamingStrategy {
     ) -> Result<FramePipelineResult, PhoenixError> {
         let mut all_chunks = Vec::new();
         let compressor = StandardColumnCompressor;
+        let mut batch_id_counter: u64 = 0;
+
         for batch_result in reader {
             let batch = batch_result?;
             for col_idx in 0..batch.num_columns() {
                 let result = compressor.compress_column(&batch, col_idx)?;
-                all_chunks.push((result.compressed_chunk, result.manifest_entry));
+                let (chunk_bytes, mut manifest) = (result.compressed_chunk, result.manifest_entry);
+                manifest.batch_id = batch_id_counter;
+                all_chunks.push((chunk_bytes, manifest));
             }
+            batch_id_counter += 1; // <<< ADDED
         }
         let frame_plan = None; // No special plan needed for standard columns.
         Ok(FramePipelineResult {
@@ -62,7 +74,11 @@ impl FramePipeline for StandardStreamingStrategy {
     }
 }
 
+//
+//==================================================================================
 // --- Strategy 2: Per-Batch Relinearization ---
+//==================================================================================
+
 pub struct PerBatchRelinearizationStrategy;
 impl FramePipeline for PerBatchRelinearizationStrategy {
     fn execute(
@@ -72,6 +88,7 @@ impl FramePipeline for PerBatchRelinearizationStrategy {
     ) -> Result<FramePipelineResult, PhoenixError> {
         let mut all_chunks = Vec::new();
         let mut frame_ops = Vec::new();
+        let mut batch_id_counter: u64 = 0;
 
         let hints = profiler::PlannerHints {
             stream_id_column: config.stream_id_column_name.clone(),
@@ -88,13 +105,19 @@ impl FramePipeline for PerBatchRelinearizationStrategy {
 
         for batch_result in reader {
             let batch = batch_result?;
+
             for col_idx in 0..batch.num_columns() {
                 let result = compressor.compress_column(&batch, col_idx)?;
-                all_chunks.push((result.compressed_chunk, result.manifest_entry));
+
+                let (chunk_bytes, mut manifest) = (result.compressed_chunk, result.manifest_entry);
+                manifest.batch_id = batch_id_counter;
+                all_chunks.push((chunk_bytes, manifest));
+
                 if frame_ops.len() < batch.num_columns() {
                     frame_ops.push(result.frame_operation);
                 }
             }
+            batch_id_counter += 1;
         }
 
         frame_ops.sort_by_key(|op| match op {
@@ -117,82 +140,163 @@ impl FramePipeline for PerBatchRelinearizationStrategy {
     }
 }
 
-// --- Strategy 3: Global Sorting ---
-pub struct GlobalSortingStrategy;
-impl FramePipeline for GlobalSortingStrategy {
+//==================================================================================
+// --- Strategy 3: Partitioning ---
+//==================================================================================
+
+struct PartitionBuffer {
+    batches: Vec<RecordBatch>,
+    total_rows: usize,
+}
+impl PartitionBuffer {
+    fn new() -> Self {
+        Self {
+            batches: Vec::new(),
+            total_rows: 0,
+        }
+    }
+    fn add_batch(&mut self, batch: RecordBatch) {
+        self.total_rows += batch.num_rows();
+        self.batches.push(batch);
+    }
+    fn clear(&mut self) {
+        self.batches.clear();
+        self.total_rows = 0;
+    }
+}
+
+pub struct PartitioningStrategy;
+const MAX_ACTIVE_PARTITIONS: usize = 1_000_000;
+
+impl FramePipeline for PartitioningStrategy {
     fn execute(
         &self,
         reader: &mut dyn RecordBatchReader,
         config: &CompressorConfig,
     ) -> Result<FramePipelineResult, PhoenixError> {
-        let mut all_chunks = Vec::new();
-        let batches: Vec<RecordBatch> = reader.collect::<Result<_, _>>()?;
-        if batches.is_empty() {
-            return Ok(FramePipelineResult {
-                compressed_chunks_with_manifests: vec![],
-                frame_plan: None,
-            });
+        let (partition_key_column, partition_flush_rows) =
+            if let TimeSeriesStrategy::Partitioned {
+                partition_key_column,
+                partition_flush_rows,
+            } = &config.time_series_strategy
+            {
+                (partition_key_column, *partition_flush_rows)
+            } else {
+                return Err(PhoenixError::InternalError(
+                    "PartitioningStrategy called with invalid config".into(),
+                ));
+            };
+
+        let schema = reader.schema();
+        let key_col_idx = schema.index_of(partition_key_column)?;
+
+        if *schema.field(key_col_idx).data_type() != DataType::Int64 {
+            return Err(PhoenixError::UnsupportedType(
+                "Partitioning key column must be of type Int64.".to_string(),
+            ));
         }
 
-        let full_batch = concat_batches(&batches[0].schema(), &batches)?;
+        let mut active_partitions: HashMap<i64, PartitionBuffer> = HashMap::new();
+        let mut finished_chunks = Vec::new();
+        let mut eviction_queue: BinaryHeap<(Reverse<usize>, i64)> = BinaryHeap::new();
+        let mut batch_id_counter: u64 = 0;
 
-        let key_col_idx = config
-            .stream_id_column_name
-            .as_ref()
-            .and_then(|n| full_batch.schema().index_of(n).ok())
-            .ok_or_else(|| {
-                PhoenixError::RelinearizationError("Stream ID column hint not found".to_string())
-            })?;
-        let ts_col_idx = config
-            .timestamp_column_name
-            .as_ref()
-            .and_then(|n| full_batch.schema().index_of(n).ok())
-            .ok_or_else(|| {
-                PhoenixError::RelinearizationError("Timestamp column hint not found".to_string())
-            })?;
+        for batch_result in reader {
+            let batch = batch_result?;
+            let index_map = create_index_map(&batch, key_col_idx)?;
 
-        let sorting_keys: Vec<SortColumn> = vec![
-            SortColumn {
-                values: full_batch.column(key_col_idx).clone(),
-                options: Some(SortOptions::default()),
-            },
-            SortColumn {
-                values: full_batch.column(ts_col_idx).clone(),
-                options: Some(SortOptions::default()),
-            },
-        ];
+            for (key, indices) in index_map {
+                if !active_partitions.contains_key(&key)
+                    && active_partitions.len() >= MAX_ACTIVE_PARTITIONS
+                {
+                    // Loop until a non-stale partition is popped from the heap and evicted.
+                    while let Some((_, key_to_evict)) = eviction_queue.pop() {
+                        // If the key is still in the map, it's a valid eviction candidate.
+                        if let Some(mut buffer_to_flush) = active_partitions.remove(&key_to_evict) {
+                            flush_partition_buffer(
+                                &mut buffer_to_flush,
+                                key_to_evict,
+                                &schema,
+                                &mut finished_chunks,
+                                batch_id_counter,
+                            )?;
+                            batch_id_counter += 1;
+                            break; // A slot has been freed, we can stop evicting.
+                        }
+                        // Otherwise, the popped key was stale. Continue the loop.
+                    }
+                }
 
-        let sorted_indices_array: Arc<UInt32Array> =
-            Arc::new(lexsort_to_indices(&sorting_keys, None)?);
+                let indices_array = UInt32Array::from(indices);
+                let mut new_columns = Vec::with_capacity(batch.num_columns());
+                for col in batch.columns() {
+                    new_columns.push(take(col.as_ref(), &indices_array, None)?);
+                }
+                let key_specific_batch = RecordBatch::try_new(schema.clone(), new_columns)?;
 
-        const GLOBAL_PERMUTATION_COL_IDX: u32 = u32::MAX;
-        let (perm_bytes, perm_manifest) =
-            compress_array_chunk(sorted_indices_array.as_ref(), GLOBAL_PERMUTATION_COL_IDX)?;
-        all_chunks.push((perm_bytes, perm_manifest));
+                let partition_buffer = active_partitions
+                    .entry(key)
+                    .or_insert_with(PartitionBuffer::new);
+                partition_buffer.add_batch(key_specific_batch);
+                eviction_queue.push((Reverse(partition_buffer.total_rows), key));
+
+                if partition_buffer.total_rows >= partition_flush_rows {
+                    flush_partition_buffer(
+                        partition_buffer,
+                        key,
+                        &schema,
+                        &mut finished_chunks,
+                        batch_id_counter,
+                    )?;
+                    batch_id_counter += 1;
+                }
+            }
+        }
+
+        for (key, mut partition_buffer) in active_partitions {
+            if !partition_buffer.batches.is_empty() {
+                flush_partition_buffer(
+                    &mut partition_buffer,
+                    key,
+                    &schema,
+                    &mut finished_chunks,
+                    batch_id_counter,
+                )?;
+                batch_id_counter += 1;
+            }
+        }
 
         let frame_plan = Some(FramePlan {
             version: 1,
-            operations: vec![FrameOperation::GlobalSortedFile {
-                key_col_idx: key_col_idx as u32,
-                timestamp_col_idx: ts_col_idx as u32,
-                permutation_chunk_idx: GLOBAL_PERMUTATION_COL_IDX,
+            operations: vec![FrameOperation::PartitionedFile {
+                partition_key_col_idx: key_col_idx as u32,
             }],
         });
 
-        for col_idx in 0..full_batch.num_columns() {
-            let sorted_col = take(
-                full_batch.column(col_idx),
-                sorted_indices_array.as_ref(),
-                None,
-            )?;
-            let (chunk_bytes, manifest) =
-                compress_array_chunk(sorted_col.as_ref(), col_idx as u32)?;
-            all_chunks.push((chunk_bytes, manifest));
-        }
-
         Ok(FramePipelineResult {
-            compressed_chunks_with_manifests: all_chunks,
+            compressed_chunks_with_manifests: finished_chunks,
             frame_plan,
         })
     }
+}
+
+fn flush_partition_buffer(
+    buffer: &mut PartitionBuffer,
+    key: i64,
+    schema: &SchemaRef,
+    out_chunks: &mut Vec<(Vec<u8>, ChunkManifestEntry)>,
+    batch_id: u64,
+) -> Result<(), PhoenixError> {
+    if buffer.batches.is_empty() {
+        return Ok(());
+    }
+    let full_batch = concat_batches(schema, &buffer.batches)?;
+    for i in 0..full_batch.num_columns() {
+        let (bytes, mut manifest) = compress_array_chunk(full_batch.column(i), i as u32)?;
+        manifest.batch_id = batch_id;
+        manifest.partition_key = Some(key);
+        out_chunks.push((bytes, manifest));
+    }
+    buffer.clear();
+    Ok(())
 }

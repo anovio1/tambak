@@ -17,6 +17,7 @@ pub mod relinearize; // Batch-aware profiler (reconcile with chunk pipeline)
 
 mod column_strategies; // Column-level compression (decorator pattern)
 mod strategies; // Concrete FramePipeline implementations // Batch-aware relinearization
+mod util;
 
 //==================================================================================
 // 2. Public API Re-exports
@@ -26,7 +27,7 @@ pub use self::column_strategies::{
 };
 pub use self::profiler::PlannerHints;
 pub use self::strategies::{
-    GlobalSortingStrategy, PerBatchRelinearizationStrategy, StandardStreamingStrategy,
+    PartitioningStrategy, PerBatchRelinearizationStrategy, StandardStreamingStrategy,
 };
 
 // pub use self::profiler::{find_stride_by_autocorrelation, PlannerHints};
