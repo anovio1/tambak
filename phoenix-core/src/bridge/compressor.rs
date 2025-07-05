@@ -20,8 +20,16 @@ use crate::frame_pipeline::{
     StandardStreamingStrategy,
 };
 
-/// A high-level, stateful object that manages the entire compression process.
-/// 4.5 Implementation is NOT STREAM-COMPATIBLE for
+//  Notes
+// *   **The "Streaming" Contract (The Most Important Point):**
+//     *   **Observation:** The `compress` method takes a `&mut dyn RecordBatchReader`, which presents a streaming-first API to the user. The code in *this file* honors that by passing the reader down to the strategy.
+//     *   **Implication:** This design places the burden of streaming vs. eager loading squarely on the **concrete `FramePipeline` strategy**. As we discussed, `GlobalSortingStrategy` is *inherently eager*. It *must* consume the entire reader into memory to perform its sort.
+//     *   **Verdict:** This is not a bug; it is a critical architectural characteristic. The `Compressor` code is perfect, but we must be extremely clear in our user-facing documentation that choosing `TimeSeriesStrategy::GlobalSorting` will cause the compressor to buffer the entire dataset in RAM, whereas the other strategies are true streaming processors.
+
+// *   **One-Shot Lifecycle:**
+//     *   **Observation:** The `compress` method takes `&mut self`. This means, in theory, a user could call it more than once.
+//     *   **Implication:** If a user *did* call it twice, the internal state (`chunk_manifest`, `bytes_written`) would not be reset, leading to a corrupted file containing chunks from both calls.
+//     *   **Verdict:** This is a standard design for this type of object. The `Compressor` has a one-shot lifecycle (`new` -> `compress` -> `writer` is consumed/closed). This is perfectly acceptable, but worth noting. An alternative, stricter design would have `compress` take `self` to prevent reuse, but the current approach is also common and fine.
 
 /// A high-level, stateful object that manages the entire compression process.
 #[derive(Debug)]
@@ -87,6 +95,10 @@ impl<W: Write> Compressor<W> {
         self.writer.write_all(&footer_len.to_le_bytes())?;
 
         Ok(())
+    }
+
+    pub fn into_inner(self) -> W {
+        self.writer
     }
 }
 

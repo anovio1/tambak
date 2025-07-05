@@ -21,20 +21,14 @@ macro_rules! log_metric {
     ($($key:literal = $value:expr),+ $(,)?) => {
         #[cfg(debug_assertions)]
         {
-            (|| {
-                let mut s = String::new();
-                s.push_str("PHOENIX_METRIC: {");
-                let mut first = true;
-                $(
-                    if !first {
-                        s.push_str(", ");
-                    }
-                    s.push_str(&format!("\"{}\": \"{}\"", $key, $value));
-                    first = false;
-                )+
-                s.push_str("}");
-                println!("{}", s);
-            })();
+            // Collect each pair as a JSON string fragment
+            let mut parts = Vec::new();
+            $(
+                parts.push(format!("\"{}\": \"{}\"", $key, $value));
+            )+
+
+            let output = format!("PHOENIX_METRIC: {{ {} }}", parts.join(", "));
+            println!("{}", output);
         }
     };
 }

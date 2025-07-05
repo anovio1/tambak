@@ -151,8 +151,9 @@ pub fn relinearize_single_column_in_batch(
 ) -> Result<ArrayRef, PhoenixError> {
     let num_rows = value_array.len();
     if num_rows == 0 {
-        return Ok(Arc::from(value_array.to_data().into_array()));
+        return Ok(arrow::array::new_empty_array(value_array.data_type()));
     }
+
     if key_array.len() != num_rows || timestamp_array.len() != num_rows {
         return Err(PhoenixError::RelinearizationError(
             "Key, timestamp, and value arrays must have the same length in a RecordBatch."
@@ -183,7 +184,7 @@ pub fn relinearize_single_column_in_batch(
             PhoenixError::RelinearizationError(format!("Failed to re-linearize value array: {}", e))
         })?;
 
-    Ok(re_linearized_array.into())
+    Ok(re_linearized_array) // `take` returns a `Result<ArrayRef, ...>`, so this is correct
 }
 
 /// Reconstructs a single logical column from its re-linearized value array and

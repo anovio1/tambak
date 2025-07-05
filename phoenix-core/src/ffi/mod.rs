@@ -20,5 +20,7 @@ pub mod ioadapters;
 pub use self::python::{
     compress_py,
     compress_analyze_py,
+    decompress_chunk_py,
+    compress_chunk_py,
     enable_verbose_logging_py,
 };

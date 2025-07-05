@@ -1,7 +1,9 @@
 // In: src/frame_pipeline/strategies.rs
 
 use arrow::array::{Array, ArrayRef, RecordBatch, RecordBatchReader, UInt32Array};
-use arrow::compute::{sort_to_indices, take, SortOptions};
+use arrow::compute::{
+    concat_batches, lexsort_to_indices, sort_to_indices, take, SortColumn, SortOptions,
+};
 use std::sync::Arc;
 
 use super::column_strategies::{
@@ -131,7 +133,8 @@ impl FramePipeline for GlobalSortingStrategy {
                 frame_plan: None,
             });
         }
-        let full_batch = RecordBatch::concat(&batches[0].schema(), &batches)?;
+
+        let full_batch = concat_batches(&batches[0].schema(), &batches)?;
 
         let key_col_idx = config
             .stream_id_column_name
@@ -148,15 +151,19 @@ impl FramePipeline for GlobalSortingStrategy {
                 PhoenixError::RelinearizationError("Timestamp column hint not found".to_string())
             })?;
 
-        let sorting_keys: Vec<ArrayRef> = vec![
-            full_batch.column(key_col_idx).clone(),
-            full_batch.column(ts_col_idx).clone(),
+        let sorting_keys: Vec<SortColumn> = vec![
+            SortColumn {
+                values: full_batch.column(key_col_idx).clone(),
+                options: Some(SortOptions::default()),
+            },
+            SortColumn {
+                values: full_batch.column(ts_col_idx).clone(),
+                options: Some(SortOptions::default()),
+            },
         ];
-        let sorted_indices_array: Arc<UInt32Array> = Arc::new(sort_to_indices(
-            &sorting_keys,
-            Some(SortOptions::default()),
-            None,
-        )?);
+
+        let sorted_indices_array: Arc<UInt32Array> =
+            Arc::new(lexsort_to_indices(&sorting_keys, None)?);
 
         const GLOBAL_PERMUTATION_COL_IDX: u32 = u32::MAX;
         let (perm_bytes, perm_manifest) =

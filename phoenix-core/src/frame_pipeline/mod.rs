@@ -8,14 +8,12 @@ use crate::bridge::format::{ChunkManifestEntry, FramePlan};
 use crate::error::PhoenixError;
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
 
-
 //==================================================================================
 // 1. Module Declarations
 //==================================================================================
 
-pub mod frame_orchestrator;
-pub mod relinearize;
-pub mod profiler; // Batch-aware profiler (reconcile with chunk pipeline)
+pub mod profiler;
+pub mod relinearize; // Batch-aware profiler (reconcile with chunk pipeline)
 
 mod column_strategies; // Column-level compression (decorator pattern)
 mod strategies; // Concrete FramePipeline implementations // Batch-aware relinearization
@@ -26,8 +24,10 @@ mod strategies; // Concrete FramePipeline implementations // Batch-aware relinea
 pub use self::column_strategies::{
     ColumnCompressionResult, ColumnCompressor, RelinearizationDecorator, StandardColumnCompressor,
 };
-pub use self::strategies::{StandardStreamingStrategy, PerBatchRelinearizationStrategy, GlobalSortingStrategy};
 pub use self::profiler::PlannerHints;
+pub use self::strategies::{
+    GlobalSortingStrategy, PerBatchRelinearizationStrategy, StandardStreamingStrategy,
+};
 
 // pub use self::profiler::{find_stride_by_autocorrelation, PlannerHints};
 
@@ -49,5 +49,4 @@ pub trait FramePipeline {
 }
 
 #[cfg(test)]
-mod frame_orchestrator_tests;
 mod tests;

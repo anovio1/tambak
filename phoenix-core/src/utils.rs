@@ -9,9 +9,8 @@
 
 use pyo3::prelude::*;
 // use polars::prelude::{Series};
-use arrow::pyarrow::ToPyArrow;
 use arrow::array::Array;
-use num_traits::PrimInt;
+use arrow::pyarrow::ToPyArrow;
 use bytemuck;
 //  use pyo3_polars::PySeries;
 
@@ -46,12 +45,11 @@ pub fn safe_bytes_to_typed_slice<'a, T>(bytes: &'a [u8]) -> Result<&'a [T], Phoe
 where
     T: bytemuck::Pod, // Use bytemuck's trait for "Plain Old Data"
 {
-    bytemuck::try_cast_slice(bytes)
-        .map_err(|e| {
-            // Bytemuck's error type contains detailed info about the failure
-            // (e.g., alignment, length, etc.), which is great for debugging.
-            PhoenixError::InternalError(format!("Failed to cast byte slice: {}", e))
-        })
+    bytemuck::try_cast_slice(bytes).map_err(|e| {
+        // Bytemuck's error type contains detailed info about the failure
+        // (e.g., alignment, length, etc.), which is great for debugging.
+        PhoenixError::InternalError(format!("Failed to cast byte slice: {}", e))
+    })
 }
 
 //  BEFORE V2
@@ -82,7 +80,6 @@ where
 //     let len = bytes.len() / size;
 //     Ok(std::slice::from_raw_parts(ptr, len))
 // }
-
 
 /// Converts a slice of primitive integers into a `Vec<u8>`, respecting Little-Endian byte order.
 ///
@@ -161,7 +158,6 @@ mod tests {
         let typed_slice = safe_bytes_to_typed_slice::<i32>(&bytes).unwrap();
         assert_eq!(typed_slice, original_vec.as_slice());
     }
-
 
     #[test]
     fn test_safe_bytes_to_typed_slice_mismatch_error() {

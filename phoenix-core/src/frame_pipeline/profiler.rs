@@ -6,12 +6,10 @@
 
 use arrow::array::{Array, Float64Array};
 use arrow::record_batch::RecordBatch;
-use ndarray::{s, Array1};
-use num_traits::ToPrimitive;
 
-use super::relinearize;
-use crate::chunk_pipeline::planner as chunk_planner; // Use the chunk_pipeline's planner
 use crate::error::PhoenixError;
+// Import our canonical data type to perform the conversion.
+use crate::types::PhoenixDataType;
 use crate::{chunk_pipeline, log_metric};
 
 /// A struct to hold user-provided hints that guide the planning process.
@@ -32,7 +30,7 @@ pub enum DataStructure {
 /// The main entry point for the Structure Discovery Layer for a column within a RecordBatch.
 pub fn discover_structure(
     array: &dyn Array,
-    full_batch_context: &RecordBatch,
+    _full_batch_context: &RecordBatch, // Renamed to indicate it's not used yet
     hints: &PlannerHints,
 ) -> Result<DataStructure, PhoenixError> {
     // 1. Check for user-provided hints for multiplexed data.
@@ -64,9 +62,13 @@ pub fn discover_structure(
         if sample.len() > 100 {
             // Call chunk_pipeline's stride discovery on a sample of the raw bytes
             let sample_bytes = bytemuck::cast_slice(&sample).to_vec();
+
+            // convert Arrow to PhoenixDataType
+            let phoenix_dtype = PhoenixDataType::from_arrow_type(array.data_type())?;
+
             if let Ok(stride) = chunk_pipeline::profiler::find_stride_by_autocorrelation(
                 &sample_bytes,
-                array.data_type().clone(),
+                phoenix_dtype,
             ) {
                 if stride > 1 {
                     log_metric!(

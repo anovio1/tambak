@@ -30,6 +30,7 @@ mod tests {
                 num_rows: 100,
             }],
             writer_version: "test".into(),
+            frame_plan: None,
         };
         let footer_json = serde_json::to_vec(&footer).unwrap();
         let footer_len = footer_json.len() as u64;
@@ -123,6 +124,7 @@ mod tests {
             schema: schema.clone(),
             chunk_manifest,
             writer_version: "1.0".to_string(),
+            frame_plan: None,
         };
 
         let bytes = serde_json::to_vec(&footer)?;
@@ -195,7 +197,7 @@ mod tests {
         compressor.compress(&mut reader)?;
 
         // Retrieve the written bytes from the cursor.
-        let compressed_bytes = compressor.writer.into_inner();
+        let compressed_bytes = compressor.into_inner().into_inner();
         assert!(!compressed_bytes.is_empty());
 
         // --- ACT (DECOMPRESS) ---
@@ -243,7 +245,7 @@ mod tests {
         let mut compressor = Compressor::new(file_buffer, config)?;
         compressor.compress(&mut reader)?;
 
-        let compressed_bytes = compressor.writer.into_inner();
+        let compressed_bytes = compressor.into_inner().into_inner();
         // File should not be empty, it must have a header and footer.
         assert!(compressed_bytes.len() > 14);
 
