@@ -1,180 +1,138 @@
-# Tambak Cache
+# Tambak
 
-A high-performance, adaptive compression library for columnar data, powered by a meticulously engineered Rust core.
+[![CI Status](https://img.shields.io/github/actions/workflow/status/your-org/tambak/rust.yml?branch=main&style=for-the-badge)](https://github.com/your-org/tambak/actions)
+[![Crates.io](https://img.shields.io/crates/v/tambak?style=for-the-badge)](https://crates.io/crates/tambak)
+[![PyPI](https://img.shields.io/pypi/v/tambak?style=for-the-badge)](https://pypi.org/project/tambak/)
+[![License](https://img.shields.io/badge/License-MIT%2FApache--2.0-blue?style=for-the-badge)](./LICENSE)
 
-## 🚀 Overview
+An adaptive, self-describing columnar storage format for Rust and Python, built to serve as a performance-oriented foundation for analytical data.
 
-Tambak Cache is designed to revolutionize how structured data is stored and retrieved in analytical and time-series applications. By leveraging a custom, adaptive compression pipeline implemented in Rust, Tambak Cache delivers superior compression ratios and blazing-fast performance compared to traditional methods, while maintaining seamless interoperability with the Python data ecosystem (especially Polars and PyArrow).
+Tambak is an Arrow-compatible library that uses a cost-based planner to build optimal compression pipelines for your data on the fly. It's engineered to maximize storage efficiency while providing a clean, high-level API for both Rust and Python developers.
 
-The core philosophy revolves around dynamically selecting the optimal sequence of stateless compression kernels for a given data chunk. This "intelligent planning" ensures maximum efficiency, whether your data is sparse, has low cardinality, or exhibits strong temporal locality.
+## Key Features
 
-## ✨ Features
+-   **Intelligent Adaptive Compression:** A cost-based `Planner` analyzes each chunk of data to construct a bespoke pipeline of compression kernels, ensuring the best strategy is used for the data's unique statistical properties.
+-   **Self-Describing Format:** Artifacts are fully self-contained. The file footer includes a `FramePlan` that describes the file's structure and a manifest of all data chunks, ensuring portability and eliminating the need for external metadata.
+-   **Advanced Storage Strategies:** A two-tiered pipeline architecture allows for high-level structural transformations, including strategies for time-series and partitioned data that improve compression ratios.
+-   **Idiomatic Python API:** A high-level, stateful Python API provides a seamless, "batteries-included" experience for data scientists and engineers, abstracting away the complexity of the Rust core.
+-   **Apache Arrow Native:** Built from the ground up to work within the Arrow ecosystem for zero-copy data exchange.
 
-*   **Adaptive Compression:** Dynamically generates an optimal compression pipeline based on data characteristics.
-*   **Rust-Powered Performance:** Core compression and decompression logic is written in highly optimized, panic-free Rust.
-*   **Zero-Copy FFI:** Efficiently bridges between Python (Polars/PyArrow) and Rust, minimizing memory copies at the boundary.
-*   **Composable Kernels:** A modular architecture of stateless compression algorithms (Delta, RLE, LEB128, Bitpacking, Zstd, etc.).
-*   **Robust Error Handling:** Panics are caught and translated into meaningful Python exceptions.
-*   **Null-Aware:** First-class support for nullable data, with efficient bitmap handling.
+## Performance Highlights
 
-## 📦 Installation
+Tambak's adaptive strategies allow it to outperform standard formats like Zstd-compressed MessagePack and even Parquet on many real-world workloads. The following benchmarks were run on a sample dataset from the [Tubuin Analytics](https://github.com/anovio1/tubuin) project.
 
-Tambak Cache is distributed as a Python package with a compiled Rust extension.
+| Aspect                 | Original MPK (bytes) | Parquet (Zstd) (%) | **Tambak (Default) (%)** | **Tambak (Multiplexed) (%)** |
+| :--------------------- | :------------------- | :----------------- | :-------------------- | :--------------------- |
+| **unit_economy**       | 10,926,575           | 11.44              | 9.78                  | **6.37**               |
+| **construction_log**   | 11,062,038           | 23.19              | 24.77                 | **10.96**              |
+| **unit_state_snapshots** | 1,700,312            | 32.84              | 28.10                 | **20.71**              |
+| **unit_positions**     | 6,641,915            | 49.77              | 49.73                 | **43.35**              |
 
-1.  **Prerequisites:**
-    *   [Rust Toolchain](https://www.rust-lang.org/tools/install) (latest stable recommended)
-    *   Python 3.8+
-    *   `maturin` (Rust-to-Python build tool):
-        ```bash
-        pip install maturin
-        ```
+*Lower percentage is better. The results show Tambak's specialized strategies establishing a new state-of-the-art for compressing the related time-series data in this domain.*
 
-2.  **Install from Source:**
-    Navigate to the root directory of this repository (where `pyproject.toml` is located) and run:
-    ```bash
-    maturin develop --release
-    ```
-    This command compiles the Rust code in release mode (optimized for speed) and installs the `tambak_cache` Python package into your current environment.
+## Architecture Overview
 
-## ⚡ Quick Start (Python)
+Tambak uses a unique two-tiered pipeline architecture to achieve its flexibility and performance:
 
-Once installed, you can start compressing and decompressing Polars Series immediately.
+1.  **The `FramePipeline` (The Strategist):** This high-level layer operates on entire data frames. It selects a "strategy" (like the default streaming or advanced partitioning) to transform data before compression. It produces the `FramePlan` that makes the file self-describing.
+2.  **The `ChunkPipeline` (The Technician):** This low-level, pure computational core operates on individual chunks of data. It uses the `Planner` to create an optimal sequence of compression kernels (e.g., `Delta` -> `Shuffle` -> `Zstd`) for any given chunk.
+
+For a complete breakdown, please see the [**Architecture Guide (v4.6)**](./docs/ARCHITECTURE.md).
+
+## Project Status
+
+**Alpha:** Tambak is in the alpha stage and is being actively developed and battle-tested as the primary storage engine for the Tubuin project. The core API is stabilizing, but breaking changes are still possible.
+
+## Getting Started
+
+The Python API provides a high-level, stateful interface for working with files and streams.
+
+### Example 1: Standard Streaming Compression
 
 ```python
-import polars as pl
-import tambak_cache
-import numpy as np
+import pyarrow as pa
+import tambak
 
-# 1. Create a sample Polars Series with various data patterns (and some nulls!)
-data_with_nulls = [100, 105, 105, 106, 106, 106, 106, 1000, 1005, None, 1010, 1015, None, 1020]
-original_series = pl.Series("my_column", data_with_nulls, dtype=pl.Int64)
+# 1. Create some data and a PyArrow RecordBatchReader
+data = pa.table({
+    'timestamps': pa.array([1, 2, 3, 4, 5], type=pa.int64()),
+    'values': pa.array([10.0, 10.1, 10.2, 12.0, 12.2], type=pa.float64())
+})
+reader = data.to_reader()
 
-print("Original Series:")
-print(original_series)
-print(f"Original Series Size: {original_series.estimated_size()} bytes")
+# 2. Use the default streaming strategy
+config = tambak.CompressorConfig(time_series_strategy="none")
 
-# 2. Plan the optimal compression pipeline for the series (optional, but good for understanding)
-# The planner takes raw bytes of valid data. For a real series, you might need to extract this first.
-# For simplicity, we just use the original type string. The FFI layer handles byte extraction.
-plan_json = tambak_cache.plan(original_series.to_arrow().to_pylist(), original_series.dtype.base_type().__str__())
-print(f"\nGenerated Plan: {plan_json}")
+# 3. Compress the stream into an in-memory buffer
+buffer = pa.BufferOutputStream()
+compressor = tambak.Compressor(buffer, config)
+compressor.compress(reader)
 
-# 3. Compress the Polars Series
-# The `compress` function handles null stripping, planning, and execution internally.
-compressed_artifact = tambak_cache.compress(original_series)
+compressed_bytes = buffer.getvalue().to_pybytes()
 
-print(f"\nCompressed Artifact Size: {len(compressed_artifact)} bytes")
-print(f"Compression Ratio: {original_series.estimated_size() / len(compressed_artifact):.2f}x")
+# 4. Decompress the stream
+buffer_reader = pa.BufferReader(compressed_bytes)
+decompressor = tambak.Decompressor(buffer_reader)
+decompressed_reader = decompressor.batched()
+result_table = decompressed_reader.read_all()
 
-# 4. Decompress the artifact back into a Polars Series
-# The `decompress` function needs the original plan and type to reverse the process.
-decompressed_series = tambak_cache.decompress(
-    compressed_artifact,
-    plan_json, # The plan needs to be stored and retrieved with the artifact
-    original_series.dtype.base_type().__str__() # Original data type is also critical
+assert data.equals(result_table)
+```
+
+### Example 2: Partitioned Compression
+
+Tambak can intelligently partition a stream by a key column, compressing each partition independently for massive gains on certain data shapes.
+
+```python
+import pyarrow as pa
+import tambak
+
+# 1. Create data with a clear partition key
+data = pa.table({
+    'device_id': pa.array(['A', 'B', 'A', 'B', 'A'], type=pa.string()),
+    'reading': pa.array([100, 500, 101, 502, 102], type=pa.int32())
+})
+reader = data.to_reader()
+
+# 2. Configure the partitioned strategy
+config = tambak.CompressorConfig(
+    time_series_strategy="partitioned",
+    partition_key_column="device_id"
 )
 
-print("\nDecompressed Series:")
-print(decompressed_series)
+# 3. Compress the stream
+buffer = pa.BufferOutputStream()
+compressor = tambak.Compressor(buffer, config)
+compressor.compress(reader)
+compressed_bytes = buffer.getvalue().to_pybytes()
 
-# 5. Verify roundtrip integrity
-assert original_series.equals(decompressed_series)
-print("\nRoundtrip successful: Original and Decompressed series are identical!")
+# 4. Decompress and iterate through the partitions
+buffer_reader = pa.BufferReader(compressed_bytes)
+decompressor = tambak.Decompressor(buffer_reader)
+
+all_partitions = {}
+for key, partition_reader in decompressor.partitions():
+    all_partitions[key] = partition_reader.read_all()
+
+# Verify the data was correctly partitioned and reconstructed
+assert all_partitions['A'].equals(data.filter(pa.compute.field('device_id') == 'A'))
+assert all_partitions['B'].equals(data.filter(pa.compute.field('device_id') == 'B'))
 ```
 
-## 📚 Documentation
+## Roadmap
 
-Dive deeper into Tambak Cache with our comprehensive guides:
+-   [ ] Performance optimizations for core kernels.
+-   [ ] Implementation of tunable lossy compression strategies for ML workloads.
+-   [ ] Expansion of the `FramePipeline` strategy library (e.g., global sort).
+-   [ ] Official release on Crates.io and PyPI.
 
-*   **[User Guide](USER_GUIDE.md)**: How to use the Python API.
-*   **[Architecture](ARCHITECTURE.md)**: Understanding the Rust core's design principles.
-*   **[Developer Guide](DEVELOPER_GUIDE.md)**: Contributing to the Rust codebase.
-*   **[Kernel Guide](KERNEL_GUIDE.md)**: A playbook for adding new compression kernels.
+## Contributing
 
-## 🤝 Contributing
+This project is currently in early development, but feedback and ideas are welcome. Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for more details.
 
-We welcome contributions! Please see the [Developer Guide](DEVELOPER_GUIDE.md) for details on how to set up your environment and contribute to the Rust core.
+## License
 
-## 📄 License
-
-This project is licensed under the MIT OR Apache-2.0 License.
-
-## Forward Facing
-
----
-
-# **FEAT: Tambak Pipeline Planner: Configuration and Strategy Selection**
-## `PlannerStrategy` and `PlannerConfig`
-
-**Title: Tambak Pipeline Planner: Configuration and Strategy Selection**
-
-**Introduction**
-
-This document explains Tambak's compression planner changes:
-
-*   **What:** `PlannerStrategy` and `PlannerConfig` for advanced pipeline optimization.
-*   **Why:** Old planning chose best strategy from single-pass + 1 data sample, causing compression loss (regressions).
-*   **Solution:** New multi-stage planning, allows dev to set progressively bigger samples or full data for better choices.
-*   **Example Before/After:**
-
-| Stage           | Before (Single-Stage Quick)                 | After (Multi-Stage TopNFull - Default)                 |
-| :-------------- | :------------------------------------------ | :----------------------------------------------------- |
-| **Stage 1**     | All candidates on small sample (e.g., 65KB) | All candidates on small sample (e.g., 128KB)           |
-| **Stage 2**     | *(N/A - Best from Stage 1 chosen)*          | Top N candidates evaluated on **full dataset**         |
-| **Final Choice**| Based on Stage 1 sample score               | Based on Stage 2 (full data) accuracy                  |
-
----
-
-**1. `PlannerStrategy` Enum in `src/pipeline/models.rs` : Defining the Evaluation Approach**
-
-This enum defines how the planner picks the best compression pipeline. Developers choose a strategy based on how much planning speed or compression accuracy they need.
-
-*   **`TopNFull { top_n: usize }`**
-    *   **Strategy:** Recommended default. Robust, two-stage evaluation prioritizing **accuracy**.
-    *   **Process:**
-        1.  **Stage 1 (Quick Filter - Sample):** Checks all candidates on a small data sample.
-        2.  **Stage 2 (Precise Check - Full Data):** Re-evaluates the Top `top_n` candidates on the **entire dataset** for the final decision.
-    *   **Benefit:** Gives the most accurate result, fixing issues from misleading samples.
-    *   **Design Note:** Planning time depends on `top_n` times the full dataset processing.
-
-*   **`TwoStageSample { small_sample_size: usize, large_sample_size: usize }`**
-    *   **Strategy:** Two-stage, purely sample-based evaluation prioritizing **planning speed**.
-    *   **Process:**
-        1.  **Stage 1 (Quick Filter - Small Sample):** All candidates checked on `small_sample_size`.
-        2.  **Stage 2 (Refined Check - Larger Sample):** Top N candidates checked on a `large_sample_size` (not the full dataset).
-    *   **Benefit:** Faster planning, especially for very large datasets, as it avoids full-data processing.
-    *   **Warning:** Can still mispredict if the larger sample isn't truly representative. Better accuracy than `Quick`, but less than `TopNFull`.
-
-*   **`Quick { sample_size: usize }`**
-    *   **Strategy:** Single-stage evaluation for **maximum planning speed**.
-    *   **Process:** All candidates checked on a single `sample_size`. Best score wins.
-    *   **Benefit:** Fastest planning.
-    *   **Warning:** Most likely to mispredict. Use when planning speed is the highest priority and small errors are acceptable.
-
-**2. `PlannerConfig` Struct in `src/pipeline/models.rs` : Configuring the Planning Process**
-
-This struct holds the main settings for the pipeline planner.
-
-```rust
-// Conceptual Rust Structure
-#[derive(Debug, Clone)]
-pub struct PlannerConfig {
-    /// The chosen evaluation `PlannerStrategy` (e.g., TopNFull, Quick).
-    pub strategy: PlannerStrategy,
-    
-    /// List of final entropy coders (e.g., Zstd, Ans) to consider. REQUIRED.
-    pub entropy_coders: Vec<Operation>,
-}
-```
-
-**Configuration Capabilities:**
-
-*   **Strategy:** Pick the `PlannerStrategy` (e.g., `PlannerStrategy::TopNFull { top_n: 5 }`).
-*   **Entropy Coders:** Provide a `Vec<Operation>` (e.g., `vec![Operation::Zstd { level: 3 }]`) to specify end-stage compression options.
-*   **Default:** Use `PlannerConfig::default()` for a robust `TopNFull { top_n: 3 }` strategy with standard entropy coders.
-*   **Integration:** Pass this `PlannerConfig` to the top-level `plan_pipeline` function.
-
-**Extending the System:**
-
-*   New `Operation` types in `models.rs` are automatically considered by `generate_candidate_pipelines`.
-*   More advanced configurations (e.g., custom `core_transforms`) can be added to `PlannerConfig` later.
+This project is licensed under either of
+-   Apache License, Version 2.0, ([LICENSE-APACHE](./LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+-   MIT license ([LICENSE-MIT](./LICENSE-MIT) or http://opensource.org/licenses/MIT)
+at your option.

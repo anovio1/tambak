@@ -17,9 +17,9 @@ build-backend = "maturin"
 # The name of the package as it will appear on PyPI.
 name = "tambak-cache"
 version = "0.1.0"
-description = "A high-performance, adaptive compression library for columnar data, powered by a Rust core."
+description = "Adaptive columnar compression for the Python data ecosystem, powered by Rust."
 authors = [
-  { name = "Your Name", email = "you@example.com" },
+  { name = "anovio1", email = "anastace.novio@gmail.com" },
 ]
 license = { text = "MIT OR Apache-2.0" }
 readme = "README.md"

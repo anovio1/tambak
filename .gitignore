@@ -25,9 +25,12 @@ flows/__pycache__/
 *.tmp
 *.bak
 
+docs/Unk*
+
 tubuin/output_artifacts/**
 .vscode/
 
+Structure
 tambak-core/target/**/*
 RustLib/target/**/*
 .mds/
@@ -38,3 +41,5 @@ tambak-core/src-copy/**/*
 /**/*.zst
 /**/*.phx
 /**/*.parquet
+
+tambak-core/good.py

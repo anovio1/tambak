@@ -1,153 +1,92 @@
-# tambak Cache: Rust Core Architecture
+# **Tambak Architecture (v4.6): The Self-Describing Frame**
 
-This document details the architectural design of the tambak Cache Rust core. It explains the philosophy, structure, and key patterns that enable high-performance, adaptive compression for columnar data. This is the blueprint for understanding, maintaining, and extending the library.
+## Major Features
+- **Clear Layer Separation** FFI, Bridge, FramePipeline, ChunkPipeline
+- **Two-Tiered Planning System** FramePlan: Describes the overall file structure and transformations. ChunkPlan: Defines the sequence of compression operations applied to each chunk’s raw data
+- **Flexible Compression Strategies** FramePipeline - Streaming, Partitioning, ChunkPipeline - Kernels
+- **Multiplexed Stream Hanndling** Using PerBatchLinear and Partitioned
+- **Self-Describing File Format** Footer includes internal structure and chunk layered compression plans
 
-## 1. Core Philosophy: Separation of Concerns
+## **1. Core Philosophy**
 
-The tambak Cache Rust core is built upon a strict adherence to the **Single Responsibility Principle (SRP)** and **Separation of Concerns (SOC)**. Each module and function has a single, well-defined job, minimizing dependencies and maximizing testability, maintainability, and performance.
+The Tambak v4.6 architecture builds upon the stable foundation of v4.5, elevating the file format from a simple container of compressed chunks to a fully **self-describing, structured artifact**. The core philosophy remains the clean separation of concerns, but is now enhanced with a more sophisticated planning system.
 
-Key architectural tenets:
+1.  **The `bridge` is the Boundary:** This principle is unchanged. All interaction with the outside world (I/O, Arrow data formats, state management) is the exclusive responsibility of the `bridge` layer.
 
-*   **Anti-Corruption Layer (FFI):** A strict boundary isolates the Rust core from the complexities and vagaries of foreign function interfaces (FFI), particularly Python/Polars.
-*   **Pipeline Model:** Compression and decompression are modeled as a sequence of discrete, pluggable steps.
-*   **Stateless Kernels:** Individual compression/decompression algorithms (kernels) are pure, stateless functions.
-*   **In-Place Operations (Performance):** Where feasible, algorithms operate directly on mutable buffers to avoid unnecessary memory allocations and copies.
-*   **Panic-Free Design:** The Rust core is designed to be panic-free. All recoverable errors are explicitly handled via `Result` types.
+2.  **The `pipeline` is Pure:** This principle is unchanged. The `chunk_pipeline` remains a stateless, Arrow-agnostic computational core for compressing and decompressing linear byte streams.
 
-## 2. High-Level Architecture Overview
+3.  **The Plan is a Two-Tiered Contract:** This is the central evolution in v4.6. The "Plan" is no longer a single concept but a two-tiered system that describes the file's structure and contents completely.
 
-The tambak Cache Rust core can be visualized as a highly specialized factory floor:
+    - **`FramePlan` (The "What"):** A new, high-level plan stored in the `FileFooter`. It declaratively describes the **structural organization of the entire file**. It answers questions like, "Was this file globally sorted?" or "Were some columns structurally transformed?"
+    - **`ChunkPlan` (The "How"):** The existing, low-level plan stored in each chunk's header. It describes the **linear sequence of compression operations** applied to that specific chunk's byte stream.
 
-*   **The Lobby (FFI Layer):** Handles incoming raw materials (Python objects) and ships out finished products (Python objects). It's the only part that speaks "Python."
-*   **The Manager's Office (Orchestrator):** Oversees the entire production process for each chunk of material. It decides what happens when.
-*   **The Planning Department (Planner):** Analyzes raw materials and draws up detailed manufacturing plans.
-*   **The Shop Floor (Executor):** Receives a plan and directs the specialized machinery (kernels) to perform the work.
-*   **Specialized Machinery (Kernels):** Individual, highly optimized machines (algorithms) that perform specific transformations (e.g., Delta encoder, RLE compressor).
-*   **Utility & Error Control:** Supporting services like general-purpose tools and quality control.
+4.  **The `FramePipeline` is a Strategy:** To support the `FramePlan`, we introduce the `FramePipeline` layer. This layer implements the **Strategy Pattern**, where different high-level file construction strategies (`StandardStreamingStrategy`, `PartitioningStrategy`, etc.) can be selected at runtime. Each strategy is responsible for orchestrating the structural transformations and producing the correct `FramePlan`.
 
-## 3. Detailed File Structure
+---
 
-The project adheres to the following modular file structure:
+## **2. Architecture and Data Flow**
 
-```
-src/
-├── lib.rs              # Crate root, defines the Python module, and declares all top-level modules.
-|
-├── ffi/                # The Anti-Corruption Layer for Python.
-│   ├── mod.rs          # Public facade  compress_py, decompress_py, plan_py,
-│   └── python.rs       # Python <-> Rust FFI logic. Handles type conversion, GIL, and error translation.
-|
-├── pipeline/           # The Core Workflow Management.
-│   ├── mod.rs          # Public facade for the pipeline module (exports orchestrator functions).
-│   ├── orchestrator.rs # The "General Contractor": Manages end-to-end compression/decompression.
-│   ├── planner.rs      # The "Strategist": Analyzes data and plans optimal kernel sequences.
-│   └── executor.rs     # The "Foreman": Executes a given pipeline plan on data.
-|
-├── kernels/            # The Stateless Compression/Decompression Algorithms.
-│   ├── mod.rs          # Public facade for the kernels module (re-exports kernel functions).
-│   ├── delta.rs        # Delta encoding/decoding kernel.
-│   ├── rle.rs          # Run-Length encoding/decoding kernel.
-│   ├── leb128.rs       # Unsigned LEB128 variable-length integer encoding/decoding.
-│   ├── zigzag.rs       # Zigzag transform (converts signed to unsigned for efficient encoding).
-│   ├── bitpack.rs      # Fixed-width bit-packing/unpacking.
-│   ├── shuffle.rs      # Byte-shuffling for improved entropy coding.
-│   └── zstd.rs         # Zstandard compression/decompression wrapper.
-|
-├── null_handling/      # Logic for Managing Nullability.
-│   ├── mod.rs          # Public facade for null handling module.
-│   └── bitmap.rs       # Handles stripping and reapplying Arrow-compatible validity bitmaps.
-|
-├── error.rs            # Centralized, custom error type for the entire library.
-└── utils.rs            # Shared low-level utilities and FFI helpers.
-```
+### **2.1. High-Level Data Flow (The `Compressor` Journey)**
 
-## 4. Key Architectural Patterns & Data Flow
+The data flow is now best understood as a delegation from the `Compressor` to a chosen `FramePipeline` strategy.
 
-### A. The FFI Anti-Corruption Layer (`ffi/python.rs`)
+1.  **`Compressor` (`src/bridge/compressor.rs`):** The user interacts with the `Compressor`, providing a `RecordBatchReader` and a `CompressorConfig`. The `Compressor`'s primary role is now a **Factory and Coordinator**.
 
-*   **Role:** This is the only module that directly interacts with `pyo3`, `polars`, or `arrow` Python bindings. It shields the rest of the Rust core from Python's complexities (e.g., GIL management, Python object lifetimes).
-*   **Responsibilities:**
-    *   Converts Python objects (`PyAny`, `polars.Series`) into pure Rust primitive types (`&[u8]`, `Option<&[u8]>`, `&str`).
-    *   **Releases the Python GIL** (`py.allow_threads`) before calling CPU-bound Rust code.
-    *   Translates internal Rust `Result<..., tambakError>` into Python `PyResult<...>` (specifically, `ValueError`).
-    *   Converts final Rust results (e.g., `Vec<u8>`, `Option<Vec<u8>>`) back into Python objects.
+    - Based on the `config.time_series_strategy`, it instantiates a concrete `FramePipeline` strategy object (e.g., `StandardStreamingStrategy`).
+    - It delegates the entire compression process to this strategy by calling `strategy.execute(reader, config)`.
 
-### B. The Pipeline Orchestrator (`pipeline/orchestrator.rs`)
+2.  **`FramePipeline` Strategy (`src/frame_pipeline/strategies.rs`):**
 
-*   **Role:** The top-level workflow manager for compression and decompression. It orchestrates calls to other modules.
-*   **Responsibilities:**
-    *   **Null Handling:** Before compression, it calls `null_handling/bitmap.rs` to extract the validity bitmap and obtain a contiguous buffer of *only* valid data. After decompression, it uses the bitmap to re-insert nulls.
-    *   **Planning:** It calls `pipeline/planner.rs` to determine the optimal compression plan for the *valid* data.
-    *   **Execution:** It calls `pipeline/executor.rs` to run the compression/decompression plan on the *valid* data.
-    *   **Artifact Packaging:** It defines and manages the on-disk format (`CompressedArtifact` struct) for storing the compressed data, null bitmap, and metadata.
+    - The `execute` method takes control. It is responsible for consuming the `RecordBatchReader` according to its specific logic (e.g., streaming batch-by-batch, or partitioning).
+    - For each column `Array` it processes, it calls the **stateless `compress_arrow_chunk` bridge API**, which in turn invokes the pure `chunk_pipeline` to produce a compressed `Vec<u8>` and a partial `ChunkManifestEntry`.
+    - It gathers all compressed chunks and assembles the final, authoritative `FramePlan`.
+    - It returns a `FramePipelineResult` containing the list of compressed chunks and the `FramePlan`.
 
-#### Data Flow (Compression `compress_py` in `ffi/python.rs`):
+3.  **Return to `Compressor`:**
+    - The `Compressor` receives the `FramePipelineResult`.
+    - It iterates through the compressed chunks, writes their bytes, and **finalizes their `ChunkManifestEntry`s** (filling in `offset_in_file`, `compressed_size`, and `batch_id`).
+    - After all data is written, it writes the final `FileFooter`, serializing the `FramePlan` into it.
 
-1.  `ffi/python.rs` receives `polars.Series`.
-2.  `ffi/python.rs` converts `polars.Series` to `&[u8]` (data slice) and `Option<&[u8]>` (validity slice) using zero-copy.
-3.  `ffi/python.rs` calls `pipeline::orchestrator::compress_chunk(data_slice, validity_slice_opt, dtype_str)`.
-4.  `orchestrator.rs`:
-    *   Calculates `num_valid_rows`.
-    *   Compresses `validity_slice_opt` using a simple `RLE + Zstd` pipeline, yielding `compressed_nullmap`.
-    *   Calls `pipeline::planner::plan_pipeline_for_type(data_slice, dtype_str)` to get `pipeline_json`.
-    *   Calls `pipeline::executor::execute_compress_pipeline(data_slice, dtype_str, pipeline_json)` to get `compressed_data`.
-    *   Constructs `CompressedArtifact` (`num_valid_rows`, `compressed_nullmap`, `compressed_data`).
-    *   Serializes `CompressedArtifact` to `Vec<u8>`.
-5.  `orchestrator.rs` returns `Result<Vec<u8>, tambakError>`.
-6.  `ffi/python.rs` receives `Vec<u8>` and converts `tambakError` to `PyError`.
+### **2.2. Component Anatomy & Contracts**
 
-#### Data Flow (Decompression `decompress_py` in `ffi/python.rs`):
+- **`Bridge Layer (src/bridge)`:** The "User-Facing Layer and I/O Manager."
 
-1.  `ffi/python.rs` receives `bytes` (artifact), `plan_json`, `original_type`.
-2.  `ffi/python.rs` calls `pipeline::orchestrator::decompress_chunk(artifact_bytes, plan_json, original_type)`.
-3.  `orchestrator.rs`:
-    *   Deserializes `artifact_bytes` into `CompressedArtifact`.
-    *   Decompresses `compressed_nullmap` using `RLE + Zstd` to get `decompressed_nullmap`.
-    *   Calls `pipeline::executor::execute_decompress_pipeline(compressed_data, original_type, pipeline_json, num_valid_rows)` to get `decompressed_data`.
-    *   Returns `Result<(Vec<u8>, Option<Vec<u8>>), tambakError>`.
-4.  `ffi/python.rs` receives `(Vec<u8>, Option<Vec<u8>>)` (raw data, optional validity).
-5.  `ffi/python.rs` calls `utils::reconstruct_series(...)` to convert these raw parts back to a `polars.Series`.
-6.  `ffi/python.rs` calls `utils::series_to_py(...)` to convert the Rust `Series` to a Python object and returns `PyResult<PyObject>`.
+  - **`compressor.rs` / `decompressor.rs`:** The stateful facades. The `Compressor` is a **Strategy Factory**. The `Decompressor` reads the `FramePlan` and acts as a **Decompression Mode Factory**.
+  - **`stateless_api.rs`:** The essential **seam** between the `frame_pipeline` and the `chunk_pipeline`.
+  - **`format.rs`:** The on-disk file format definition. **This is the most critical contract**, defining the `FileFooter`, `FramePlan`, and `ChunkManifestEntry`.
 
-### C. The Pipeline Planner (`pipeline/planner.rs`)
+- **`FramePipeline Layer (src/frame_pipeline)`:** The "Structural Transformation & Strategy Layer."
 
-*   **Role:** The "brain" of the adaptive compression. Analyzes data to decide the best kernel sequence.
-*   **Responsibilities:**
-    *   `analyze_data<T>(data: &[T])`: Performs a **single-pass, zero-allocation** statistical analysis (e.g., constant values, delta sparsity, bit-width requirements) on a *typed slice of valid data*.
-    *   `build_pipeline_from_profile(profile: &DataProfile) -> Result<String, tambakError>`: Translates the statistical `DataProfile` into a JSON array of pipeline operations based on predefined heuristics.
-*   **Key Design:** It is **pure Rust**, operating only on `&[T]` slices and returning `String` (JSON). It has no knowledge of FFI or nulls.
+  - **`mod.rs` & `strategies.rs`:** Defines the `FramePipeline` trait and its concrete implementations (e.g., `PartitioningStrategy`). Each strategy is a self-contained recipe for building a specific type of Tambak file.
 
-### D. The Pipeline Executor (`pipeline/executor.rs`)
+- **`ChunkPipeline Layer (src/chunk_pipeline)`:** The "Pure Computational Core."
+  - This layer is responsible for the low-level, linear compression of byte streams as dictated by a `ChunkPlan`. It is called by the `FramePipeline` but has no knowledge of it.
 
-*   **Role:** The "foreman" that executes a given compression/decompression plan.
-*   **Responsibilities:**
-    *   `execute_compress_pipeline(...)` / `execute_decompress_pipeline(...)`: Parses the `pipeline_json` and sequentially calls the appropriate kernel functions.
-    *   **Buffer Swapping:** Implements a critical performance optimization by using a pair of mutable buffers. Kernels write their output into one buffer, which then becomes the input for the next step, avoiding `N` allocations for an `N`-step pipeline.
-    *   **Type Tracking (Decompression):** For decompression, it intelligently tracks intermediate data types (e.g., after `zigzag` conversion) using a `type_stack` to ensure kernels are called with the correct type context.
-*   **Key Design:** It is **pure Rust**, accepting `&[u8]` inputs and `&mut Vec<u8>` outputs. It orchestrates calls to `kernels/` functions.
+---
 
-### E. The Kernels (`kernels/`)
+## **3. Detailed Internal Workflows**
 
-*   **Role:** The atomic, stateless compression and decompression algorithms.
-*   **Responsibilities:** Each `kernel_name.rs` file implements `encode<T>` and `decode<T>` functions.
-*   **Contract:**
-    *   `pub fn encode<T>(input_slice: &[T], output_buf: &mut Vec<u8>, ...) -> Result<(), tambakError>`
-    *   `pub fn decode<T>(input_bytes: &[u8], output_buf: &mut Vec<u8>, ...) -> Result<(), tambakError>`
-    *   They are **pure Rust**, generic over `T`, and operate on raw bytes/typed slices, writing to the provided buffer.
-    *   They are **panic-free**, propagating all errors via `Result`.
-    *   They typically wrap highly optimized, in-place internal helper functions.
+While the high-level architecture describes the "what," it's crucial to document the "how" for complex internal processes.
 
-### F. Null Handling (`null_handling/bitmap.rs`)
+### **3.1. `ChunkPipeline` Meta-Operation Flow (Nulls and Sparsity)**
 
-*   **Role:** Specialized logic for managing data validity using Arrow-compatible bitmaps.
-*   **Responsibilities:**
-    *   `strip_valid_data<T>(data: &[T], validity: &Bitmap) -> Result<Vec<T>, tambakError>`: Extracts only the valid data from a full data slice, creating a tight vector.
-    *   `reapply_bitmap<T>(valid_data_buffer: Buffer<T::Native>, validity_bitmap: Bitmap) -> Result<PrimitiveArray<T>, tambakError>`: Reconstructs an Arrow array with nulls by applying a bitmap to a buffer of valid data.
-*   **Key Design:** It is **pure Rust**, operates on raw Arrow types, and is highly performant (e.g., zero-copy reapplication).
+The `chunk_pipeline::Orchestrator`'s handling of meta-operations like `ExtractNulls` or `Sparsify` is a sophisticated "split and re-plan" workflow, not a simple linear execution.
 
-### G. Utilities (`utils.rs`) and Errors (`error.rs`)
+1.  **Initial Plan:** The `Planner` first generates a `ChunkPlan` for the primary data stream.
+2.  **Meta-Operation Detected:** The `Orchestrator` inspects this plan. If it finds a meta-operation (e.g., `ExtractNulls`), it pauses execution of the main plan.
+3.  **Split and Re-Plan:** The `Orchestrator` executes the `ExtractNulls` operation, which splits the `PipelineInput` into two byte streams: the `main_data` and a new `null_mask` stream. Crucially, the `Orchestrator` then **re-invokes the `Planner`** on the `null_mask` stream. This generates a _second, independent `ChunkPlan`_ that is optimally tailored for compressing the simple `0`s and `1`s of the null mask (e.g., likely a simple `RLE` -> `Zstd` plan).
+4.  **Sub-Pipeline Execution:** The `Orchestrator` now has two `ChunkPlan`s. It calls the `Executor` to run the sub-pipeline for the null mask, and then calls the `Executor` again to run the remaining pipeline for the main data.
+5.  **Artifact Assembly:** The final `CompressedChunk` artifact is assembled with the main `ChunkPlan` in its header, but contains multiple, independently compressed data streams (e.g., `main` and `null_mask`).
 
-*   **`utils.rs`:**
-    *   **Core Utilities:** Pure Rust helpers (`safe_bytes_to_typed_slice` using `bytemuck`, `typed_slice_to_bytes`, `get_element_size`).
-    *   **FFI Helpers:** Functions specifically for `ffi/python.rs` to convert between Python/Polars objects and the primitive Rust types that the core library expects (`py_to_series`, `reconstruct_series`, `series_to_py`).
-*   **`error.rs`:** Defines `tambakError`, a custom `thiserror`-driven enum for all library errors, ensuring consistent and traceable error propagation throughout the Rust core and clean conversion to `PyErr` at the FFI boundary.
+This recursive planning process ensures that every substream generated by a meta-operation is compressed with maximum efficiency.
+
+### **3.2. Configuration Propagation**
+
+User-defined configuration from the `CompressorConfig` must flow from the `bridge` layer down to the appropriate component in the `chunk_pipeline`. This flow is managed explicitly to maintain clear boundaries.
+
+1.  **Bridge Layer (`Compressor`):** The `Compressor` owns the `CompressorConfig`. High-level structural options (like `time_series_strategy`) are used here to select the correct `FramePipeline` strategy.
+2.  **Stateless API Seam:** Low-level options relevant to the chunk pipeline (e.g., a hypothetical `lossy_compression_level`) cannot be passed directly to the `chunk_pipeline`, as it must remain pure.
+3.  **`PipelineInput` as the Vehicle:** Instead, these options are passed via the `PipelineInput` struct. The `arrow_impl::arrow_to_pipeline_input` function in the bridge is responsible for inspecting the `CompressorConfig` and populating a `context` field or similar within the `PipelineInput`.
+4.  **`ChunkPipeline` (`Planner`):** The `chunk_pipeline::Planner` receives the `PipelineInput`. It is then responsible for reading the configuration from the input's context and using it to influence its planning decisions (e.g., adding a `Quantize` operation to the `ChunkPlan`).
+
+This ensures a clean, one-way data flow where configuration is explicitly passed as part of the data contract, preserving the purity of the `chunk_pipeline`.
