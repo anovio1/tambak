@@ -1,7 +1,10 @@
 // In: src/bridge/stateless_api.rs
 
+use std::sync::Arc;
+
 use crate::bridge::arrow_impl;
 use crate::bridge::format::CompressionStats;
+use crate::config::TambakConfig;
 use crate::error::tambakError;
 use crate::chunk_pipeline;
 // We need this to call the peek_info function.
@@ -15,8 +18,10 @@ pub fn compress_arrow_chunk(array: &dyn Array) -> Result<Vec<u8>, tambakError> {
     // 1. Marshall the data from the Arrow world into our pure internal format.
     let pipeline_input = arrow_impl::arrow_to_pipeline_input(array)?;
 
-    // 2. Call the pure pipeline engine with the pure input.
-    chunk_pipeline::orchestrator::compress_chunk(pipeline_input)
+    // Since this is a stateless API, we don't have a user-provided config.
+    let default_config = Arc::new(TambakConfig::default());
+    // 2. Call the pure pipeline engine with the pure input and default config
+    chunk_pipeline::orchestrator::compress_chunk(pipeline_input, default_config)
 }
 
 /// Decompresses bytes into a single Arrow Array.
@@ -65,7 +70,7 @@ mod tests {
         assert_eq!(stats.total_size, compressed_bytes.len());
         assert_eq!(stats.header_size + stats.data_size, stats.total_size);
         assert_eq!(stats.original_type, "Int32");
-        assert!(stats.plan_json.contains("ExtractNulls")); // The plan should reflect null handling.
+        assert!(stats.plan_json.contains("ExtractNulls"));
         assert!(stats.header_size > 0);
         assert!(stats.data_size > 0);
     }

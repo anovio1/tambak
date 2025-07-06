@@ -1,7 +1,10 @@
 // tambak-core\src\pipeline\orchestrator\core.rs
 
+use std::sync::Arc;
+
 use arrow::array::Array;
 
+use crate::config::TambakConfig;
 use crate::error::tambakError;
 use crate::kernels;
 use crate::chunk_pipeline::artifact::CompressedChunk;
@@ -16,16 +19,12 @@ use crate::types::TambakDataType;
 // 3. Public Orchestration API
 //==================================================================================
 /// The new, pure, Arrow-agnostic core compression function.
-/// This version correctly uses the existing planner and executor logic.
-/// The new, pure, Arrow-agnostic core compression function.
-///
-/// This version follows a clean, modular structure. It acts as a high-level
-/// coordinator, delegating specific tasks like preprocessing, null handling, and
-/// main data compression to focused helper functions.
-pub fn compress_chunk(input: PipelineInput) -> Result<Vec<u8>, tambakError> {
+/// It now accepts the unified configuration, allowing the Planner to make
+/// context-aware decisions (e.g., trading speed for compression ratio).
+pub fn compress_chunk(input: PipelineInput, config: Arc<TambakConfig>) -> Result<Vec<u8>, tambakError> {
     // 1. Handle the simple case of an empty array first.
     if input.main.is_empty() {
-        return compress_empty_main_data_stream(&input);
+        return compress_empty_main_data_stream(&input, &config);
     }
 
     // 2. Preprocess input data (e.g., float canonicalization, bit-casting).
@@ -36,11 +35,11 @@ pub fn compress_chunk(input: PipelineInput) -> Result<Vec<u8>, tambakError> {
     // 3. Delegate the entire main data planning process to the new helper.
     // This call now encapsulates the dense-vs-sparse decision.
     let main_data_pipeline =
-        plan_main_data_pipeline(&processed_data, &input, current_physical_type)?;
+        plan_main_data_pipeline(&processed_data, &input, current_physical_type, &config)?;
 
     // 4. Plan and compress the null mask, if it exists.
     let (mut final_pipeline, mut compressed_streams) =
-        plan_and_compress_null_stream(&input, &mut pipeline_prefix)?;
+        plan_and_compress_null_stream(&input, &mut pipeline_prefix, &config)?;
 
     // Append the WINNING main pipeline to the plan.
     final_pipeline.extend(main_data_pipeline.iter().cloned());

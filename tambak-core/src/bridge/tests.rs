@@ -81,8 +81,9 @@ mod tests {
     use super::*;
     use crate::{
         bridge::{
-            compressor::MockRecordBatchReader, config::CompressorConfig, format::{ChunkManifestEntry, FileFooter, FILE_FORMAT_VERSION, FILE_MAGIC}
+            compressor::MockRecordBatchReader, format::{ChunkManifestEntry, FileFooter, FILE_FORMAT_VERSION, FILE_MAGIC}
         },
+        config::{TambakConfig, TimeSeriesStrategy},
         error::tambakError,
     };
     use arrow::{
@@ -268,7 +269,7 @@ mod tests {
         let file_buffer = Cursor::new(Vec::new());
 
         // --- ACT (COMPRESS) ---
-        let config = CompressorConfig::default();
+        let config = TambakConfig::default();
         let mut compressor = Compressor::new(file_buffer, config)?;
         compressor.compress(&mut reader)?;
 
@@ -317,7 +318,7 @@ mod tests {
         let file_buffer = Cursor::new(Vec::new());
 
         // --- ACT (COMPRESS) ---
-        let config = CompressorConfig::default();
+        let config = TambakConfig::default();
         let mut compressor = Compressor::new(file_buffer, config)?;
         compressor.compress(&mut reader)?;
 
@@ -350,9 +351,9 @@ mod tests {
         let file_buffer = Cursor::new(Vec::new());
 
         // Configure with a column name that does not exist.
-        let config = CompressorConfig {
+        let config = TambakConfig {
             time_series_strategy: TimeSeriesStrategy::Partitioned {
-                partition_key_column: "this_column_does_not_exist".to_string(),
+                key_column: "this_column_does_not_exist".to_string(),
                 partition_flush_rows: 100,
             },
             ..Default::default()
@@ -384,9 +385,9 @@ mod tests {
         let mut reader = MockRecordBatchReader::new(batches, schema.clone());
         let file_buffer = Cursor::new(Vec::new());
 
-        let config = CompressorConfig {
+        let config = TambakConfig {
             time_series_strategy: TimeSeriesStrategy::Partitioned {
-                partition_key_column: "partition_key".to_string(),
+                key_column: "partition_key".to_string(),
                 partition_flush_rows: 100,
             },
             ..Default::default()
@@ -444,9 +445,9 @@ mod tests {
         let mut reader = MockRecordBatchReader::new(vec![], schema);
         let file_buffer = Cursor::new(Vec::new());
 
-        let config = CompressorConfig {
+        let config = TambakConfig {
             time_series_strategy: TimeSeriesStrategy::Partitioned {
-                partition_key_column: "partition_key".to_string(),
+                key_column: "partition_key".to_string(),
                 partition_flush_rows: 100,
             },
             ..Default::default()
@@ -485,9 +486,9 @@ mod tests {
         let file_buffer = Cursor::new(Vec::new());
 
         // Configure to flush partitions aggressively to ensure some partitions span multiple batches.
-        let config = CompressorConfig {
+        let config = TambakConfig {
             time_series_strategy: TimeSeriesStrategy::Partitioned {
-                partition_key_column: "pk".to_string(),
+                key_column: "pk".to_string(),
                 partition_flush_rows: 3, // Flush after 3 rows
             },
             ..Default::default()

@@ -3,7 +3,9 @@
 //! re-linearization. It orchestrates the lower-level `chunk_pipeline` module to compress
 //! the resulting data streams.
 
-use crate::bridge::config::CompressorConfig;
+use std::sync::Arc;
+
+use crate::config::TambakConfig;
 use crate::bridge::format::{ChunkManifestEntry, FramePlan};
 use crate::error::tambakError;
 use arrow::record_batch::RecordBatchReader;
@@ -41,7 +43,7 @@ pub trait FramePipeline {
     fn execute(
         &self,
         reader: &mut dyn RecordBatchReader,
-        config: &CompressorConfig,
+        config: Arc<TambakConfig>,
     ) -> Result<FramePipelineResult, tambakError>;
 }
 

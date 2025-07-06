@@ -10,8 +10,8 @@ use arrow_schema::Schema;
 
 use crate::error::tambakError;
 
-use crate::bridge::config::{CompressorConfig, TimeSeriesStrategy};
 use crate::bridge::format::{ChunkManifestEntry, FileFooter, FILE_FORMAT_VERSION, FILE_MAGIC};
+use crate::config::{TambakConfig, TimeSeriesStrategy};
 
 use crate::frame_pipeline::{
     FramePipeline, PartitioningStrategy, PerBatchRelinearizationStrategy, StandardStreamingStrategy,
@@ -21,37 +21,44 @@ use crate::frame_pipeline::{
 #[derive(Debug)]
 pub struct Compressor<W: Write> {
     writer: W,
-    config: CompressorConfig,
+    config: Arc<TambakConfig>,
     chunk_manifest: Vec<ChunkManifestEntry>,
     bytes_written: u64,
 }
 
 impl<W: Write> Compressor<W> {
-    pub fn new(mut writer: W, config: CompressorConfig) -> Result<Self, tambakError> {
+    pub fn new(mut writer: W, config: TambakConfig) -> Result<Self, tambakError> {
         writer.write_all(FILE_MAGIC)?;
         writer.write_all(&FILE_FORMAT_VERSION.to_le_bytes())?;
         Ok(Self {
             writer,
-            config,
+            config: Arc::new(config),
             chunk_manifest: Vec::new(),
             bytes_written: 6,
         })
     }
 
+    /// Compresses a `RecordBatchReader` stream into the configured output format.
+    ///
+    /// This function acts as a factory, selecting the appropriate `FramePipeline`
+    /// strategy based on the `time_series_strategy` in the config. It then
+    /// delegates the entire compression workflow to that strategy.
     pub fn compress(&mut self, source: &mut dyn RecordBatchReader) -> Result<(), tambakError> {
         let schema = source.schema();
 
         // --- FRAME PIPELINE FACTORY ---
+        // This logic now reads from the unified `self.config`.
         let frame_pipeline: Box<dyn FramePipeline> = match self.config.time_series_strategy {
             TimeSeriesStrategy::None => Box::new(StandardStreamingStrategy),
-            TimeSeriesStrategy::PerBatchRelinearization { .. } => {
+            TimeSeriesStrategy::PerBatchRelinearization => {
                 Box::new(PerBatchRelinearizationStrategy)
             }
             TimeSeriesStrategy::Partitioned { .. } => Box::new(PartitioningStrategy),
         };
 
         // --- DELEGATION TO THE FRAME PIPELINE ---
-        let result = frame_pipeline.execute(source, &self.config)?;
+        // A cheap clone of the Arc is passed down the call stack. This anticipates
+        let result = frame_pipeline.execute(source, Arc::clone(&self.config))?;
 
         // --- UNPACKING & WRITING CHUNKS ---
         for (chunk_bytes, mut chunk_manifest_entry) in result.compressed_chunks_with_manifests {

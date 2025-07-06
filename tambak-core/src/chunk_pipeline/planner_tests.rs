@@ -2,16 +2,19 @@
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     // MODIFIED: Import PlanningContext
     use crate::chunk_pipeline::planner::{plan_pipeline, PlanningContext};
     use crate::chunk_pipeline::{executor, models::Operation};
+    use crate::config::TambakConfig;
     use crate::types::TambakDataType;
     use crate::utils::typed_slice_to_bytes;
 
     fn get_compressed_size(
         original_bytes: &[u8],
         pipeline: &[Operation],
-        physical_type: TambakDataType, // MODIFIED: Use physical_type for execution
+        physical_type: TambakDataType,
     ) -> usize {
         executor::execute_linear_encode_pipeline(original_bytes, physical_type, pipeline)
             .map(|v| v.len())
@@ -20,11 +23,11 @@ mod tests {
 
     fn assert_planner_is_optimal(
         original_bytes: &[u8],
-        context: PlanningContext, // MODIFIED: Accept PlanningContext
+        context: PlanningContext,
         expected_pipeline: Vec<Operation>,
+        config: &Arc<TambakConfig>,
     ) {
-        // MODIFIED: Pass context to planner
-        let planner_plan = plan_pipeline(original_bytes, context.clone()).unwrap();
+        let planner_plan = plan_pipeline(original_bytes, context.clone(), config).unwrap();
 
         let expected_size =
             get_compressed_size(original_bytes, &expected_pipeline, context.physical_dtype);
@@ -51,7 +54,10 @@ mod tests {
             initial_dtype: TambakDataType::Int32,
             physical_dtype: TambakDataType::Int32,
         };
-        let plan = plan_pipeline(&bytes, context).unwrap();
+
+        let config = Arc::new(TambakConfig::default());
+        let plan = plan_pipeline(&bytes, context, &config).unwrap();
+
         assert_eq!(
             plan.pipeline[0],
             Operation::Rle,
@@ -63,7 +69,7 @@ mod tests {
     fn test_planner_chooses_delta_rle_for_constant_deltas() {
         let data: Vec<i32> = (10..1000).collect(); // Creates a stream with a constant delta of 1.
         let bytes = typed_slice_to_bytes(&data);
-        // MODIFIED: Create context
+
         let context = PlanningContext {
             initial_dtype: TambakDataType::Int32,
             physical_dtype: TambakDataType::Int32,
@@ -74,7 +80,9 @@ mod tests {
             Operation::Rle,
             Operation::Zstd { level: 3 },
         ];
-        assert_planner_is_optimal(&bytes, context, expected_best_plan);
+
+        let config = Arc::new(TambakConfig::default());
+        assert_planner_is_optimal(&bytes, context, expected_best_plan, &config);
     }
 
     #[test]
@@ -96,7 +104,8 @@ mod tests {
             Operation::Zstd { level: 3 },
         ];
 
-        assert_planner_is_optimal(&bytes, context, expected_best_plan);
+        let config = Arc::new(TambakConfig::default());
+        assert_planner_is_optimal(&bytes, context, expected_best_plan, &config);
     }
 
     #[test]
@@ -116,7 +125,10 @@ mod tests {
             initial_dtype: TambakDataType::UInt8,
             physical_dtype: TambakDataType::UInt8,
         };
-        let plan = plan_pipeline(&data, context).unwrap();
+
+        let config = Arc::new(TambakConfig::default());
+        let plan = plan_pipeline(&data, context, &config).unwrap();
+
         assert_eq!(
             plan.pipeline.last().unwrap(),
             &Operation::Ans,

@@ -1,6 +1,7 @@
 // In: src/frame_pipeline/strategies.rs
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
 
 use arrow::array::{Array, RecordBatch, RecordBatchReader, UInt32Array};
 use arrow::compute::{concat_batches, take};
@@ -13,7 +14,7 @@ use super::profiler;
 use super::util::create_index_map;
 use super::{FramePipeline, FramePipelineResult};
 use crate::bridge::arrow_impl;
-use crate::bridge::config::{CompressorConfig, TimeSeriesStrategy};
+use crate::config::{TambakConfig, TimeSeriesStrategy};
 use crate::bridge::format::{ChunkManifestEntry, FrameOperation, FramePlan};
 use crate::chunk_pipeline::artifact::CompressedChunk;
 use crate::chunk_pipeline::orchestrator as chunk_orchestrator;
@@ -23,9 +24,10 @@ use crate::error::tambakError;
 fn compress_array_chunk(
     array: &dyn Array,
     col_idx: u32,
+    config: Arc<TambakConfig>,
 ) -> Result<(Vec<u8>, ChunkManifestEntry), tambakError> {
     let input = arrow_impl::arrow_to_pipeline_input(array)?;
-    let compressed_bytes = chunk_orchestrator::compress_chunk(input)?;
+    let compressed_bytes = chunk_orchestrator::compress_chunk(input, config)?;
     let header_info = CompressedChunk::peek_info(&compressed_bytes)?;
     Ok((
         compressed_bytes,
@@ -50,7 +52,7 @@ impl FramePipeline for StandardStreamingStrategy {
     fn execute(
         &self,
         reader: &mut dyn RecordBatchReader,
-        _config: &CompressorConfig,
+        config: Arc<TambakConfig>,
     ) -> Result<FramePipelineResult, tambakError> {
         let mut all_chunks = Vec::new();
         let compressor = StandardColumnCompressor;
@@ -58,13 +60,24 @@ impl FramePipeline for StandardStreamingStrategy {
 
         for batch_result in reader {
             let batch = batch_result?;
-            for col_idx in 0..batch.num_columns() {
-                let result = compressor.compress_column(&batch, col_idx)?;
-                let (chunk_bytes, mut manifest) = (result.compressed_chunk, result.manifest_entry);
-                manifest.batch_id = batch_id_counter;
-                all_chunks.push((chunk_bytes, manifest));
+            
+            let chunk_size = config.chunk_size_rows;
+            let mut offset = 0;
+            while offset < batch.num_rows() {
+                let length = std::cmp::min(chunk_size, batch.num_rows() - offset);
+                let sliced_batch = batch.slice(offset, length);
+
+                for col_idx in 0..sliced_batch.num_columns() {
+                    // Pass the config down to the column compressor
+                    let result = compressor.compress_column(&sliced_batch, col_idx, Arc::clone(&config))?;
+                    let (chunk_bytes, mut manifest) = (result.compressed_chunk, result.manifest_entry);
+                    
+                    manifest.batch_id = batch_id_counter;
+                    all_chunks.push((chunk_bytes, manifest));
+                }
+                batch_id_counter += 1;
+                offset += length;
             }
-            batch_id_counter += 1; // <<< ADDED
         }
         let frame_plan = None; // No special plan needed for standard columns.
         Ok(FramePipelineResult {
@@ -84,7 +97,7 @@ impl FramePipeline for PerBatchRelinearizationStrategy {
     fn execute(
         &self,
         reader: &mut dyn RecordBatchReader,
-        config: &CompressorConfig,
+        config: Arc<TambakConfig>,
     ) -> Result<FramePipelineResult, tambakError> {
         let mut all_chunks = Vec::new();
         let mut frame_ops = Vec::new();
@@ -97,7 +110,7 @@ impl FramePipeline for PerBatchRelinearizationStrategy {
 
         if hints.stream_id_column.is_none() || hints.timestamp_column.is_none() {
             return Err(tambakError::RelinearizationError(
-                "stream_id_column and timestamp_column hints are required".to_string(),
+                "stream_id_column and timestamp_column hints are required for PerBatchRelinearizationStrategy".to_string(),
             ));
         }
 
@@ -106,18 +119,29 @@ impl FramePipeline for PerBatchRelinearizationStrategy {
         for batch_result in reader {
             let batch = batch_result?;
 
-            for col_idx in 0..batch.num_columns() {
-                let result = compressor.compress_column(&batch, col_idx)?;
+            let chunk_size = config.chunk_size_rows;
+            let mut offset = 0;
+            while offset < batch.num_rows() {
+                let length = std::cmp::min(chunk_size, batch.num_rows() - offset);
+                let sliced_batch = batch.slice(offset, length);
 
-                let (chunk_bytes, mut manifest) = (result.compressed_chunk, result.manifest_entry);
-                manifest.batch_id = batch_id_counter;
-                all_chunks.push((chunk_bytes, manifest));
+                for col_idx in 0..sliced_batch.num_columns() {
+                    // Pass the config down to the column compressor
+                    let result = compressor.compress_column(&sliced_batch, col_idx, Arc::clone(&config))?;
 
-                if frame_ops.len() < batch.num_columns() {
-                    frame_ops.push(result.frame_operation);
+                    let (chunk_bytes, mut manifest) = (result.compressed_chunk, result.manifest_entry);
+                    manifest.batch_id = batch_id_counter;
+                    all_chunks.push((chunk_bytes, manifest));
+
+                    // Frame operations are consistent across slices of a batch, so we only
+                    // need to collect them once for the first slice.
+                    if offset == 0 && frame_ops.len() < sliced_batch.num_columns() {
+                        frame_ops.push(result.frame_operation);
+                    }
                 }
+                batch_id_counter += 1;
+                offset += length;
             }
-            batch_id_counter += 1;
         }
 
         frame_ops.sort_by_key(|op| match op {
@@ -172,15 +196,16 @@ impl FramePipeline for PartitioningStrategy {
     fn execute(
         &self,
         reader: &mut dyn RecordBatchReader,
-        config: &CompressorConfig,
+        config: Arc<TambakConfig>,
     ) -> Result<FramePipelineResult, tambakError> {
-        let (partition_key_column, partition_flush_rows) =
+        // correctly uses `partition_flush_rows` instad of `chunk_size_rows`
+        let (key_column, partition_flush_rows) =
             if let TimeSeriesStrategy::Partitioned {
-                partition_key_column,
+                key_column,
                 partition_flush_rows,
             } = &config.time_series_strategy
             {
-                (partition_key_column, *partition_flush_rows)
+                (key_column, *partition_flush_rows)
             } else {
                 return Err(tambakError::InternalError(
                     "PartitioningStrategy called with invalid config".into(),
@@ -188,7 +213,7 @@ impl FramePipeline for PartitioningStrategy {
             };
 
         let schema = reader.schema();
-        let key_col_idx = schema.index_of(partition_key_column)?;
+        let key_col_idx = schema.index_of(key_column)?;
 
         if *schema.field(key_col_idx).data_type() != DataType::Int64 {
             return Err(tambakError::UnsupportedType(
@@ -209,9 +234,7 @@ impl FramePipeline for PartitioningStrategy {
                 if !active_partitions.contains_key(&key)
                     && active_partitions.len() >= MAX_ACTIVE_PARTITIONS
                 {
-                    // Loop until a non-stale partition is popped from the heap and evicted.
                     while let Some((_, key_to_evict)) = eviction_queue.pop() {
-                        // If the key is still in the map, it's a valid eviction candidate.
                         if let Some(mut buffer_to_flush) = active_partitions.remove(&key_to_evict) {
                             flush_partition_buffer(
                                 &mut buffer_to_flush,
@@ -219,11 +242,11 @@ impl FramePipeline for PartitioningStrategy {
                                 &schema,
                                 &mut finished_chunks,
                                 batch_id_counter,
+                                Arc::clone(&config),
                             )?;
                             batch_id_counter += 1;
-                            break; // A slot has been freed, we can stop evicting.
+                            break;
                         }
-                        // Otherwise, the popped key was stale. Continue the loop.
                     }
                 }
 
@@ -247,6 +270,7 @@ impl FramePipeline for PartitioningStrategy {
                         &schema,
                         &mut finished_chunks,
                         batch_id_counter,
+                        Arc::clone(&config),
                     )?;
                     batch_id_counter += 1;
                 }
@@ -261,6 +285,7 @@ impl FramePipeline for PartitioningStrategy {
                     &schema,
                     &mut finished_chunks,
                     batch_id_counter,
+                    Arc::clone(&config),
                 )?;
                 batch_id_counter += 1;
             }
@@ -286,13 +311,14 @@ fn flush_partition_buffer(
     schema: &SchemaRef,
     out_chunks: &mut Vec<(Vec<u8>, ChunkManifestEntry)>,
     batch_id: u64,
+    config: Arc<TambakConfig>,
 ) -> Result<(), tambakError> {
     if buffer.batches.is_empty() {
         return Ok(());
     }
     let full_batch = concat_batches(schema, &buffer.batches)?;
     for i in 0..full_batch.num_columns() {
-        let (bytes, mut manifest) = compress_array_chunk(full_batch.column(i), i as u32)?;
+        let (bytes, mut manifest) = compress_array_chunk(full_batch.column(i), i as u32, Arc::clone(&config))?;
         manifest.batch_id = batch_id;
         manifest.partition_key = Some(key);
         out_chunks.push((bytes, manifest));

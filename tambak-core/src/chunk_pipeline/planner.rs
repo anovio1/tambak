@@ -12,17 +12,19 @@
 //! This decouples the logic of "what is a valid pipeline?" from the heuristic
 //! of "what is the best pipeline for this data?".
 
+use crate::chunk_pipeline::executor;
+use crate::chunk_pipeline::models::{ChunkPlan, Operation};
 use crate::chunk_pipeline::profiler::find_stride_by_autocorrelation;
+use crate::config::{CompressionProfile, TambakConfig};
 use crate::error::tambakError;
 use crate::kernels::zigzag;
-use crate::chunk_pipeline::models::{Operation, ChunkPlan};
-use crate::chunk_pipeline::executor;
 use crate::types::TambakDataType;
 use crate::utils::safe_bytes_to_typed_slice;
 
 use num_traits::{PrimInt, Signed, ToPrimitive, Unsigned, WrappingSub};
 use std::collections::HashSet;
 use std::ops::{BitXor, Shl, Shr};
+use std::sync::Arc;
 use std::time::Instant;
 
 // A const for the plan version, ensuring consistency.
@@ -179,13 +181,14 @@ pub fn generate_candidate_pipelines(
     profile: &DataProfile,
     stride: usize,
     logical_type: LogicalType,
+    config: &Arc<TambakConfig>,
 ) -> Vec<Vec<Operation>> {
     // --- Optimization: Handle special cases first ---
     if profile.is_constant {
         // If all values are the same, RLE is almost certainly the best.
         // We generate only RLE-based pipelines and stop.
         let rle_prefix = vec![vec![Operation::Rle]];
-        return expand_with_entropy_coders(rle_prefix);
+        return expand_with_entropy_coders(vec![vec![Operation::Rle]], config);
     }
 
     // --- Stage 1: Generate the base set of core data transformations. ---
@@ -195,10 +198,16 @@ pub fn generate_candidate_pipelines(
     let terminal_pipelines = expand_with_terminal_transforms(core_pipelines, profile, logical_type);
 
     // --- Stage 3: Append final entropy coders to all generated prefixes. ---
-    let mut final_candidates = expand_with_entropy_coders(terminal_pipelines);
+    let mut final_candidates = expand_with_entropy_coders(terminal_pipelines, config);
 
     // --- Final Touch: Ensure the simplest baselines are always present ---
-    final_candidates.push(vec![Operation::Zstd { level: 3 }]);
+    let zstd_level = match config.profile {
+        CompressionProfile::Fast => 1,
+        CompressionProfile::Balanced => 3,
+        CompressionProfile::HighCompression => 19,
+    };
+    final_candidates.push(vec![Operation::Zstd { level: zstd_level }]);
+
     final_candidates.push(vec![Operation::Ans]);
 
     // Optional: Deduplicate the final list if there's a chance of overlap.
@@ -307,8 +316,16 @@ fn expand_with_terminal_transforms(
 }
 
 // --- STAGE 3: Entropy Coders ---
-fn expand_with_entropy_coders(prefix_pipelines: Vec<Vec<Operation>>) -> Vec<Vec<Operation>> {
-    let entropy_coders = [Operation::Zstd { level: 3 }, Operation::Ans];
+fn expand_with_entropy_coders(
+    prefix_pipelines: Vec<Vec<Operation>>,
+    config: &Arc<TambakConfig>,
+) -> Vec<Vec<Operation>> {
+    let zstd_level = match config.profile {
+        CompressionProfile::Fast => 1,
+        CompressionProfile::Balanced => 3,
+        CompressionProfile::HighCompression => 19,
+    };
+    let entropy_coders = [Operation::Zstd { level: zstd_level }, Operation::Ans];
     let mut final_pipelines = Vec::new();
 
     for prefix in prefix_pipelines {
@@ -374,7 +391,8 @@ fn find_top_n_candidates_by_trial(
         let duration_overall = start_overall.elapsed();
         log::info!(
             "\n--- TOP {} CANDIDATES BY SAMPLE SIZE {:.2?}---",
-            top_n, duration_overall
+            top_n,
+            duration_overall
         );
         for (i, (pipeline, size)) in scored_candidates.iter().take(top_n).enumerate() {
             log::info!(
@@ -492,6 +510,7 @@ fn plan_bytes(
     bytes: &[u8],
     context: &PlanningContext, // Now accepts PlanningContext
     stride: usize,
+    config: &Arc<TambakConfig>,
 ) -> Result<(Vec<Operation>, usize), tambakError> {
     if bytes.is_empty() {
         return Ok((vec![], 0));
@@ -533,7 +552,8 @@ fn plan_bytes(
                 )?;
                 Ok((plan, compressed.len()))
             } else {
-                let candidates = generate_candidate_pipelines(&profile, stride, logical_type);
+                let candidates =
+                    generate_candidate_pipelines(&profile, stride, logical_type, config);
                 let sample_bytes = &bytes[..bytes.len().min(SAMPLE_SIZE_BYTES)];
                 const TOP_N: usize = 3;
                 let top_candidates = find_top_n_candidates_by_trial(
@@ -542,8 +562,12 @@ fn plan_bytes(
                     candidates,
                     TOP_N,
                 )?;
-                let larger_sample_bytes = &bytes[..bytes.len().min(SAMPLE_SIZE_BYTES*8)];
-                find_best_pipeline_by_trial(larger_sample_bytes, context.physical_dtype, top_candidates)
+                let larger_sample_bytes = &bytes[..bytes.len().min(SAMPLE_SIZE_BYTES * 8)];
+                find_best_pipeline_by_trial(
+                    larger_sample_bytes,
+                    context.physical_dtype,
+                    top_candidates,
+                )
             }
         }};
     }
@@ -562,7 +586,8 @@ fn plan_bytes(
                 )?;
                 Ok((plan, compressed.len()))
             } else {
-                let candidates = generate_candidate_pipelines(&profile, stride, logical_type);
+                let candidates =
+                    generate_candidate_pipelines(&profile, stride, logical_type, config);
                 let sample_bytes = &bytes[..bytes.len().min(SAMPLE_SIZE_BYTES)];
                 const TOP_N: usize = 3;
                 let top_candidates = find_top_n_candidates_by_trial(
@@ -599,13 +624,17 @@ fn plan_bytes(
 }
 
 //==================================================================================
-// 4. Top-Level Public API (Refactored to return a `Plan` struct)
+// 4. Top-Level Public API (Returns Plan and accepts config)
 //==================================================================================
 
 /// Analyzes a byte stream and its type to produce an optimal, self-contained `Plan`.
 // In: src/pipeline/planner.rs
 
-pub fn plan_pipeline(bytes: &[u8], context: PlanningContext) -> Result<ChunkPlan, tambakError> {
+pub fn plan_pipeline(
+    bytes: &[u8],
+    context: PlanningContext,
+    config: &Arc<TambakConfig>,
+) -> Result<ChunkPlan, tambakError> {
     // --- THE AUTHORITATIVE FIX: SPECIALIZED BOOLEAN PLANNING ---
     // The main planner is optimized for numeric data. For boolean streams,
     // the best strategy is almost always RLE followed by an entropy coder.
@@ -613,7 +642,14 @@ pub fn plan_pipeline(bytes: &[u8], context: PlanningContext) -> Result<ChunkPlan
     if context.physical_dtype == TambakDataType::Boolean {
         // --- FIX: Add more candidate pipelines for booleans ---
         let rle_only_plan = vec![Operation::Rle];
-        let rle_zstd_plan = vec![Operation::Rle, Operation::Zstd { level: 19 }];
+
+        let zstd_level = match config.profile {
+            CompressionProfile::Fast => 1,
+            CompressionProfile::Balanced => 3,
+            CompressionProfile::HighCompression => 19,
+        };
+        let rle_zstd_plan = vec![Operation::Rle, Operation::Zstd { level: zstd_level }];
+
         let rle_ans_plan = vec![Operation::Rle, Operation::Ans];
 
         // Empirically determine the cost of each candidate.
@@ -657,7 +693,7 @@ pub fn plan_pipeline(bytes: &[u8], context: PlanningContext) -> Result<ChunkPlan
 
     // If the type is not Boolean, proceed with the original, numeric-focused planning logic.
     let stride = find_stride_by_autocorrelation(bytes, context.physical_dtype)?;
-    let (pipeline, _cost) = plan_bytes(bytes, &context.clone(), stride)?;
+    let (pipeline, _cost) = plan_bytes(bytes, &context.clone(), stride, config)?;
 
     Ok(ChunkPlan {
         plan_version: PLAN_VERSION,

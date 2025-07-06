@@ -18,6 +18,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 mod observability; // Make macros available throughout the crate
 
 pub mod bridge;
+pub mod config;
 pub mod kernels;
 
 mod chunk_pipeline;
@@ -32,7 +33,7 @@ mod utils;
 //==================================================================================
 // 2. Python Module Definition
 //==================================================================================
-use ffi::python::{PyCompressor, PyCompressorConfig, PyDecompressor, PyPartitionIterator};
+use ffi::python::{PyCompressor, PyDecompressor, PyPartitionIterator};
 use pyo3::prelude::*;
 
 /// The `tambak_cache` Python module, containing all exposed Rust functions.
@@ -45,7 +46,6 @@ fn tambak_cache(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ffi::decompress_chunk_py, m)?)?;
 
     // --- Add our classes module ---
-    m.add_class::<PyCompressorConfig>()?;
     m.add_class::<PyCompressor>()?;
     m.add_class::<PyDecompressor>()?;
     m.add_class::<PyPartitionIterator>()?;

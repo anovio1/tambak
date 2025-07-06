@@ -41,18 +41,12 @@
 // ====================================================================================
 pub(crate) mod arrow_impl;
 pub(crate) mod compressor;
-pub mod config;
 pub(crate) mod decompressor;
 pub(crate) mod format;
 pub mod stateless_api;
 
-// --- High-Level Stateful API ---
-pub use config::TimeSeriesStrategy;
-
 // --- Low-Level Stateless API (for FFI and testing) ---
 pub use stateless_api::{analyze_chunk, compress_arrow_chunk, decompress_arrow_chunk};
-
-// --- Format Constants and Structs ---
 
 #[cfg(test)]
 mod tests;

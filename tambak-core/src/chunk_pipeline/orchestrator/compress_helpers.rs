@@ -1,16 +1,18 @@
 // tambak-core\src\pipeline\orchestrator\core.rs
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::error::tambakError;
-use crate::kernels;
 use crate::chunk_pipeline::artifact::CompressedChunk;
 use crate::chunk_pipeline::context::PipelineInput;
-use crate::chunk_pipeline::models::{Operation, ChunkPlan};
+use crate::chunk_pipeline::models::{ChunkPlan, Operation};
 use crate::chunk_pipeline::orchestrator::helpers::StrategyResult;
 use crate::chunk_pipeline::planner::PlanningContext;
 use crate::chunk_pipeline::traits::StreamTransform;
 use crate::chunk_pipeline::OperationBehavior;
 use crate::chunk_pipeline::{executor, planner};
+use crate::config::{CompressionProfile, TambakConfig};
+use crate::error::tambakError;
+use crate::kernels;
 use crate::types::TambakDataType;
 
 //==================================================================================
@@ -19,13 +21,22 @@ use crate::types::TambakDataType;
 
 /// Handles the early-exit case when the main data stream is empty.
 /// This typically means the array was either empty or contained only nulls.
-pub fn compress_empty_main_data_stream(input: &PipelineInput) -> Result<Vec<u8>, tambakError> {
+pub fn compress_empty_main_data_stream(
+    input: &PipelineInput,
+    config: &Arc<TambakConfig>,
+) -> Result<Vec<u8>, tambakError> {
     let mut compressed_streams = HashMap::new();
     // The pipeline will only contain the null-handling operation, if any.
     let plan_pipeline = if let Some(null_mask_bytes) = &input.null_mask {
         // Since this is a simple case, we use a fixed, robust plan for the null mask
         // instead of invoking the full planner.
-        let null_mask_plan = vec![Operation::Rle, Operation::Zstd { level: 3 }];
+        let zstd_level = match config.profile {
+            CompressionProfile::Fast => 1,
+            CompressionProfile::Balanced => 3,
+            CompressionProfile::HighCompression => 19,
+        };
+        let null_mask_plan = vec![Operation::Rle, Operation::Zstd { level: zstd_level }];
+
         let compressed_nulls = executor::execute_linear_encode_pipeline(
             null_mask_bytes,
             TambakDataType::Boolean,
@@ -126,6 +137,7 @@ pub fn preprocess_input_data(
 pub fn plan_and_compress_null_stream(
     input: &PipelineInput,
     pipeline_prefix: &mut Vec<Operation>,
+    config: &Arc<TambakConfig>,
 ) -> Result<(Vec<Operation>, HashMap<String, Vec<u8>>), tambakError> {
     let mut compressed_streams = HashMap::new();
 
@@ -134,7 +146,7 @@ pub fn plan_and_compress_null_stream(
             initial_dtype: TambakDataType::Boolean,
             physical_dtype: TambakDataType::Boolean,
         };
-        let null_mask_plan = planner::plan_pipeline(null_mask_bytes, null_context)?;
+        let null_mask_plan = planner::plan_pipeline(null_mask_bytes, null_context, config)?;
 
         // Prepend the ExtractNulls operation to the existing prefix.
         pipeline_prefix.push(Operation::ExtractNulls {
@@ -168,6 +180,7 @@ pub fn plan_main_data_pipeline(
     processed_data: &[u8],
     input: &PipelineInput,
     current_physical_type: TambakDataType,
+    config: &Arc<TambakConfig>,
 ) -> Result<Vec<Operation>, tambakError> {
     let context = PlanningContext {
         initial_dtype: input.initial_dtype,
@@ -191,7 +204,7 @@ pub fn plan_main_data_pipeline(
         // --- This is the integer-specific path with sparse vs. dense comparison ---
 
         // First, plan and cost the DENSE strategy. This is our baseline.
-        let dense_plan = planner::plan_pipeline(processed_data, context.clone())?;
+        let dense_plan = planner::plan_pipeline(processed_data, context.clone(), config)?;
         let dense_cost = executor::execute_linear_encode_pipeline(
             processed_data,
             context.physical_dtype,
@@ -204,7 +217,8 @@ pub fn plan_main_data_pipeline(
         };
 
         // Now, try to plan and cost a SPARSE strategy.
-        let sparse_strategy_result = evaluate_sparsity_strategy_for_type(processed_data, &context)?;
+        let sparse_strategy_result =
+            evaluate_sparsity_strategy_for_type(processed_data, &context, config)?;
 
         // Compare costs and return the winning pipeline.
         if let Some(sparse_strategy) = sparse_strategy_result {
@@ -218,7 +232,7 @@ pub fn plan_main_data_pipeline(
         }
     } else {
         // --- This is the fallback path for non-integer types ---
-        let dense_plan = planner::plan_pipeline(processed_data, context)?;
+        let dense_plan = planner::plan_pipeline(processed_data, context, config)?;
         Ok(dense_plan.pipeline)
     }
 }
@@ -227,41 +241,42 @@ pub fn plan_main_data_pipeline(
 fn evaluate_sparsity_strategy_for_type(
     data_bytes: &[u8],
     context: &PlanningContext,
+    config: &Arc<TambakConfig>, 
 ) -> Result<Option<StrategyResult>, tambakError> {
     use TambakDataType::*;
     // This function remains the same.
     match context.physical_dtype {
         Int8 => {
             let s: &[i8] = bytemuck::try_cast_slice(data_bytes)?;
-            super::helpers::evaluate_sparsity_strategy(s, context)
+            super::helpers::evaluate_sparsity_strategy(s, context, config)
         }
         Int16 => {
             let s: &[i16] = bytemuck::try_cast_slice(data_bytes)?;
-            super::helpers::evaluate_sparsity_strategy(s, context)
+            super::helpers::evaluate_sparsity_strategy(s, context, config)
         }
         Int32 => {
             let s: &[i32] = bytemuck::try_cast_slice(data_bytes)?;
-            super::helpers::evaluate_sparsity_strategy(s, context)
+            super::helpers::evaluate_sparsity_strategy(s, context, config)
         }
         Int64 => {
             let s: &[i64] = bytemuck::try_cast_slice(data_bytes)?;
-            super::helpers::evaluate_sparsity_strategy(s, context)
+            super::helpers::evaluate_sparsity_strategy(s, context, config)
         }
         UInt8 => {
             let s: &[u8] = bytemuck::try_cast_slice(data_bytes)?;
-            super::helpers::evaluate_sparsity_strategy(s, context)
+            super::helpers::evaluate_sparsity_strategy(s, context, config)
         }
         UInt16 => {
             let s: &[u16] = bytemuck::try_cast_slice(data_bytes)?;
-            super::helpers::evaluate_sparsity_strategy(s, context)
+            super::helpers::evaluate_sparsity_strategy(s, context, config)
         }
         UInt32 => {
             let s: &[u32] = bytemuck::try_cast_slice(data_bytes)?;
-            super::helpers::evaluate_sparsity_strategy(s, context)
+            super::helpers::evaluate_sparsity_strategy(s, context, config)
         }
         UInt64 => {
             let s: &[u64] = bytemuck::try_cast_slice(data_bytes)?;
-            super::helpers::evaluate_sparsity_strategy(s, context)
+            super::helpers::evaluate_sparsity_strategy(s, context, config)
         }
         _ => Ok(None),
     }

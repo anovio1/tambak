@@ -1,7 +1,7 @@
 # This is the manifest for the Rust core of the tambak library.
 [package]
 name = "tambak-core"
-version = "4.6.2"
+version = "4.6.3"
 edition = "2021"
 authors = ["anovio1 <anastace.novio@gmail.com>"]
 description = "Core Rust library for the tambak high-performance compression protocol."

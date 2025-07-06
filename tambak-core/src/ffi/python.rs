@@ -8,9 +8,9 @@ use pyo3::types::{PyBytes, PyDict, PyTuple};
 use std::fs::OpenOptions;
 use std::sync::Once;
 
-use crate::bridge::{
-    self, compressor::Compressor, config::CompressorConfig, decompressor::Decompressor,
-    TimeSeriesStrategy,
+use crate::bridge::{compressor::Compressor, decompressor::Decompressor};
+use crate::config::{
+    self, CompressionFormat, CompressionProfile, TambakConfig, TimeSeriesStrategy,
 };
 use crate::ffi::ioadapters::{PyRecordBatchReader, PythonFileReader, PythonFileWriter};
 use crate::utils;
@@ -19,55 +19,6 @@ use crate::utils;
 // I. Stateful File-Level API (The recommended approach)
 //==================================================================================
 
-#[pyclass(name = "CompressorConfig", module = "tambak_cache")]
-#[derive(Default, Clone)]
-pub struct PyCompressorConfig {
-    pub time_series_strategy: TimeSeriesStrategy,
-    pub stream_id_column: Option<String>,
-    pub timestamp_column: Option<String>,
-}
-
-#[pymethods]
-impl PyCompressorConfig {
-    #[new]
-    #[pyo3(signature = (*, time_series_strategy="none", stream_id_column=None, timestamp_column=None, partition_key_column=None, partition_flush_rows=100_000))]
-    fn new(
-        time_series_strategy: &str,
-        stream_id_column: Option<String>,
-        timestamp_column: Option<String>,
-        partition_key_column: Option<String>,
-        partition_flush_rows: usize,
-    ) -> PyResult<Self> {
-        let strategy = match time_series_strategy.to_lowercase().as_str() {
-            "none" => TimeSeriesStrategy::None,
-            "per_batch_relinearize" => TimeSeriesStrategy::PerBatchRelinearization,
-            "partitioned" => {
-                // For 'partitioned', we MUST have the key column.
-                if let Some(key_col) = partition_key_column {
-                    TimeSeriesStrategy::Partitioned {
-                        partition_key_column: key_col,
-                        partition_flush_rows,
-                    }
-                } else {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        "time_series_strategy 'partitioned' requires 'partition_key_column' to be set.",
-                    ));
-                }
-            }
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "Invalid time_series_strategy. Must be one of 'none', 'per_batch_relinearize', or 'partitioned'.",
-                ))
-            }
-        };
-        Ok(Self {
-            time_series_strategy: strategy,
-            stream_id_column,
-            timestamp_column,
-        })
-    }
-}
-
 #[pyclass(name = "Compressor", module = "tambak_cache")]
 pub struct PyCompressor {
     inner: Compressor<PythonFileWriter>,
@@ -75,16 +26,100 @@ pub struct PyCompressor {
 
 #[pymethods]
 impl PyCompressor {
+    /// Creates a new Compressor instance.
+    ///
+    /// This constructor is the main entry point from Python. It takes various
+    /// configuration options as keyword arguments, constructs the unified
+    /// `TambakConfig` struct, and initializes the Rust compression engine.
     #[new]
-    fn new(py_writer: PyObject, config: &PyCompressorConfig) -> PyResult<Self> {
+    #[pyo3(signature = (
+        py_writer,
+        format = "columnar_file",
+        profile = "balanced",
+        include_footer = true,
+        enable_stats_collection = false,
+        time_series_strategy = "none",
+        chunk_size_rows = 100_000,
+        stream_id_column = None,
+        timestamp_column = None,
+        partition_key_column = None,
+        partition_flush_rows = 100_000
+    ))]
+    fn new(
+        py_writer: PyObject,
+        format: &str,
+        profile: &str,
+        include_footer: bool,
+        enable_stats_collection: bool,
+        time_series_strategy: &str,
+        chunk_size_rows: usize,
+        stream_id_column: Option<String>,
+        timestamp_column: Option<String>,
+        partition_key_column: Option<String>,
+        partition_flush_rows: usize,
+    ) -> PyResult<Self> {
         let writer = PythonFileWriter { obj: py_writer };
-        let rust_config = CompressorConfig {
-            time_series_strategy: config.time_series_strategy.clone(), // FIX: Clone the strategy
-            stream_id_column_name: config.stream_id_column.clone(),
-            timestamp_column_name: config.timestamp_column.clone(),
+
+        // 1. Parse string arguments into their corresponding Rust enums.
+        let parsed_format = match format.to_lowercase().as_str() {
+            "columnar_file" => CompressionFormat::ColumnarFile,
+            "interleaved_stream" => CompressionFormat::InterleavedStream,
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Invalid format. Must be 'columnar_file' or 'interleaved_stream'.",
+                ))
+            }
+        };
+
+        let parsed_profile = match profile.to_lowercase().as_str() {
+            "fast" => CompressionProfile::Fast,
+            "balanced" => CompressionProfile::Balanced,
+            "high_compression" => CompressionProfile::HighCompression,
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Invalid profile. Must be 'fast', 'balanced', or 'high_compression'.",
+                ))
+            }
+        };
+
+        // 2. Build the TimeSeriesStrategy enum variant based on the user's choice.
+        // This makes the invalid state of providing partitioning args with a non-partitioned
+        // strategy difficult to express, which is good design.
+        let parsed_ts_strategy = match time_series_strategy.to_lowercase().as_str() {
+            "none" => TimeSeriesStrategy::None,
+            "per_batch_relinearize" => TimeSeriesStrategy::PerBatchRelinearization,
+            "partitioned" => {
+                let key_column = partition_key_column.ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "The 'partitioned' strategy requires the 'partition_key_column' argument.",
+                    )
+                })?;
+                TimeSeriesStrategy::Partitioned {
+                    key_column,
+                    partition_flush_rows,
+                }
+            }
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Invalid time_series_strategy. Must be 'none', 'per_batch_relinearize', or 'partitioned'.",
+                ))
+            }
+        };
+
+        // 3. Assemble the final, unified TambakConfig struct.
+        let rust_config = TambakConfig {
+            format: parsed_format,
+            profile: parsed_profile,
+            include_footer,
+            enable_stats_collection,
+            time_series_strategy: parsed_ts_strategy,
+            chunk_size_rows,
+            stream_id_column_name: stream_id_column,
+            timestamp_column_name: timestamp_column,
             ..Default::default()
         };
 
+        // 4. Pass the config to the bridge's Compressor, which will wrap it in an Arc.
         let compressor = Compressor::new(writer, rust_config)?;
         Ok(Self { inner: compressor })
     }
@@ -120,7 +155,6 @@ impl PyDecompressor {
     /// This method can only be called once and consumes the Decompressor.
     pub fn batched(&mut self) -> PyResult<PyArrowType<Box<dyn RecordBatchReader + Send>>> {
         if let Some(decompressor) = self.inner.take() {
-            // FIX: The inner `batched()` now returns a Result.
             let rust_reader = decompressor.batched()?;
             Ok(PyArrowType(Box::new(rust_reader)))
         } else {
@@ -151,6 +185,7 @@ impl PyDecompressor {
 /// A Python-facing iterator that yields (key, PartitionReader) tuples for each partition.
 #[pyclass(name = "PartitionIterator", module = "tambak_cache")]
 pub struct PyPartitionIterator {
+    // This now correctly references the decompressor module directly
     inner: crate::bridge::decompressor::PartitionIterator<PythonFileReader>,
 }
 
@@ -162,11 +197,9 @@ impl PyPartitionIterator {
 
     fn __next__(&mut self, py: Python) -> PyResult<Option<PyObject>> {
         if let Some((key, rust_partition_reader)) = self.inner.next() {
-            // Your new design: create a dedicated wrapper for the reader. This is excellent.
             let py_partition_reader = PyPartitionReader {
                 inner: Box::new(rust_partition_reader),
             };
-            // Correctly build the Python tuple.
             let py_tuple = PyTuple::new(py, &[key.into_py(py), py_partition_reader.into_py(py)]);
             Ok(Some(py_tuple.into()))
         } else {
@@ -189,21 +222,16 @@ impl PyPartitionReader {
 
     /// Returns the next RecordBatch from this partition, or raises StopIteration.
     fn __next__(&mut self, py: Python) -> PyResult<Option<PyObject>> {
-        // This logic is perfectly correct. It iterates the inner Rust reader...
         if let Some(batch_result) = self.inner.next() {
-            // ...handles any potential ArrowError from Rust...
             let batch = batch_result.map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Error reading next batch from partition: {}",
                     e
                 ))
             })?;
-            // ...and converts the successful RecordBatch to a PyArrow object.
-            // Assuming `utils::record_batch_to_pyarrow` exists and is correct.
             let py_batch = batch.to_pyarrow(py)?;
             Ok(Some(py_batch))
         } else {
-            // Signals the end of the iteration.
             Ok(None)
         }
     }
@@ -217,9 +245,10 @@ impl PyPartitionReader {
 pub fn compress_py<'py>(py: Python<'py>, array_py: &PyAny) -> PyResult<&'py PyBytes> {
     let array_data = ArrayData::from_pyarrow(array_py)?;
     let rust_array = make_array(array_data.into());
-    // FIX: Use `?` for automatic error conversion.
+    // NOTE: This stateless API does not take a config. It uses default planning.
+    // In the future, we could add an optional config dict here.
     let compressed_vec =
-        py.allow_threads(move || bridge::compress_arrow_chunk(rust_array.as_ref()))?;
+        py.allow_threads(move || crate::bridge::compress_arrow_chunk(rust_array.as_ref()))?;
     Ok(PyBytes::new(py, &compressed_vec))
 }
 
@@ -229,14 +258,9 @@ pub fn compress_analyze_py(py: Python, array_py: &PyAny) -> PyResult<PyObject> {
     let array_data = ArrayData::from_pyarrow(array_py)?;
     let rust_array = make_array(array_data.into());
 
-    // FIX: Use `?` for automatic error conversion.
-    // First, compress the chunk using the stateless API
     let artifact_bytes =
-        py.allow_threads(move || bridge::compress_arrow_chunk(rust_array.as_ref()))?;
-
-    // Now, analyze the resulting bytes
-    // FIX: Use `?` for automatic error conversion.
-    let stats = bridge::analyze_chunk(&artifact_bytes)?;
+        py.allow_threads(move || crate::bridge::compress_arrow_chunk(rust_array.as_ref()))?;
+    let stats = crate::bridge::analyze_chunk(&artifact_bytes)?;
 
     let result_dict = PyDict::new(py);
     result_dict.set_item("artifact", PyBytes::new(py, &artifact_bytes))?;
@@ -256,7 +280,7 @@ pub fn compress_chunk_py<'py>(py: Python<'py>, array_py: &PyAny) -> PyResult<&'p
     let array_data = ArrayData::from_pyarrow(array_py)?;
     let rust_array = make_array(array_data.into());
     let compressed_vec =
-        py.allow_threads(move || bridge::compress_arrow_chunk(rust_array.as_ref()))?;
+        py.allow_threads(move || crate::bridge::compress_arrow_chunk(rust_array.as_ref()))?;
     Ok(PyBytes::new(py, &compressed_vec))
 }
 
@@ -264,7 +288,8 @@ pub fn compress_chunk_py<'py>(py: Python<'py>, array_py: &PyAny) -> PyResult<&'p
 #[pyfunction]
 #[pyo3(name = "decompress_chunk")]
 pub fn decompress_chunk_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
-    let reconstructed_array = py.allow_threads(move || bridge::decompress_arrow_chunk(bytes))?;
+    let reconstructed_array =
+        py.allow_threads(move || crate::bridge::decompress_arrow_chunk(bytes))?;
     utils::arrow_array_to_py(py, reconstructed_array)
 }
 
@@ -272,7 +297,7 @@ pub fn decompress_chunk_py(py: Python, bytes: &[u8]) -> PyResult<PyObject> {
 #[pyfunction]
 #[pyo3(name = "analyze_chunk")]
 pub fn analyze_chunk_py(py: Python, chunk_bytes: &[u8]) -> PyResult<PyObject> {
-    let stats = py.allow_threads(move || bridge::analyze_chunk(chunk_bytes))?;
+    let stats = py.allow_threads(move || crate::bridge::analyze_chunk(chunk_bytes))?;
 
     let result_dict = PyDict::new(py);
     result_dict.set_item("header_size", stats.header_size)?;
@@ -309,8 +334,8 @@ pub fn enable_verbose_logging_py(log_file: Option<String>) {
 
         if let Some(filename) = log_file {
             let file = OpenOptions::new()
-                .append(true) // open for append
-                .create(true) // create if it doesn't exist
+                .append(true)
+                .create(true)
                 .open(filename)
                 .expect("Could not open log file in append mode");
             builder.target(env_logger::Target::Pipe(Box::new(file)));

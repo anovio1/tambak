@@ -11,10 +11,13 @@
 //! The result of this process includes the `FrameOperation` that describes the
 //! transformation, which is used to build the file's `FramePlan`.
 
+use crate::config::TambakConfig;
+use std::sync::Arc;
+
 use super::profiler::{self, DataStructure};
 use super::relinearize;
 use crate::bridge::arrow_impl;
-use crate::bridge::format::{ChunkManifestEntry, FrameOperation}; // Use the authoritative FrameOperation
+use crate::bridge::format::{ChunkManifestEntry, FrameOperation};
 use crate::chunk_pipeline::artifact::CompressedChunk;
 use crate::chunk_pipeline::orchestrator as chunk_orchestrator;
 use crate::error::tambakError;
@@ -40,6 +43,7 @@ pub trait ColumnCompressor {
         &self,
         batch: &RecordBatch,
         col_idx: usize,
+        config: Arc<TambakConfig>,
     ) -> Result<ColumnCompressionResult, tambakError>;
 }
 
@@ -55,14 +59,16 @@ impl ColumnCompressor for StandardColumnCompressor {
         &self,
         batch: &RecordBatch,
         col_idx: usize,
+        config: Arc<TambakConfig>,
     ) -> Result<ColumnCompressionResult, tambakError> {
         let column_array = batch.column(col_idx);
 
         // 1. Marshall Arrow Array to pure PipelineInput for the chunk_pipeline.
         let input = arrow_impl::arrow_to_pipeline_input(column_array.as_ref())?;
 
-        // 2. Delegate compression to the pure chunk_pipeline orchestrator.
-        let compressed_chunk = chunk_orchestrator::compress_chunk(input)?;
+        // 2. Delegate compression to the pure chunk_pipeline orchestrator,
+        //    passing the configuration down.
+        let compressed_chunk = chunk_orchestrator::compress_chunk(input, config)?;
         let header_info = CompressedChunk::peek_info(&compressed_chunk)?;
 
         // 3. Build the result.
@@ -76,7 +82,6 @@ impl ColumnCompressor for StandardColumnCompressor {
                 num_rows: header_info.total_rows,
                 partition_key: None,
             },
-            // The FrameOperation for this is simple: it's a standard column.
             frame_operation: FrameOperation::StandardColumn {
                 logical_col_idx: col_idx as u32,
             },
@@ -88,10 +93,7 @@ impl ColumnCompressor for StandardColumnCompressor {
 /// A decorator that wraps another `ColumnCompressor` and adds the ability
 /// to perform per-batch re-linearization on candidate columns.
 pub struct RelinearizationDecorator<'a> {
-    /// The `ColumnCompressor` (e.g., `StandardColumnCompressor`) to delegate to if
-    /// re-linearization is not applicable.
     wrapped_compressor: Box<dyn ColumnCompressor>,
-    /// Frame-level hints required to identify key/timestamp columns.
     hints: &'a profiler::PlannerHints,
 }
 
@@ -109,6 +111,7 @@ impl<'a> ColumnCompressor for RelinearizationDecorator<'a> {
         &self,
         batch: &RecordBatch,
         col_idx: usize,
+        config: Arc<TambakConfig>, // ADDED: Accept the config
     ) -> Result<ColumnCompressionResult, tambakError> {
         // --- Decision Logic: Should we re-linearize this column? ---
 
@@ -127,7 +130,10 @@ impl<'a> ColumnCompressor for RelinearizationDecorator<'a> {
         if let (Some(key_col_idx), Some(ts_col_idx)) = (key_col_idx_opt, ts_col_idx_opt) {
             // 2. Don't re-linearize the key or timestamp columns themselves.
             if col_idx == key_col_idx || col_idx == ts_col_idx {
-                return self.wrapped_compressor.compress_column(batch, col_idx);
+                // Delegate to wrapped compressor, passing config along.
+                return self
+                    .wrapped_compressor
+                    .compress_column(batch, col_idx, config);
             }
 
             // 3. Profile the column to see if it's a candidate for multiplexing.
@@ -140,9 +146,9 @@ impl<'a> ColumnCompressor for RelinearizationDecorator<'a> {
                     batch.column(ts_col_idx),
                 )?;
 
-                // Compress the *re-linearized* data using the chunk_pipeline.
+                // Compress the *re-linearized* data, passing the config down.
                 let input = arrow_impl::arrow_to_pipeline_input(re_linearized_array.as_ref())?;
-                let compressed_chunk = chunk_orchestrator::compress_chunk(input)?;
+                let compressed_chunk = chunk_orchestrator::compress_chunk(input, config)?;
                 let header_info = CompressedChunk::peek_info(&compressed_chunk)?;
 
                 return Ok(ColumnCompressionResult {
@@ -150,12 +156,12 @@ impl<'a> ColumnCompressor for RelinearizationDecorator<'a> {
                     manifest_entry: ChunkManifestEntry {
                         batch_id: 0,
                         column_idx: col_idx as u32,
-                        offset_in_file: 0,  // Placeholder
-                        compressed_size: 0, // Placeholder
+                        offset_in_file: 0,
+                        compressed_size: 0,
                         num_rows: header_info.total_rows,
                         partition_key: None,
                     },
-                    // The FrameOperation clearly states what was done.
+                    // The FrameOperation states what was done.
                     frame_operation: FrameOperation::PerBatchRelinearizedColumn {
                         logical_value_idx: col_idx as u32,
                         key_col_idx: key_col_idx as u32,
@@ -166,6 +172,7 @@ impl<'a> ColumnCompressor for RelinearizationDecorator<'a> {
         }
 
         // --- Delegation: If any check fails, delegate to the wrapped compressor. ---
-        self.wrapped_compressor.compress_column(batch, col_idx)
+        self.wrapped_compressor
+            .compress_column(batch, col_idx, config)
     }
 }

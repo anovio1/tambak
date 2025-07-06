@@ -1,10 +1,12 @@
 use std::any::TypeId;
+use std::sync::Arc;
 
 use crate::bridge;
 use crate::chunk_pipeline::artifact::CompressedChunk;
 use crate::chunk_pipeline::context::{PipelineInput, PipelineOutput};
-use crate::chunk_pipeline::orchestrator::{compress_chunk, decompress_chunk};
 use crate::chunk_pipeline::models::{ChunkPlan, Operation};
+use crate::chunk_pipeline::orchestrator::{compress_chunk, decompress_chunk};
+use crate::config::TambakConfig;
 use crate::types::TambakDataType;
 
 // We also need to bring in any external test dependencies.
@@ -16,10 +18,7 @@ use bytemuck::{cast_slice, from_bytes, Pod};
 
 // Test Helpers
 /// Test helper to simulate the bridge's marshalling from Arrow-like data to PipelineInput.
-fn create_pipeline_input_from_options<T>(
-    data: &[Option<T>],
-    dtype: TambakDataType,
-) -> PipelineInput
+fn create_pipeline_input_from_options<T>(data: &[Option<T>], dtype: TambakDataType) -> PipelineInput
 where
     T: Pod + Copy,
 {
@@ -187,7 +186,8 @@ where
         crate::bridge::arrow_impl::arrow_to_pipeline_input(original_array).unwrap();
 
     // 2. Compress using the new v2 compression function
-    let compressed_bytes = compress_chunk(pipeline_input).expect("v2 Compression failed");
+    let config = Arc::new(TambakConfig::default());
+    let compressed_bytes = compress_chunk(pipeline_input, config).expect("v2 Compression failed");
 
     // 3. Decompress using the new v2 decompression function we are building
     let pipeline_output = decompress_chunk(&compressed_bytes).expect("v2 Decompression failed");
@@ -435,8 +435,9 @@ fn test_sparsity_strategy_is_triggered_and_correct() {
     let pipeline_input = create_pipeline_input_from_options(&data, TambakDataType::Int32);
 
     // --- 3. COMPRESS: Call the pure orchestrator function ---
+    let config = Arc::new(TambakConfig::default());
     let compressed_artifact_bytes =
-        compress_chunk(pipeline_input).expect("Sparsity compression failed");
+        compress_chunk(pipeline_input, config).expect("Sparsity compression failed");
 
     // --- 4. VERIFY PLAN: Check that the planner made the correct choice ---
     let artifact =
@@ -470,7 +471,8 @@ fn test_dense_strategy_is_correctly_chosen() {
     let pipeline_input = create_pipeline_input_from_options(&data, TambakDataType::Int64);
 
     // --- 3. COMPRESS: Call the pure orchestrator ---
-    let compressed_artifact_bytes = compress_chunk(pipeline_input).unwrap();
+    let config = Arc::new(TambakConfig::default());
+    let compressed_artifact_bytes = compress_chunk(pipeline_input, config).unwrap();
 
     // --- 4. VERIFY PLAN: Check that the planner made the correct choice ---
     let artifact = CompressedChunk::from_bytes(&compressed_artifact_bytes).unwrap();

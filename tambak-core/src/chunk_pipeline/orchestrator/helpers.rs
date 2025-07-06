@@ -3,13 +3,15 @@ use arrow::datatypes::*;
 use bytemuck::Pod;
 use num_traits::{PrimInt, Zero};
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::error::tambakError;
 use crate::chunk_pipeline::models::Operation;
 use crate::chunk_pipeline::planner::PlanningContext;
 use crate::chunk_pipeline::traits::StreamTransform;
 use crate::chunk_pipeline::OperationBehavior;
 use crate::chunk_pipeline::{executor, planner};
+use crate::config::TambakConfig;
+use crate::error::tambakError;
 use crate::types::TambakDataType;
 use crate::utils::typed_slice_to_bytes;
 
@@ -52,6 +54,7 @@ pub fn decompress_meta_stream(
 pub fn evaluate_sparsity_strategy<T: Pod + PrimInt + Zero>(
     data: &[T],
     context: &PlanningContext,
+    config: &Arc<TambakConfig>,
 ) -> Result<Option<StrategyResult>, tambakError> {
     const SPARSITY_THRESHOLD_RATIO: f32 = 0.4;
     let zero_count = data.iter().filter(|&&v| v.is_zero()).count();
@@ -65,7 +68,7 @@ pub fn evaluate_sparsity_strategy<T: Pod + PrimInt + Zero>(
     }
 
     let non_zero_bytes = typed_slice_to_bytes(&non_zero_values);
-    let values_plan = planner::plan_pipeline(&non_zero_bytes, context.clone())?;
+    let values_plan = planner::plan_pipeline(&non_zero_bytes, context.clone(), config)?;
     let values_cost = executor::execute_linear_encode_pipeline(
         &non_zero_bytes,
         context.physical_dtype,
@@ -88,7 +91,7 @@ pub fn evaluate_sparsity_strategy<T: Pod + PrimInt + Zero>(
     };
 
     // 2. Recursively call the planner to get the best pipeline for the mask.
-    let mask_plan = planner::plan_pipeline(&mask_bytes, mask_context)?;
+    let mask_plan = planner::plan_pipeline(&mask_bytes, mask_context, config)?;
 
     // 3. Empirically find its cost by executing that optimal plan.
     let mask_cost = executor::execute_linear_encode_pipeline(
