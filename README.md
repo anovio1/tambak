@@ -121,10 +121,21 @@ assert all_partitions['B'].equals(data.filter(pa.compute.field('device_id') == '
 
 ## Roadmap
 
+-   [ ] Feat: User Config evolution and passed down from Bridge to Chunk Pipeline
+-   [ ] Refactor of the Chunk Pipeline: OPE refactor
 -   [ ] Performance optimizations for core kernels.
 -   [ ] Implementation of tunable lossy compression strategies for ML workloads.
 -   [ ] Expansion of the `FramePipeline` strategy library (e.g., global sort).
 -   [ ] Official release on Crates.io and PyPI.
+
+## Chunk Pipeline Roadmap
+
+| Role | **Current Phase** | **Target Phase (Our Work)** | **Next Evolutionary Phase (Future)** | Additional Considerations |
+| :--- | :--- | :--- | :--- | :--- |
+| `Compressor` | Strategic Frame Assembly | (Stable for now) | Inter-Chunk Planning | |
+| `Orchestrator` | Pragmatic Hybrid | **Pure Coordinator** | Parallel Task Dispatcher | Adaptive/Speculative & Distributed Execution Coordinator |
+| `Planner` | Fixed Candidate Set | **DAG Builder / Synthesizer** | ML-Driven / Cost-Aware | |
+| `Executor` | Linear Runner | **DAG Traversal Engine** | JIT-Compiling / Vectorized | |
 
 ## Contributing
 
