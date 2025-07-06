@@ -41,16 +41,18 @@ classifiers = [
     "Topic :: System :: Archiving :: Compression",
 ]
 
+
 #==================================================================================
 # 3. Maturin Build Configuration
 #==================================================================================
 [tool.maturin]
-# This feature flag is essential for PyO3 to correctly build the extension module.
+# This feature flag is essential for PyO3 to correctly build the extension module.[tool.maturin]
+manifest-path = "tambak-core/Cargo.toml"
 features = ["pyo3/extension-module"]
-
 # If we had any pure Python wrapper code, we would specify its location here.
 # It's good practice to include this even if the directory is currently empty.
 python-source = "python"
+
 
 # The name of the Rust crate inside the `src/` directory that maturin should build.
 # This must match the `[package].name` in `Cargo.toml`.
