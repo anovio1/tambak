@@ -542,7 +542,8 @@ fn plan_bytes(
                     candidates,
                     TOP_N,
                 )?;
-                find_best_pipeline_by_trial(bytes, context.physical_dtype, top_candidates)
+                let larger_sample_bytes = &bytes[..bytes.len().min(SAMPLE_SIZE_BYTES*8)];
+                find_best_pipeline_by_trial(larger_sample_bytes, context.physical_dtype, top_candidates)
             }
         }};
     }
