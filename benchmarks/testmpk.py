@@ -349,72 +349,61 @@ def main(aspect_name):
     tambak_strategy_sizes = {}
 
     for strategy_name in strategies_to_test:
-        logger.info(f"  -> Testing tambak strategy: '{strategy_name}'...")
+        logger.info(f"  -> Testing stateful tambak strategy: '{strategy_name}'...")
         phx_output_path = pathlib.Path(f"./{aspect_name}_{strategy_name}.phx")
 
-        # 1. Create the correct config for the current strategy
-        config = None
+        # 1. Build a dictionary of keyword arguments for the Compressor.
+        # This replaces the old `CompressorConfig` object.
+        compressor_kwargs = {}
+
         if strategy_name == "partitioned":
             key = "unit_id" if "unit_id" in arrow_table.column_names else None
             if not key:
-                logger.warning(
-                    f"     -> Skipping 'partitioned': 'unit_id' column missing."
-                )
+                logger.warning("     -> Skipping 'partitioned': 'unit_id' column missing.")
                 tambak_strategy_sizes[strategy_name] = -1
                 continue
-            config = tambak_cache.CompressorConfig(
-                time_series_strategy="partitioned", partition_key_column=key
-            )
+            
+            compressor_kwargs["time_series_strategy"] = "partitioned"
+            compressor_kwargs["partition_key_column"] = key
+            # We can also configure other parameters like flush rows now.
+            compressor_kwargs["partition_flush_rows"] = 50_000 
+
         elif strategy_name == "per_batch_relinearize":
+            # This logic for finding the right column names is preserved.
             key = "unit_id" if "unit_id" in arrow_table.column_names else None
             ts = "frame" if "frame" in arrow_table.column_names else None
             if aspect_name == "damage_log":
-                key = (
-                    "victim_unit_id"
-                    if "victim_unit_id" in arrow_table.column_names
-                    else None
-                )
-            if aspect_name == "damage_log":
-                key = "unitId" if "unitId" in arrow_table.column_names else None
+                key = "victim_unit_id" if "victim_unit_id" in arrow_table.column_names else None
             if aspect_name == "construction_log":
-                key = (
-                    "builder_unit_id"
-                    if "builder_unit_id" in arrow_table.column_names
-                    else None
-                )
+                key = "builder_unit_id" if "builder_unit_id" in arrow_table.column_names else None
+                
             if not key or not ts:
-                logger.warning(
-                    f"     -> Skipping 'per_batch_relinearize': 'unit_id' or 'frame' missing."
-                )
+                logger.warning(f"     -> Skipping 'per_batch_relinearize': 'unit_id' or 'frame' missing.")
                 tambak_strategy_sizes[strategy_name] = -1
                 continue
-            config = tambak_cache.CompressorConfig(
-                time_series_strategy="per_batch_relinearize",
-                stream_id_column=key,
-                timestamp_column=ts,
-            )
-        elif strategy_name == "none":
-            config = tambak_cache.CompressorConfig(time_series_strategy="none")
 
-        # 2. Run the stateful compressor to generate the file
+            compressor_kwargs["time_series_strategy"] = "per_batch_relinearize"
+            compressor_kwargs["stream_id_column"] = key
+            compressor_kwargs["timestamp_column"] = ts
+            
+        elif strategy_name == "none":
+            # For the default "none" strategy, we don't need to add any special kwargs.
+            # The default values in Rust will be used.
+            compressor_kwargs["time_series_strategy"] = "none"
+
+        # 2. Run the stateful compressor with the new API.
         try:
             with open(phx_output_path, "wb") as f:
-                compressor = tambak_cache.Compressor(f, config)
-                reader = pa.RecordBatchReader.from_batches(
-                    arrow_table.schema, arrow_table.to_batches()
-                )
+                # The `**` operator unpacks our dictionary into keyword arguments.
+                compressor = tambak_cache.Compressor(f, **compressor_kwargs)
+                reader = pa.RecordBatchReader.from_batches(arrow_table.schema, arrow_table.to_batches())
                 compressor.compress(reader)
 
-            # 3. Record the final on-disk size
+            # 3. Record the final on-disk size.
             tambak_strategy_sizes[strategy_name] = phx_output_path.stat().st_size
-            logger.info(
-                f"     -> Generated '{phx_output_path.name}': {tambak_strategy_sizes[strategy_name]:,} bytes"
-            )
+            logger.info(f"     -> Generated '{phx_output_path.name}': {tambak_strategy_sizes[strategy_name]:,} bytes")
         except Exception as e:
-            logger.error(
-                f"     -> FAILED to generate file for strategy '{strategy_name}': {e}",
-                exc_info=True,
-            )
+            logger.error(f"     -> FAILED to generate file for strategy '{strategy_name}': {e}", exc_info=True)
             tambak_strategy_sizes[strategy_name] = -1
 
     try:

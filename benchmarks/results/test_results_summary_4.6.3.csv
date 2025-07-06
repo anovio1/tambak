@@ -1,0 +1,10 @@
+Aspect,Original MPK (bytes),Original MPK (%),Zstd on original MPK (bytes),Zstd on original MPK (%),Parquet (Zstd) File (bytes),Parquet (Zstd) File (%),tambak Stitched File (.phx) (bytes),tambak Stitched File (.phx) (%),tambak none File (.phx) (bytes),tambak none File (.phx) (%),tambak relin File (.phx) (bytes),tambak relin File (.phx) (%)
+unit_positions,6641915,100.00,3804423,57.28,3305379,49.77,3311857,49.86,3381105,50.91,2938270,44.24
+unit_events,2499651,100.00,778603,31.15,1044567,41.79,812669,32.51,823107,32.93,637789,25.52
+damage_log,6531861,100.00,2011629,30.80,2699725,41.33,2352510,36.02,2341371,35.85,1521593,23.29
+commands_log,14424289,100.00,2320317,16.09,2840316,19.69,1405691,9.75,N/A,N/A,N/A,N/A
+construction_log,11062038,100.00,2278007,20.59,2565435,23.19,2738905,24.76,2680931,24.24,1208819,10.93
+scouting_log,1117720,100.00,221395,19.81,161049,14.41,129201,11.56,130126,11.64,N/A,N/A
+team_stats,541516,100.00,269764,49.82,389728,71.97,287213,53.04,292808,54.07,N/A,N/A
+unit_economy,10926575,100.00,1811695,16.58,1250335,11.44,1139887,10.43,1147903,10.51,801195,7.33
+unit_state_snapshots,1700312,100.00,557157,32.77,558380,32.84,479697,28.21,481476,28.32,355037,20.88

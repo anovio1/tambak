@@ -5,9 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tambak?style=for-the-badge)](https://pypi.org/project/tambak/)
 [![License](https://img.shields.io/badge/License-MIT%2FApache--2.0-blue?style=for-the-badge)](./LICENSE)
 
-An adaptive, self-describing columnar storage format for Rust and Python, built to serve as a performance-oriented foundation for analytical data.
-
-Tambak is an Arrow-compatible library that uses a cost-based planner to build optimal compression pipelines for your data on the fly. It's engineered to maximize storage efficiency while providing a clean, high-level API for both Rust and Python developers.
+An adaptive, self-describing columnar storage format that uses empirical analysis to build optimal comprression pipelines for your data. It is a library written in Rust with Python extensions built to serve as a performance-oriented foundation for analytical data.
 
 ## Key Features
 
@@ -51,7 +49,7 @@ The Python API provides a high-level, stateful interface for working with files 
 
 ```python
 import pyarrow as pa
-import tambak
+import tambak_cache
 
 # 1. Create some data and a PyArrow RecordBatchReader
 data = pa.table({
@@ -60,19 +58,16 @@ data = pa.table({
 })
 reader = data.to_reader()
 
-# 2. Use the default streaming strategy
-config = tambak.CompressorConfig(time_series_strategy="none")
-
-# 3. Compress the stream into an in-memory buffer
+# 2. Compress the stream into an in-memory buffer.
 buffer = pa.BufferOutputStream()
-compressor = tambak.Compressor(buffer, config)
+compressor = tambak_cache.Compressor(buffer)
 compressor.compress(reader)
 
 compressed_bytes = buffer.getvalue().to_pybytes()
 
-# 4. Decompress the stream
+# 3. Decompress the stream
 buffer_reader = pa.BufferReader(compressed_bytes)
-decompressor = tambak.Decompressor(buffer_reader)
+decompressor = tambak_cache.Decompressor(buffer_reader)
 decompressed_reader = decompressor.batched()
 result_table = decompressed_reader.read_all()
 
@@ -85,48 +80,46 @@ Tambak can intelligently partition a stream by a key column, compressing each pa
 
 ```python
 import pyarrow as pa
-import tambak
+import tambak_cache
 
-# 1. Create data with a clear partition key
+# 1. Create data with a clear partition key (must be Int64).
 data = pa.table({
-    'device_id': pa.array(['A', 'B', 'A', 'B', 'A'], type=pa.string()),
+    'device_id': pa.array([101, 102, 101, 102, 101], type=pa.int64()),
     'reading': pa.array([100, 500, 101, 502, 102], type=pa.int32())
 })
 reader = data.to_reader()
 
-# 2. Configure the partitioned strategy
-config = tambak.CompressorConfig(
+# 2. Compress the stream, configuring the partitioned strategy directly.
+buffer = pa.BufferOutputStream()
+compressor = tambak_cache.Compressor(
+    buffer,
     time_series_strategy="partitioned",
     partition_key_column="device_id"
 )
-
-# 3. Compress the stream
-buffer = pa.BufferOutputStream()
-compressor = tambak.Compressor(buffer, config)
 compressor.compress(reader)
 compressed_bytes = buffer.getvalue().to_pybytes()
 
-# 4. Decompress and iterate through the partitions
+# 3. Decompress and iterate through the partitions
 buffer_reader = pa.BufferReader(compressed_bytes)
-decompressor = tambak.Decompressor(buffer_reader)
+decompressor = tambak_cache.Decompressor(buffer_reader)
 
 all_partitions = {}
 for key, partition_reader in decompressor.partitions():
     all_partitions[key] = partition_reader.read_all()
 
 # Verify the data was correctly partitioned and reconstructed
-assert all_partitions['A'].equals(data.filter(pa.compute.field('device_id') == 'A'))
-assert all_partitions['B'].equals(data.filter(pa.compute.field('device_id') == 'B'))
+assert all_partitions[101].equals(data.filter(pa.compute.field('device_id') == 101))
+assert all_partitions[102].equals(data.filter(pa.compute.field('device_id') == 102))
 ```
 
 ## Roadmap
 
--   [ ] Feat: User Config evolution and passed down from Bridge to Chunk Pipeline
--   [ ] Refactor of the Chunk Pipeline: OPE refactor
--   [ ] Performance optimizations for core kernels.
--   [ ] Implementation of tunable lossy compression strategies for ML workloads.
--   [ ] Expansion of the `FramePipeline` strategy library (e.g., global sort).
--   [ ] Official release on Crates.io and PyPI.
+-   [x] Feat: Refactor to a unified `TambakConfig` and pass via `Arc` from Bridge to Planner.
+-   [ ] Feat: Refactor of the Chunk Pipeline to support DAGs (`OPE Refactor`).
+-   [ ] Perf: Performance optimizations for core kernels.
+-   [ ] Feat: Implementation of tunable lossy compression strategies for ML workloads.
+-   [ ] Feat: Expansion of the `FramePipeline` strategy library (e.g., global sort).
+-   [ ] Chore: Official release on Crates.io and PyPI.
 
 ## Chunk Pipeline Roadmap
 
