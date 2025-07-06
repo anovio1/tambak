@@ -14,32 +14,23 @@ venv/
 .winvenv/
 !.winvenv/.venv-used
 
-
-# Prefect artifacts
-*.orion
-.prefect/
-flows/__pycache__/
-
 # Logs and temp files
 *.log
 *.tmp
 *.bak
 
-docs/Unk*
-
 tubuin/output_artifacts/**
-.vscode/
-
-Structure
-tambak-core/target/**/*
-RustLib/target/**/*
+tambak-core/good.py
+tambak-core/src-copy/**/*
 .mds/
 
-tambak-core/src-copy/**/*
+.vscode/
+
+tambak-core/target/**/*
+RustLib/target/**/*
+
 /*.md
 /**/*.mpk
 /**/*.zst
 /**/*.phx
 /**/*.parquet
-
-tambak-core/good.py
