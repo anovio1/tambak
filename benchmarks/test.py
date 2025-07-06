@@ -1,10 +1,10 @@
 import pyarrow as pa
 # This is the name of your Rust module as defined in lib.rs and Cargo.toml
-import phoenix_cache
+import tambak_cache
 
 def run_test():
     """
-    Tests the full compress/decompress roundtrip for the phoenix_cache library.
+    Tests the full compress/decompress roundtrip for the tambak_cache library.
     """
     print("--- Starting Compression Test ---")
 
@@ -22,7 +22,7 @@ def run_test():
     # 2. Call the Rust `compress` function.
     #    The FFI layer will handle the conversion from PyArrow Array to Rust.
     try:
-        compressed_bytes = phoenix_cache.compress(original_array)
+        compressed_bytes = tambak_cache.compress(original_array)
         print("Compression successful!")
         print(f"Compressed size (bytes): {len(compressed_bytes)}")
         
@@ -39,7 +39,7 @@ def run_test():
     try:
         # The type string must match what the Rust dispatcher expects (e.g., "Int64")
         original_type_str = "Int64"
-        decompressed_array = phoenix_cache.decompress(compressed_bytes, original_type_str)
+        decompressed_array = tambak_cache.decompress(compressed_bytes, original_type_str)
         
         print("Decompression successful!")
         print(f"Decompressed Array ({decompressed_array.type}):")

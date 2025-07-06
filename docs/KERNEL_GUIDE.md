@@ -4,40 +4,40 @@ Here is the revised and corrected `KERNEL_GUIDE.md`.
 
 ---
 
-# Phoenix Cache: Kernel Development Guide (v2 - Production Standard)
+# tambak Cache: Kernel Development Guide (v2 - Production Standard)
 
-This guide provides a step-by-step playbook for developing, implementing, and hardening new compression/decompression kernels for Phoenix Cache. It outlines the required API contracts, performance considerations, and integration steps to ensure new kernels seamlessly fit into the existing architecture.
+This guide provides a step-by-step playbook for developing, implementing, and hardening new compression/decompression kernels for tambak Cache. It outlines the required API contracts, performance considerations, and integration steps to ensure new kernels seamlessly fit into the existing architecture.
 
 ## 1. Understanding the Kernel's Role
 
-In the Phoenix Cache architecture, a "kernel" is a **pure, stateless, and highly optimized** algorithm that performs a single, specific data transformation (e.g., Delta encoding, RLE, Bitpacking).
+In the tambak Cache architecture, a "kernel" is a **pure, stateless, and highly optimized** algorithm that performs a single, specific data transformation (e.g., Delta encoding, RLE, Bitpacking).
 
 *   **Location:** All kernels reside in the `src/kernels/` directory.
 *   **Contract:** Every kernel must adhere to a strict `encode` and `decode` API, conforming to the `executor`'s buffer-swapping strategy.
 *   **Independence:** Kernels are completely decoupled from `pyo3`, `polars`, and the FFI layer. The central dispatcher in `kernels/mod.rs` handles all type-casting. Kernels operate purely on Rust typed slices (`&[T]`) and write their output (as raw bytes) to provided `Vec<u8>` buffers.
-*   **Panic-Free:** All kernels **must be panic-free**. Recoverable errors are returned via `Result<..., PhoenixError>`.
+*   **Panic-Free:** All kernels **must be panic-free**. Recoverable errors are returned via `Result<..., tambakError>`.
 
 ## 2. The Kernel API Contract
 
 Each kernel module (`src/kernels/my_new_kernel.rs`) must expose two primary public functions with these exact signatures:
 
-### `pub fn encode<T>(input_slice: &[T], output_buf: &mut Vec<u8>, ...params) -> Result<(), PhoenixError>`
+### `pub fn encode<T>(input_slice: &[T], output_buf: &mut Vec<u8>, ...params) -> Result<(), tambakError>`
 
 *   **Purpose:** Compresses or transforms the data from `input_slice`.
 *   **`T` (Type Parameter):** The generic type of the data (e.g., `i32`, `u64`).
 *   **`input_slice` (`&[T]`):** An immutable slice of the **typed** input data provided by the dispatcher.
 *   **`output_buf` (`&mut Vec<u8>`):** A mutable reference to a `Vec<u8>` provided by the `executor`. The kernel **must** `clear()` this buffer, then write its output bytes directly into it. This is crucial for performance.
 *   **`...params`:** Any specific parameters required by the kernel (e.g., `bit_width` for Bitpack).
-*   **Returns:** `Result<(), PhoenixError>`.
+*   **Returns:** `Result<(), tambakError>`.
 
-### `pub fn decode<T>(input_slice: &[T], output_buf: &mut Vec<u8>, ...params) -> Result<(), PhoenixError>`
+### `pub fn decode<T>(input_slice: &[T], output_buf: &mut Vec<u8>, ...params) -> Result<(), tambakError>`
 
 *   **Purpose:** Decompresses or reverses the transformation.
 *   **`T` (Type Parameter):** The generic type `T` that the data was originally.
 *   **`input_slice` (`&[T]`):** An immutable slice of the **typed** input data. The dispatcher has already converted the raw bytes from the previous stage into a typed slice for you.
 *   **`output_buf` (`&mut Vec<u8>`):** A mutable reference to a `Vec<u8>`. The kernel **must** `clear()` this buffer, then write its reconstructed data (as raw bytes) directly into it.
 *   **`...params`:** Any specific parameters required for decoding (e.g., `num_values`).
-*   **Returns:** `Result<(), PhoenixError>`.
+*   **Returns:** `Result<(), tambakError>`.
 
 ## 3. The 5-Point Kernel Hardening Playbook
 
@@ -59,7 +59,7 @@ When implementing a new kernel, follow these steps to ensure it meets production
 
     *   **Example (from `zigzag::encode`):**
         ```rust
-        pub fn encode<T>(input_slice: &[T], output_buf: &mut Vec<u8>) -> Result<(), PhoenixError>
+        pub fn encode<T>(input_slice: &[T], output_buf: &mut Vec<u8>) -> Result<(), tambakError>
         where T: PrimInt + Signed, T::Unsigned: PrimInt {
             output_buf.clear();
             output_buf.reserve(input_slice.len() * std::mem::size_of::<T::Unsigned>());
@@ -73,7 +73,7 @@ When implementing a new kernel, follow these steps to ensure it meets production
         ```
 
 3.  **Make It Panic-Free:**
-    *   **Eliminate all `.unwrap()` and `.expect()` calls.** Replace them with `ok_or_else()`, `map_err()`, and the `?` operator to propagate `PhoenixError`.
+    *   **Eliminate all `.unwrap()` and `.expect()` calls.** Replace them with `ok_or_else()`, `map_err()`, and the `?` operator to propagate `tambakError`.
     *   Handle all possible error conditions (e.g., invalid input, truncation, overflow).
 
 4.  **Ensure Architectural Purity:**
@@ -122,4 +122,4 @@ Once a kernel is implemented and hardened, integrate it into the wider system:
 4.  **Add Python Integration Tests:**
     *   Create or update tests in the top-level `tests/` directory (e.g., `test_compression.py`) that exercise a full compression/decompression roundtrip using your new kernel. This is the ultimate validation.
 
-By following this guide, you can confidently add powerful new compression capabilities to Phoenix Cache.
+By following this guide, you can confidently add powerful new compression capabilities to tambak Cache.

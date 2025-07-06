@@ -1,14 +1,14 @@
-# Phoenix Cache: Developer Guide
+# tambak Cache: Developer Guide
 
-This guide provides instructions and best practices for developing and contributing to the Phoenix Cache Rust core. It covers environment setup, building, testing, and adhering to coding standards.
+This guide provides instructions and best practices for developing and contributing to the tambak Cache Rust core. It covers environment setup, building, testing, and adhering to coding standards.
 
 ## 1. Development Environment Setup
 
-To work on the Phoenix Cache Rust core, you'll need the following tools:
+To work on the tambak Cache Rust core, you'll need the following tools:
 
 ### A. Rust Toolchain
 
-Phoenix Cache requires a recent stable version of the Rust toolchain.
+tambak Cache requires a recent stable version of the Rust toolchain.
 
 1.  **Install `rustup`:**
     If you don't have Rust installed, use `rustup` (the official Rust toolchain installer):
@@ -41,7 +41,7 @@ pip install maturin
 
 ## 2. Building the Project
 
-Phoenix Cache is primarily built using `maturin`.
+tambak Cache is primarily built using `maturin`.
 
 ### A. Local Development Build
 
@@ -54,7 +54,7 @@ maturin develop
 
 This command performs the following:
 *   Compiles the Rust code in debug mode (faster compilation, but slower runtime).
-*   Installs the `phoenix_cache` Python package into your currently active Python environment in "editable" mode. This means changes to your Rust code are reflected when you re-run Python, often without needing to reinstall.
+*   Installs the `tambak_cache` Python package into your currently active Python environment in "editable" mode. This means changes to your Rust code are reflected when you re-run Python, often without needing to reinstall.
 
 ### B. Release Build (for Production)
 
@@ -74,7 +74,7 @@ This compiles the Rust code with full optimizations (e.g., `opt-level=3`, LTO en
 
 ## 3. Testing
 
-Phoenix Cache employs a two-tiered testing strategy: Rust unit tests and Python integration tests.
+tambak Cache employs a two-tiered testing strategy: Rust unit tests and Python integration tests.
 
 ### A. Rust Unit Tests
 
@@ -122,9 +122,9 @@ cargo clippy --all-targets -- -D warnings
 
 ### C. Panics and Error Handling
 
-*   **No Panics:** The Rust core **must be panic-free**. Panics unwinding across the FFI boundary are Undefined Behavior and can crash the entire Python process. All recoverable errors should be handled via the `Result<T, PhoenixError>` type.
-*   **`PhoenixError`:** Use the centralized `PhoenixError` enum (`src/error.rs`) for all errors. This ensures consistent error propagation.
-*   **`PyResult`:** `PyResult<T>` (which is `Result<T, PyErr>`) should *only* be used in `src/ffi/python.rs`. Core Rust logic (`pipeline`, `kernels`, `null_handling`, `utils`) must use `Result<T, PhoenixError>`.
+*   **No Panics:** The Rust core **must be panic-free**. Panics unwinding across the FFI boundary are Undefined Behavior and can crash the entire Python process. All recoverable errors should be handled via the `Result<T, tambakError>` type.
+*   **`tambakError`:** Use the centralized `tambakError` enum (`src/error.rs`) for all errors. This ensures consistent error propagation.
+*   **`PyResult`:** `PyResult<T>` (which is `Result<T, PyErr>`) should *only* be used in `src/ffi/python.rs`. Core Rust logic (`pipeline`, `kernels`, `null_handling`, `utils`) must use `Result<T, tambakError>`.
 
 ### D. Performance
 
@@ -150,4 +150,4 @@ cargo clippy --all-targets -- -D warnings
 8.  **Push your branch** to your fork.
 9.  **Open a Pull Request** against the `main` branch of the upstream repository.
 
-This guide should provide a solid foundation for contributing to Phoenix Cache.
+This guide should provide a solid foundation for contributing to tambak Cache.

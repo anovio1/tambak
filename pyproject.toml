@@ -1,4 +1,4 @@
-# This file defines the Python package for our Phoenix library.
+# This file defines the Python package for our tambak library.
 # It uses the modern PEP 621 standard for metadata and `maturin` as the
 # build backend for compiling our Rust extension module.
 
@@ -15,7 +15,7 @@ build-backend = "maturin"
 #==================================================================================
 [project]
 # The name of the package as it will appear on PyPI.
-name = "phoenix-cache"
+name = "tambak-cache"
 version = "0.1.0"
 description = "A high-performance, adaptive compression library for columnar data, powered by a Rust core."
 authors = [
@@ -54,6 +54,6 @@ python-source = "python"
 
 # The name of the Rust crate inside the `src/` directory that maturin should build.
 # This must match the `[package].name` in `Cargo.toml`.
-# For example, if Cargo.toml has `name = "phoenix-core"`.
+# For example, if Cargo.toml has `name = "tambak-core"`.
 # We will need to align on this name.
-# crate-name = "phoenix_core"
+# crate-name = "tambak_core"

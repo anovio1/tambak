@@ -2,14 +2,14 @@ import math
 import random
 import zstandard as zstd
 import pyarrow as pa
-import phoenix_cache  # The name of your Rust module
+import tambak_cache  # The name of your Rust module
 import time
 
 
 def run_zstd_only_test(test_name: str, original_array: pa.Array):
     """
     Compress the raw data buffer (and null bitmap) directly with zstd only, to compare
-    against the phoenix_cache compression pipeline.
+    against the tambak_cache compression pipeline.
     """
     print(f"\n--- Starting ZSTD Only Test Case: {test_name} ---")
     print(f"Data Type: {original_array.type}, Length: {len(original_array)}")
@@ -76,7 +76,7 @@ def run_compression_test(test_name: str, original_array: pa.Array):
     # 1. COMPRESSION
     try:
         t0 = time.perf_counter()
-        stats = phoenix_cache.compress_analyze(original_array)
+        stats = tambak_cache.compress_analyze(original_array)
         compressed_artifact_bytes = stats["artifact"]  # Assign the artifact here
         t1 = time.perf_counter()
 
@@ -129,9 +129,9 @@ def run_compression_test(test_name: str, original_array: pa.Array):
         original_type_str = RUST_TYPE_MAP.get(type_name)
 
         if original_type_str is None:
-            raise ValueError(f"Unsupported pyarrow type for phoenix_cache: {type_name}")
+            raise ValueError(f"Unsupported pyarrow type for tambak_cache: {type_name}")
 
-        decompressed_array = phoenix_cache.decompress(
+        decompressed_array = tambak_cache.decompress(
             compressed_artifact_bytes
         )
 

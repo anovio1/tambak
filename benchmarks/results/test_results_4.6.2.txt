@@ -1,6 +1,6 @@
 
 ================================================================================
-                      --- Phoenix 4.6.2 unit_positions ---                      
+                      --- tambak 4.6.2 unit_positions ---                      
 ================================================================================
 
 ================================================================================
@@ -10,9 +10,9 @@
   - Original MPK File:                         6,641,915 bytes (100.00%)
   - Zstd on original MPK:                      3,804,423 bytes ( 57.28%)
   - Parquet (Zstd) File:                       3,305,379 bytes ( 49.77%)
-  - Phoenix Stitched File (.phx):              3,301,118 bytes ( 49.70%)
-  - Phoenix none File (.phx):                  3,302,761 bytes ( 49.73%)
-  - Phoenix relin File (.phx):                 2,879,223 bytes ( 43.35%)
+  - tambak Stitched File (.phx):              3,301,118 bytes ( 49.70%)
+  - tambak none File (.phx):                  3,302,761 bytes ( 49.73%)
+  - tambak relin File (.phx):                 2,879,223 bytes ( 43.35%)
 ================================================================================
 
 ================================================================================
@@ -21,11 +21,11 @@
 ================================================================================
   - Parquet Columnar Data:           3,303,041 bytes (100.00%)
   - Zstd-per-Column Data:            3,966,937 bytes (120.10%)
-  - Phoenix Columnar Data:           3,300,475 bytes ( 99.92%)
+  - tambak Columnar Data:           3,300,475 bytes ( 99.92%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                       1,199        2,799        3,393 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"Ans"}]}
 unit_id                   145,638      145,697      219,116 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
@@ -42,7 +42,7 @@ heading                   547,447      601,864      609,755 {"plan_version":1,"i
 *Parquet size is the on-disk compressed size for that column's data chunks.
 
 ================================================================================
-                       --- Phoenix 4.6.2 unit_events ---                        
+                       --- tambak 4.6.2 unit_events ---                        
 ================================================================================
 
 ================================================================================
@@ -52,9 +52,9 @@ heading                   547,447      601,864      609,755 {"plan_version":1,"i
   - Original MPK File:                         2,499,651 bytes (100.00%)
   - Zstd on original MPK:                        778,603 bytes ( 31.15%)
   - Parquet (Zstd) File:                       1,044,567 bytes ( 41.79%)
-  - Phoenix Stitched File (.phx):                803,028 bytes ( 32.13%)
-  - Phoenix none File (.phx):                    805,233 bytes ( 32.21%)
-  - Phoenix relin File (.phx):                   608,580 bytes ( 24.35%)
+  - tambak Stitched File (.phx):                803,028 bytes ( 32.13%)
+  - tambak none File (.phx):                    805,233 bytes ( 32.21%)
+  - tambak relin File (.phx):                   608,580 bytes ( 24.35%)
 ================================================================================
 
 ================================================================================
@@ -63,11 +63,11 @@ heading                   547,447      601,864      609,755 {"plan_version":1,"i
 ================================================================================
   - Parquet Columnar Data:           1,041,139 bytes (100.00%)
   - Zstd-per-Column Data:            1,036,406 bytes ( 99.55%)
-  - Phoenix Columnar Data:             802,081 bytes ( 77.04%)
+  - tambak Columnar Data:             802,081 bytes ( 77.04%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                      24,722       60,226      162,483 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"BitPack","params":{"bit_width":8}},{"op":"Ans"}]}
 unit_id                   177,283      185,304      229,917 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
@@ -88,7 +88,7 @@ factory_queue_len          12,349       27,546       15,402 {"plan_version":1,"i
 *Parquet size is the on-disk compressed size for that column's data chunks.
 
 ================================================================================
-                        --- Phoenix 4.6.2 damage_log ---                        
+                        --- tambak 4.6.2 damage_log ---                        
 ================================================================================
 
 ================================================================================
@@ -98,8 +98,8 @@ factory_queue_len          12,349       27,546       15,402 {"plan_version":1,"i
   - Original MPK File:                         6,531,861 bytes (100.00%)
   - Zstd on original MPK:                      2,011,629 bytes ( 30.80%)
   - Parquet (Zstd) File:                       2,699,725 bytes ( 41.33%)
-  - Phoenix Stitched File (.phx):              2,350,068 bytes ( 35.98%)
-  - Phoenix none File (.phx):                  2,352,135 bytes ( 36.01%)
+  - tambak Stitched File (.phx):              2,350,068 bytes ( 35.98%)
+  - tambak none File (.phx):                  2,352,135 bytes ( 36.01%)
 ================================================================================
 
 ================================================================================
@@ -108,11 +108,11 @@ factory_queue_len          12,349       27,546       15,402 {"plan_version":1,"i
 ================================================================================
   - Parquet Columnar Data:           2,696,435 bytes (100.00%)
   - Zstd-per-Column Data:            2,652,788 bytes ( 98.38%)
-  - Phoenix Columnar Data:           2,349,135 bytes ( 87.12%)
+  - tambak Columnar Data:           2,349,135 bytes ( 87.12%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                      29,892       86,950      207,551 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
 victim_team_id             75,744       93,024       81,508 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
@@ -132,7 +132,7 @@ victim_pos_z              280,064      339,467      335,766 {"plan_version":1,"i
 *Parquet size is the on-disk compressed size for that column's data chunks.
 
 ================================================================================
-                       --- Phoenix 4.6.2 commands_log ---                       
+                       --- tambak 4.6.2 commands_log ---                       
 ================================================================================
 
 ================================================================================
@@ -142,7 +142,7 @@ victim_pos_z              280,064      339,467      335,766 {"plan_version":1,"i
   - Original MPK File:                        14,424,289 bytes (100.00%)
   - Zstd on original MPK:                      2,320,317 bytes ( 16.09%)
   - Parquet (Zstd) File:                       2,840,316 bytes ( 19.69%)
-  - Phoenix Stitched File (.phx):              1,392,678 bytes (  9.66%)
+  - tambak Stitched File (.phx):              1,392,678 bytes (  9.66%)
 ================================================================================
 
 ================================================================================
@@ -151,11 +151,11 @@ victim_pos_z              280,064      339,467      335,766 {"plan_version":1,"i
 ================================================================================
   - Parquet Columnar Data:           2,836,403 bytes (100.00%)
   - Zstd-per-Column Data:            3,914,687 bytes (138.02%)
-  - Phoenix Columnar Data:           1,391,590 bytes ( 49.06%)
+  - tambak Columnar Data:           1,391,590 bytes ( 49.06%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                      35,638       69,952      164,662 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
 teamId                     56,584      120,579       66,741 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
@@ -180,7 +180,7 @@ opt_shift                  18,851       18,631       18,677 {"plan_version":1,"i
 *Parquet size is the on-disk compressed size for that column's data chunks.
 
 ================================================================================
-                     --- Phoenix 4.6.2 construction_log ---                     
+                     --- tambak 4.6.2 construction_log ---                     
 ================================================================================
 
 ================================================================================
@@ -190,9 +190,9 @@ opt_shift                  18,851       18,631       18,677 {"plan_version":1,"i
   - Original MPK File:                        11,062,038 bytes (100.00%)
   - Zstd on original MPK:                      2,278,007 bytes ( 20.59%)
   - Parquet (Zstd) File:                       2,565,435 bytes ( 23.19%)
-  - Phoenix Stitched File (.phx):              2,738,856 bytes ( 24.76%)
-  - Phoenix none File (.phx):                  2,740,212 bytes ( 24.77%)
-  - Phoenix relin File (.phx):                 1,212,439 bytes ( 10.96%)
+  - tambak Stitched File (.phx):              2,738,856 bytes ( 24.76%)
+  - tambak none File (.phx):                  2,740,212 bytes ( 24.77%)
+  - tambak relin File (.phx):                 1,212,439 bytes ( 10.96%)
 ================================================================================
 
 ================================================================================
@@ -201,11 +201,11 @@ opt_shift                  18,851       18,631       18,677 {"plan_version":1,"i
 ================================================================================
   - Parquet Columnar Data:           2,563,197 bytes (100.00%)
   - Zstd-per-Column Data:            3,269,977 bytes (127.57%)
-  - Phoenix Columnar Data:           2,738,245 bytes (106.83%)
+  - tambak Columnar Data:           2,738,245 bytes (106.83%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                       2,199        5,759        7,342 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
 event                     107,757      111,192      102,176 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Shuffle"},{"op":"Zstd","params":{"level":3}}]}
@@ -220,7 +220,7 @@ buildpower                238,823      323,408      153,292 {"plan_version":1,"i
 *Parquet size is the on-disk compressed size for that column's data chunks.
 
 ================================================================================
-                       --- Phoenix 4.6.2 scouting_log ---                       
+                       --- tambak 4.6.2 scouting_log ---                       
 ================================================================================
 
 ================================================================================
@@ -230,8 +230,8 @@ buildpower                238,823      323,408      153,292 {"plan_version":1,"i
   - Original MPK File:                         1,117,720 bytes (100.00%)
   - Zstd on original MPK:                        221,395 bytes ( 19.81%)
   - Parquet (Zstd) File:                         161,049 bytes ( 14.41%)
-  - Phoenix Stitched File (.phx):                126,991 bytes ( 11.36%)
-  - Phoenix none File (.phx):                    127,916 bytes ( 11.44%)
+  - tambak Stitched File (.phx):                126,991 bytes ( 11.36%)
+  - tambak none File (.phx):                    127,916 bytes ( 11.44%)
 ================================================================================
 
 ================================================================================
@@ -240,11 +240,11 @@ buildpower                238,823      323,408      153,292 {"plan_version":1,"i
 ================================================================================
   - Parquet Columnar Data:             159,505 bytes (100.00%)
   - Zstd-per-Column Data:              185,566 bytes (116.34%)
-  - Phoenix Columnar Data:             126,600 bytes ( 79.37%)
+  - tambak Columnar Data:             126,600 bytes ( 79.37%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                         619          804          988 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Ans"}]}
 enemy_unit_id              53,688       53,604       93,789 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
@@ -256,7 +256,7 @@ losMask                    14,899       14,760       14,382 {"plan_version":1,"i
 *Parquet size is the on-disk compressed size for that column's data chunks.
 
 ================================================================================
-                        --- Phoenix 4.6.2 team_stats ---                        
+                        --- tambak 4.6.2 team_stats ---                        
 ================================================================================
 
 ================================================================================
@@ -266,8 +266,8 @@ losMask                    14,899       14,760       14,382 {"plan_version":1,"i
   - Original MPK File:                           541,516 bytes (100.00%)
   - Zstd on original MPK:                        269,764 bytes ( 49.82%)
   - Parquet (Zstd) File:                         389,728 bytes ( 71.97%)
-  - Phoenix Stitched File (.phx):                286,891 bytes ( 52.98%)
-  - Phoenix none File (.phx):                    292,486 bytes ( 54.01%)
+  - tambak Stitched File (.phx):                286,891 bytes ( 52.98%)
+  - tambak none File (.phx):                    292,486 bytes ( 54.01%)
 ================================================================================
 
 ================================================================================
@@ -276,11 +276,11 @@ losMask                    14,899       14,760       14,382 {"plan_version":1,"i
 ================================================================================
   - Parquet Columnar Data:             381,172 bytes (100.00%)
   - Zstd-per-Column Data:              283,212 bytes ( 74.30%)
-  - Phoenix Columnar Data:             284,377 bytes ( 74.61%)
+  - tambak Columnar Data:             284,377 bytes ( 74.61%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                         232          961        1,561 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
 team_id                       245           85          320 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":17}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
@@ -325,7 +325,7 @@ energy_Rexcess              1,653        1,515        1,768 {"plan_version":1,"i
 *Parquet size is the on-disk compressed size for that column's data chunks.
 
 ================================================================================
-                       --- Phoenix 4.6.2 unit_economy ---                       
+                       --- tambak 4.6.2 unit_economy ---                       
 ================================================================================
 
 ================================================================================
@@ -335,9 +335,9 @@ energy_Rexcess              1,653        1,515        1,768 {"plan_version":1,"i
   - Original MPK File:                        10,926,575 bytes (100.00%)
   - Zstd on original MPK:                      1,811,695 bytes ( 16.58%)
   - Parquet (Zstd) File:                       1,250,335 bytes ( 11.44%)
-  - Phoenix Stitched File (.phx):              1,067,366 bytes (  9.77%)
-  - Phoenix none File (.phx):                  1,068,728 bytes (  9.78%)
-  - Phoenix relin File (.phx):                   695,651 bytes (  6.37%)
+  - tambak Stitched File (.phx):              1,067,366 bytes (  9.77%)
+  - tambak none File (.phx):                  1,068,728 bytes (  9.78%)
+  - tambak relin File (.phx):                   695,651 bytes (  6.37%)
 ================================================================================
 
 ================================================================================
@@ -346,11 +346,11 @@ energy_Rexcess              1,653        1,515        1,768 {"plan_version":1,"i
 ================================================================================
   - Parquet Columnar Data:           1,248,254 bytes (100.00%)
   - Zstd-per-Column Data:            2,177,016 bytes (174.40%)
-  - Phoenix Columnar Data:           1,066,802 bytes ( 85.46%)
+  - tambak Columnar Data:           1,066,802 bytes ( 85.46%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                      14,044       20,366       56,255 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"ZigZag"},{"op":"Leb128"},{"op":"Zstd","params":{"level":3}}]}
 unit_id                   182,257      182,433      328,524 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}
@@ -365,7 +365,7 @@ energy_use                338,814      434,901      284,761 {"plan_version":1,"i
 *Parquet size is the on-disk compressed size for that column's data chunks.
 
 ================================================================================
-                   --- Phoenix 4.6.2 unit_state_snapshots ---                   
+                   --- tambak 4.6.2 unit_state_snapshots ---                   
 ================================================================================
 
 ================================================================================
@@ -375,9 +375,9 @@ energy_use                338,814      434,901      284,761 {"plan_version":1,"i
   - Original MPK File:                         1,700,312 bytes (100.00%)
   - Zstd on original MPK:                        557,157 bytes ( 32.77%)
   - Parquet (Zstd) File:                         558,380 bytes ( 32.84%)
-  - Phoenix Stitched File (.phx):                475,938 bytes ( 27.99%)
-  - Phoenix none File (.phx):                    477,717 bytes ( 28.10%)
-  - Phoenix relin File (.phx):                   352,100 bytes ( 20.71%)
+  - tambak Stitched File (.phx):                475,938 bytes ( 27.99%)
+  - tambak none File (.phx):                    477,717 bytes ( 28.10%)
+  - tambak relin File (.phx):                   352,100 bytes ( 20.71%)
 ================================================================================
 
 ================================================================================
@@ -386,11 +386,11 @@ energy_use                338,814      434,901      284,761 {"plan_version":1,"i
 ================================================================================
   - Parquet Columnar Data:             555,757 bytes (100.00%)
   - Zstd-per-Column Data:              553,544 bytes ( 99.60%)
-  - Phoenix Columnar Data:             475,167 bytes ( 85.50%)
+  - tambak Columnar Data:             475,167 bytes ( 85.50%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                       1,068        2,054        3,158 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Delta","params":{"order":1}},{"op":"Ans"}]}
 unit_id                   111,638      111,690      166,472 {"plan_version":1,"initial_type":"Int64","pipeline":[{"op":"Zstd","params":{"level":3}}]}

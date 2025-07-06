@@ -28,11 +28,11 @@ flows/__pycache__/
 tubuin/output_artifacts/**
 .vscode/
 
-phoenix-core/target/**/*
+tambak-core/target/**/*
 RustLib/target/**/*
 .mds/
 
-phoenix-core/src-copy/**/*
+tambak-core/src-copy/**/*
 /*.md
 /**/*.mpk
 /**/*.zst

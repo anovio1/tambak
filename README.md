@@ -1,10 +1,10 @@
-# Phoenix Cache
+# Tambak Cache
 
 A high-performance, adaptive compression library for columnar data, powered by a meticulously engineered Rust core.
 
 ## 🚀 Overview
 
-Phoenix Cache is designed to revolutionize how structured data is stored and retrieved in analytical and time-series applications. By leveraging a custom, adaptive compression pipeline implemented in Rust, Phoenix Cache delivers superior compression ratios and blazing-fast performance compared to traditional methods, while maintaining seamless interoperability with the Python data ecosystem (especially Polars and PyArrow).
+Tambak Cache is designed to revolutionize how structured data is stored and retrieved in analytical and time-series applications. By leveraging a custom, adaptive compression pipeline implemented in Rust, Tambak Cache delivers superior compression ratios and blazing-fast performance compared to traditional methods, while maintaining seamless interoperability with the Python data ecosystem (especially Polars and PyArrow).
 
 The core philosophy revolves around dynamically selecting the optimal sequence of stateless compression kernels for a given data chunk. This "intelligent planning" ensures maximum efficiency, whether your data is sparse, has low cardinality, or exhibits strong temporal locality.
 
@@ -19,7 +19,7 @@ The core philosophy revolves around dynamically selecting the optimal sequence o
 
 ## 📦 Installation
 
-Phoenix Cache is distributed as a Python package with a compiled Rust extension.
+Tambak Cache is distributed as a Python package with a compiled Rust extension.
 
 1.  **Prerequisites:**
     *   [Rust Toolchain](https://www.rust-lang.org/tools/install) (latest stable recommended)
@@ -34,7 +34,7 @@ Phoenix Cache is distributed as a Python package with a compiled Rust extension.
     ```bash
     maturin develop --release
     ```
-    This command compiles the Rust code in release mode (optimized for speed) and installs the `phoenix_cache` Python package into your current environment.
+    This command compiles the Rust code in release mode (optimized for speed) and installs the `tambak_cache` Python package into your current environment.
 
 ## ⚡ Quick Start (Python)
 
@@ -42,7 +42,7 @@ Once installed, you can start compressing and decompressing Polars Series immedi
 
 ```python
 import polars as pl
-import phoenix_cache
+import tambak_cache
 import numpy as np
 
 # 1. Create a sample Polars Series with various data patterns (and some nulls!)
@@ -56,19 +56,19 @@ print(f"Original Series Size: {original_series.estimated_size()} bytes")
 # 2. Plan the optimal compression pipeline for the series (optional, but good for understanding)
 # The planner takes raw bytes of valid data. For a real series, you might need to extract this first.
 # For simplicity, we just use the original type string. The FFI layer handles byte extraction.
-plan_json = phoenix_cache.plan(original_series.to_arrow().to_pylist(), original_series.dtype.base_type().__str__())
+plan_json = tambak_cache.plan(original_series.to_arrow().to_pylist(), original_series.dtype.base_type().__str__())
 print(f"\nGenerated Plan: {plan_json}")
 
 # 3. Compress the Polars Series
 # The `compress` function handles null stripping, planning, and execution internally.
-compressed_artifact = phoenix_cache.compress(original_series)
+compressed_artifact = tambak_cache.compress(original_series)
 
 print(f"\nCompressed Artifact Size: {len(compressed_artifact)} bytes")
 print(f"Compression Ratio: {original_series.estimated_size() / len(compressed_artifact):.2f}x")
 
 # 4. Decompress the artifact back into a Polars Series
 # The `decompress` function needs the original plan and type to reverse the process.
-decompressed_series = phoenix_cache.decompress(
+decompressed_series = tambak_cache.decompress(
     compressed_artifact,
     plan_json, # The plan needs to be stored and retrieved with the artifact
     original_series.dtype.base_type().__str__() # Original data type is also critical
@@ -84,7 +84,7 @@ print("\nRoundtrip successful: Original and Decompressed series are identical!")
 
 ## 📚 Documentation
 
-Dive deeper into Phoenix Cache with our comprehensive guides:
+Dive deeper into Tambak Cache with our comprehensive guides:
 
 *   **[User Guide](USER_GUIDE.md)**: How to use the Python API.
 *   **[Architecture](ARCHITECTURE.md)**: Understanding the Rust core's design principles.
@@ -103,14 +103,14 @@ This project is licensed under the MIT OR Apache-2.0 License.
 
 ---
 
-# **FEAT: Phoenix Pipeline Planner: Configuration and Strategy Selection**
+# **FEAT: Tambak Pipeline Planner: Configuration and Strategy Selection**
 ## `PlannerStrategy` and `PlannerConfig`
 
-**Title: Phoenix Pipeline Planner: Configuration and Strategy Selection**
+**Title: Tambak Pipeline Planner: Configuration and Strategy Selection**
 
 **Introduction**
 
-This document explains Phoenix's compression planner changes:
+This document explains Tambak's compression planner changes:
 
 *   **What:** `PlannerStrategy` and `PlannerConfig` for advanced pipeline optimization.
 *   **Why:** Old planning chose best strategy from single-pass + 1 data sample, causing compression loss (regressions).

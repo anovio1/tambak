@@ -46,16 +46,16 @@ def save_summary_csv(all_results, filename):
     standard_formats = {
         "zstd_on_mpk_size": "Zstd on original MPK",
         "parquet_file_size": "Parquet (Zstd) File",
-        "phoenix_frame_size": "Phoenix Stitched File (.phx)" # This is the stateless one
+        "tambak_frame_size": "tambak Stitched File (.phx)" # This is the stateless one
     }
     
-    # Discover all unique Phoenix strategies from the results
-    phoenix_strategies = set()
+    # Discover all unique tambak strategies from the results
+    tambak_strategies = set()
     for result in all_results:
-        phoenix_strategies.update(result.get('phoenix_strategy_sizes', {}).keys())
+        tambak_strategies.update(result.get('tambak_strategy_sizes', {}).keys())
     
     # Sort for consistent ordering
-    sorted_strategies = sorted(list(phoenix_strategies))
+    sorted_strategies = sorted(list(tambak_strategies))
 
     # Build the final header list
     for key, name in standard_formats.items():
@@ -65,7 +65,7 @@ def save_summary_csv(all_results, filename):
         label = strategy_name
         if strategy_name == "per_batch_relinearize":
             label = "relin"
-        headers.extend([f"Phoenix {label} File (.phx) (bytes)", f"Phoenix {label} File (.phx) (%)"])
+        headers.extend([f"tambak {label} File (.phx) (bytes)", f"tambak {label} File (.phx) (%)"])
 
     # --- Write data to CSV ---
     try:
@@ -99,8 +99,8 @@ def save_summary_csv(all_results, filename):
                 for key in standard_formats:
                     add_cells(key)
                 
-                # Add cells for dynamic Phoenix strategies
-                strategy_sizes = result.get('phoenix_strategy_sizes', {})
+                # Add cells for dynamic tambak strategies
+                strategy_sizes = result.get('tambak_strategy_sizes', {})
                 for strategy_name in sorted_strategies:
                     size = strategy_sizes.get(strategy_name, -1)
                     if size is not None and size > 0:
@@ -118,20 +118,20 @@ def save_summary_csv(all_results, filename):
 
 def save_and_print_report(
     aspect_name,
-    phoenix_cache_version,
+    tambak_cache_version,
     mpk_bytes_len,
     zstd_on_mpk_size,
     parquet_file_size,
-    phoenix_strategy_sizes,
-    phoenix_frame_size,
+    tambak_strategy_sizes,
+    tambak_frame_size,
     total_parquet_columnar_size,
     total_zstd_columnar_size,
-    total_phoenix_data_size,
+    total_tambak_data_size,
     all_column_results,
     parquet_col_sizes,
 ):
 
-    filename = f"test_results_{phoenix_cache.__version__}.txt"
+    filename = f"test_results_{tambak_cache.__version__}.txt"
     with open(filename, "a", encoding="utf-8") as f:
 
         def dual_print(*args, **kwargs):
@@ -141,7 +141,7 @@ def save_and_print_report(
         left_len = 40
 
         dual_print("\n" + "=" * 80)
-        dual_print(f"--- Phoenix {phoenix_cache_version} {aspect_name} ---".center(80))
+        dual_print(f"--- tambak {tambak_cache_version} {aspect_name} ---".center(80))
         dual_print("=" * 80)
 
         dual_print("\n" + "=" * 80)
@@ -159,16 +159,16 @@ def save_and_print_report(
                 f"{'  - Parquet (Zstd) File:':<{left_len}} {parquet_file_size:>15,} bytes ({parquet_file_size/mpk_bytes_len*100:6.2f}%)"
             )
         dual_print(
-            f"{'  - Phoenix Stitched File (.phx):':<{left_len}} {phoenix_frame_size:>15,} bytes ({phoenix_frame_size/mpk_bytes_len*100:6.2f}%)"
+            f"{'  - tambak Stitched File (.phx):':<{left_len}} {tambak_frame_size:>15,} bytes ({tambak_frame_size/mpk_bytes_len*100:6.2f}%)"
         )
-        for strategy_name in phoenix_strategy_sizes:
-            size = phoenix_strategy_sizes[strategy_name]
+        for strategy_name in tambak_strategy_sizes:
+            size = tambak_strategy_sizes[strategy_name]
             if size is None or size <= 0 or strategy_name is None:
                 continue
             label = strategy_name
             if strategy_name == "per_batch_relinearize":
                 label = "relin"
-            print_string = f"  - Phoenix {label} File (.phx):"
+            print_string = f"  - tambak {label} File (.phx):"
             dual_print(
                 f"{print_string:<{left_len}} {size:>15,} bytes ({size/mpk_bytes_len*100:6.2f}%)"
             )
@@ -188,19 +188,19 @@ def save_and_print_report(
             dual_print(
                 f"  - Zstd-per-Column Data:      {total_zstd_columnar_size:>15,} bytes ({ratio:6.2f}%)"
             )
-            ratio = total_phoenix_data_size / total_parquet_columnar_size * 100
+            ratio = total_tambak_data_size / total_parquet_columnar_size * 100
             dual_print(
-                f"  - Phoenix Columnar Data:     {total_phoenix_data_size:>15,} bytes ({ratio:6.2f}%)"
+                f"  - tambak Columnar Data:     {total_tambak_data_size:>15,} bytes ({ratio:6.2f}%)"
             )
         dual_print("=" * 80)
 
         dual_print("\n--- 🔬 PER-COLUMN DIAGNOSTICS ---")
         dual_print(
-            f'{"Column":<20} {"Phoenix":>12} {"Zstd":>12} {"Parquet*":>12} {"Plan"}'
+            f'{"Column":<20} {"tambak":>12} {"Zstd":>12} {"Parquet*":>12} {"Plan"}'
         )
         dual_print(f'{"-"*20} {"-"*12} {"-"*12} {"-"*12} {"-"*40}')
         for name, results in all_column_results.items():
-            p_size = results.get("phoenix_size", "N/A")
+            p_size = results.get("tambak_size", "N/A")
             z_size = results.get("zstd_size", "N/A")
             pq_size = parquet_col_sizes.get(name, "N/A")
             plan = results.get("plan", "N/A")
@@ -219,10 +219,10 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message
 logger = logging.getLogger(__name__)
 
 try:
-    import phoenix_cache
+    import tambak_cache
 except ImportError:
     logger.error(
-        "Could not import 'phoenix_cache'. Make sure it is installed correctly."
+        "Could not import 'tambak_cache'. Make sure it is installed correctly."
     )
     sys.exit(1)
 
@@ -239,7 +239,7 @@ except ImportError as e:
     sys.exit(1)
 
 
-def write_phoenix_frame(output_path: pathlib.Path, compressed_columns: dict):
+def write_tambak_frame(output_path: pathlib.Path, compressed_columns: dict):
     # ... (function is correct and unchanged) ...
     header = b"PHX1"
     toc = {}
@@ -257,7 +257,7 @@ def write_phoenix_frame(output_path: pathlib.Path, compressed_columns: dict):
         f.write(toc_json_bytes)
         for blob in data_blobs:
             f.write(blob)
-    logger.info(f"✅ Successfully wrote Phoenix frame to: {output_path}")
+    logger.info(f"✅ Successfully wrote tambak frame to: {output_path}")
 
 
 def main(aspect_name):
@@ -307,7 +307,7 @@ def main(aspect_name):
     logger.info("  - Running all benchmarks...")
 
     all_column_results = {}
-    phoenix_compressed_columns = {}
+    tambak_compressed_columns = {}
     zstd_compressor = zstandard.ZstdCompressor(level=3)
 
     for column_name in arrow_table.column_names:
@@ -318,14 +318,14 @@ def main(aspect_name):
         all_column_results[column_name] = {}
         try:
 
-            analysis_result = phoenix_cache.compress_analyze(column_array)
-            phoenix_compressed_columns[column_name] = analysis_result["artifact"]
-            all_column_results[column_name]["phoenix_size"] = len(
+            analysis_result = tambak_cache.compress_analyze(column_array)
+            tambak_compressed_columns[column_name] = analysis_result["artifact"]
+            all_column_results[column_name]["tambak_size"] = len(
                 analysis_result["artifact"]
             )
             all_column_results[column_name]["plan"] = analysis_result["plan"]
         except Exception:
-            all_column_results[column_name]["phoenix_size"] = "N/A"
+            all_column_results[column_name]["tambak_size"] = "N/A"
             all_column_results[column_name]["plan"] = "Failed"
         try:
             column_data_bytes = b"".join(
@@ -339,17 +339,17 @@ def main(aspect_name):
     # --- CALCULATE TOTALS AND FILE SIZES ---
 
     # 1. On-Disk File Sizes
-    write_phoenix_frame(PHX_OUTPUT_PATH, phoenix_compressed_columns)
-    phoenix_frame_size = PHX_OUTPUT_PATH.stat().st_size
+    write_tambak_frame(PHX_OUTPUT_PATH, tambak_compressed_columns)
+    tambak_frame_size = PHX_OUTPUT_PATH.stat().st_size
 
     zstd_on_mpk_bytes = zstd_compressor.compress(mpk_bytes)
     zstd_on_mpk_size = len(zstd_on_mpk_bytes)
 
     strategies_to_test = ["none", "per_batch_relinearize"]  # , "partitioned"]
-    phoenix_strategy_sizes = {}
+    tambak_strategy_sizes = {}
 
     for strategy_name in strategies_to_test:
-        logger.info(f"  -> Testing Phoenix strategy: '{strategy_name}'...")
+        logger.info(f"  -> Testing tambak strategy: '{strategy_name}'...")
         phx_output_path = pathlib.Path(f"./{aspect_name}_{strategy_name}.phx")
 
         # 1. Create the correct config for the current strategy
@@ -360,9 +360,9 @@ def main(aspect_name):
                 logger.warning(
                     f"     -> Skipping 'partitioned': 'unit_id' column missing."
                 )
-                phoenix_strategy_sizes[strategy_name] = -1
+                tambak_strategy_sizes[strategy_name] = -1
                 continue
-            config = phoenix_cache.CompressorConfig(
+            config = tambak_cache.CompressorConfig(
                 time_series_strategy="partitioned", partition_key_column=key
             )
         elif strategy_name == "per_batch_relinearize":
@@ -386,36 +386,36 @@ def main(aspect_name):
                 logger.warning(
                     f"     -> Skipping 'per_batch_relinearize': 'unit_id' or 'frame' missing."
                 )
-                phoenix_strategy_sizes[strategy_name] = -1
+                tambak_strategy_sizes[strategy_name] = -1
                 continue
-            config = phoenix_cache.CompressorConfig(
+            config = tambak_cache.CompressorConfig(
                 time_series_strategy="per_batch_relinearize",
                 stream_id_column=key,
                 timestamp_column=ts,
             )
         elif strategy_name == "none":
-            config = phoenix_cache.CompressorConfig(time_series_strategy="none")
+            config = tambak_cache.CompressorConfig(time_series_strategy="none")
 
         # 2. Run the stateful compressor to generate the file
         try:
             with open(phx_output_path, "wb") as f:
-                compressor = phoenix_cache.Compressor(f, config)
+                compressor = tambak_cache.Compressor(f, config)
                 reader = pa.RecordBatchReader.from_batches(
                     arrow_table.schema, arrow_table.to_batches()
                 )
                 compressor.compress(reader)
 
             # 3. Record the final on-disk size
-            phoenix_strategy_sizes[strategy_name] = phx_output_path.stat().st_size
+            tambak_strategy_sizes[strategy_name] = phx_output_path.stat().st_size
             logger.info(
-                f"     -> Generated '{phx_output_path.name}': {phoenix_strategy_sizes[strategy_name]:,} bytes"
+                f"     -> Generated '{phx_output_path.name}': {tambak_strategy_sizes[strategy_name]:,} bytes"
             )
         except Exception as e:
             logger.error(
                 f"     -> FAILED to generate file for strategy '{strategy_name}': {e}",
                 exc_info=True,
             )
-            phoenix_strategy_sizes[strategy_name] = -1
+            tambak_strategy_sizes[strategy_name] = -1
 
     try:
         pq.write_table(
@@ -427,10 +427,10 @@ def main(aspect_name):
         parquet_file_size = -1
 
     # 2. Columnar Data Totals
-    total_phoenix_data_size = sum(
-        v.get("phoenix_size", 0)
+    total_tambak_data_size = sum(
+        v.get("tambak_size", 0)
         for v in all_column_results.values()
-        if isinstance(v.get("phoenix_size"), int)
+        if isinstance(v.get("tambak_size"), int)
     )
     total_zstd_columnar_size = sum(
         v.get("zstd_size", 0)
@@ -455,15 +455,15 @@ def main(aspect_name):
     # --- FINAL REPORTING ---
     save_and_print_report(
         aspect_name=aspect_name,
-        phoenix_cache_version=phoenix_cache.__version__,
+        tambak_cache_version=tambak_cache.__version__,
         mpk_bytes_len=len(mpk_bytes),
         zstd_on_mpk_size=zstd_on_mpk_size,
         parquet_file_size=parquet_file_size,
-        phoenix_strategy_sizes=phoenix_strategy_sizes,
-        phoenix_frame_size=phoenix_frame_size,
+        tambak_strategy_sizes=tambak_strategy_sizes,
+        tambak_frame_size=tambak_frame_size,
         total_parquet_columnar_size=total_parquet_columnar_size,
         total_zstd_columnar_size=total_zstd_columnar_size,
-        total_phoenix_data_size=total_phoenix_data_size,
+        total_tambak_data_size=total_tambak_data_size,
         all_column_results=all_column_results,
         parquet_col_sizes=parquet_col_sizes,
     )
@@ -472,8 +472,8 @@ def main(aspect_name):
         "mpk_bytes_len": len(mpk_bytes),
         "zstd_on_mpk_size": zstd_on_mpk_size,
         "parquet_file_size": parquet_file_size,
-        "phoenix_frame_size": phoenix_frame_size,
-        "phoenix_strategy_sizes": phoenix_strategy_sizes,
+        "tambak_frame_size": tambak_frame_size,
+        "tambak_strategy_sizes": tambak_strategy_sizes,
     }
     
     return results_for_csv # <-- Just return the data
@@ -481,8 +481,8 @@ def main(aspect_name):
 
 
 if __name__ == "__main__":
-    filename = f"test_results_{phoenix_cache.__version__}.txt"
-    csv_summary_filename = f"test_results_summary_{phoenix_cache.__version__}.csv"
+    filename = f"test_results_{tambak_cache.__version__}.txt"
+    csv_summary_filename = f"test_results_summary_{tambak_cache.__version__}.csv"
 
     # Clear file once
     all_results_for_csv = []

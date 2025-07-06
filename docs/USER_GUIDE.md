@@ -1,27 +1,27 @@
-# Phoenix Cache User Guide
+# tambak Cache User Guide
 
-This guide provides a comprehensive overview of how to use the `phoenix_cache` Python library. It is designed for Python developers who want to leverage high-performance columnar data compression without diving into the underlying Rust implementation.
+This guide provides a comprehensive overview of how to use the `tambak_cache` Python library. It is designed for Python developers who want to leverage high-performance columnar data compression without diving into the underlying Rust implementation.
 
 ## 📦 Installation
 
-To use Phoenix Cache, you need Python 3.8+ and the `maturin` build tool.
+To use tambak Cache, you need Python 3.8+ and the `maturin` build tool.
 
 1.  **Install `maturin` (if you haven't already):**
     ```bash
     pip install maturin
     ```
-2.  **Install Phoenix Cache:**
-    Navigate to the root directory of the Phoenix Cache repository (where `pyproject.toml` is located) and run:
+2.  **Install tambak Cache:**
+    Navigate to the root directory of the tambak Cache repository (where `pyproject.toml` is located) and run:
     ```bash
     maturin develop --release
     ```
-    This command compiles the Rust extension module in release mode (for maximum performance) and installs the `phoenix_cache` package directly into your current Python environment. This allows you to `import phoenix_cache` in your Python scripts.
+    This command compiles the Rust extension module in release mode (for maximum performance) and installs the `tambak_cache` package directly into your current Python environment. This allows you to `import tambak_cache` in your Python scripts.
 
 ## 🚀 Core API Reference
 
-The `phoenix_cache` library exposes three primary functions for interacting with the Rust core: `compress`, `decompress`, and `plan`.
+The `tambak_cache` library exposes three primary functions for interacting with the Rust core: `compress`, `decompress`, and `plan`.
 
-### `phoenix_cache.compress(series: polars.Series) -> bytes`
+### `tambak_cache.compress(series: polars.Series) -> bytes`
 
 Compresses a Polars Series into a compact binary artifact.
 
@@ -32,26 +32,26 @@ Compresses a Polars Series into a compact binary artifact.
     *   `bytes`: A `bytes` object representing the fully compressed artifact. This artifact contains both the compressed data and the compressed null bitmap (if any nulls were present).
 *   **Important Notes:**
     *   This function handles the conversion from Polars/PyArrow to Rust's internal representation efficiently, minimizing memory copies.
-    *   The generated compression *plan* is not returned by this function. You must separately call `phoenix_cache.plan()` if you intend to store the plan alongside your compressed data for later decompression. It is highly recommended to store the plan (e.g., in a separate metadata manifest) for accurate decompression.
+    *   The generated compression *plan* is not returned by this function. You must separately call `tambak_cache.plan()` if you intend to store the plan alongside your compressed data for later decompression. It is highly recommended to store the plan (e.g., in a separate metadata manifest) for accurate decompression.
 
 **Example:**
 
 ```python
 import polars as pl
-import phoenix_cache
+import tambak_cache
 
 data = [1, 2, 3, 3, 3, 4, 5, 5, 5, 5, 6]
 my_series = pl.Series("integer_column", data, dtype=pl.Int32)
 
-compressed_artifact = phoenix_cache.compress(my_series)
+compressed_artifact = tambak_cache.compress(my_series)
 print(f"Compressed size: {len(compressed_artifact)} bytes")
 ```
 
-### `phoenix_cache.decompress(artifact: bytes, plan_json: str, original_dtype: str) -> polars.Series`
+### `tambak_cache.decompress(artifact: bytes, plan_json: str, original_dtype: str) -> polars.Series`
 
 Decompresses a compressed binary artifact back into its original Polars Series.
 
-*   **Description:** This function takes a compressed artifact (produced by `phoenix_cache.compress`), the original compression plan, and the original data type, to reconstruct the series. It reverses the compression pipeline and re-applies the validity bitmap (if one was originally present).
+*   **Description:** This function takes a compressed artifact (produced by `tambak_cache.compress`), the original compression plan, and the original data type, to reconstruct the series. It reverses the compression pipeline and re-applies the validity bitmap (if one was originally present).
 *   **Parameters:**
     *   `artifact` (`bytes`): The compressed binary artifact.
     *   `plan_json` (`str`): The JSON string representing the exact compression pipeline used during encoding. **This is crucial for correct decompression and MUST match the original plan.**
@@ -63,7 +63,7 @@ Decompresses a compressed binary artifact back into its original Polars Series.
 
 ```python
 import polars as pl
-import phoenix_cache
+import tambak_cache
 
 original_data = [100, 101, None, 102, 103, None, 104]
 original_series = pl.Series("sensor_data", original_data, dtype=pl.Int64)
@@ -71,12 +71,12 @@ original_series = pl.Series("sensor_data", original_data, dtype=pl.Int64)
 # To decompress, you need the original plan and dtype.
 # In a real system, you would store these as metadata with the compressed artifact.
 # For this example, we generate the plan dynamically.
-plan_json = phoenix_cache.plan(original_series.to_arrow().to_pylist(), original_series.dtype.base_type().__str__())
+plan_json = tambak_cache.plan(original_series.to_arrow().to_pylist(), original_series.dtype.base_type().__str__())
 print(f"Plan used: {plan_json}")
 
-compressed_artifact = phoenix_cache.compress(original_series)
+compressed_artifact = tambak_cache.compress(original_series)
 
-decompressed_series = phoenix_cache.decompress(
+decompressed_series = tambak_cache.decompress(
     compressed_artifact,
     plan_json,
     original_series.dtype.base_type().__str__()
@@ -91,7 +91,7 @@ assert original_series.equals(decompressed_series)
 print("\nDecompression successful: Series match!")
 ```
 
-### `phoenix_cache.plan(data_list: list, original_dtype: str) -> str`
+### `tambak_cache.plan(data_list: list, original_dtype: str) -> str`
 
 Generates an optimal compression pipeline plan for a given set of raw data.
 
@@ -109,16 +109,16 @@ Generates an optimal compression pipeline plan for a given set of raw data.
 
 ```python
 import polars as pl
-import phoenix_cache
+import tambak_cache
 
 # Example with a list of raw data
 raw_data = [100, 100, 100, 100, 100] # Constant data
-plan_for_constant = phoenix_cache.plan(raw_data, "Int32")
+plan_for_constant = tambak_cache.plan(raw_data, "Int32")
 print(f"Plan for constant data: {plan_for_constant}")
 # Expected: [{"op": "rle", "params": {}}, {"op": "zstd", "params": {"level": 3}}]
 
 raw_data_time_series = [100, 101, 103, 102, 104, 101] # Small deltas
-plan_for_time_series = phoenix_cache.plan(raw_data_time_series, "Int16")
+plan_for_time_series = tambak_cache.plan(raw_data_time_series, "Int16")
 print(f"Plan for time series data: {plan_for_time_series}")
 # Expected: [{"op": "delta"}, {"op": "zigzag"}, {"op": "bitpack"}, {"op": "shuffle"}, {"op": "zstd"}]
 ```
@@ -127,14 +127,14 @@ print(f"Plan for time series data: {plan_for_time_series}")
 
 Errors originating from the Rust core are caught and translated into Python `ValueError` exceptions. These exceptions will contain a descriptive message explaining the nature of the error (e.g., unsupported type, buffer mismatch, decoding failure).
 
-You should wrap calls to `phoenix_cache` functions in `try...except ValueError` blocks for robust applications.
+You should wrap calls to `tambak_cache` functions in `try...except ValueError` blocks for robust applications.
 
 ```python
-import phoenix_cache
+import tambak_cache
 
 try:
     # Attempt to plan with an unsupported type
-    phoenix_cache.plan([1, 2, 3], "UnsupportedType")
+    tambak_cache.plan([1, 2, 3], "UnsupportedType")
 except ValueError as e:
     print(f"Caught an expected error: {e}")
 ```

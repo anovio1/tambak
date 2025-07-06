@@ -4,11 +4,11 @@ INFO:__main__:  - Decoding and transforming records...
 INFO:__main__:  - Transformation complete in 1.53s. Found 231,231 records.
 INFO:__main__:  - Creating PyArrow Table...
 INFO:__main__:  - Running all benchmarks...
-INFO:__main__:✅ Successfully wrote Phoenix frame to: unit_positions.phx
+INFO:__main__:✅ Successfully wrote tambak frame to: unit_positions.phx
 
 ```
 ================================================================================
-                       --- Phoenix 4.0 unit_positions ---
+                       --- tambak 4.0 unit_positions ---
 ================================================================================
 
 ================================================================================
@@ -18,7 +18,7 @@ INFO:__main__:✅ Successfully wrote Phoenix frame to: unit_positions.phx
   - Original MPK File:               6,641,915 bytes (100.00%)
   - Zstd on original MPK:            3,804,423 bytes ( 57.28%)
   - Parquet (Zstd) File:             3,305,379 bytes ( 49.77%)
-  - Phoenix Frame File (.phx):       5,832,213 bytes ( 87.81%)
+  - tambak Frame File (.phx):       5,832,213 bytes ( 87.81%)
 ================================================================================
 
 ================================================================================
@@ -27,11 +27,11 @@ INFO:__main__:✅ Successfully wrote Phoenix frame to: unit_positions.phx
 ================================================================================
   - Parquet Columnar Data:           3,303,041 bytes (100.00%)
   - Zstd-per-Column Data:            3,966,937 bytes (120.10%)
-  - Phoenix Columnar Data:           5,831,567 bytes (176.55%)
+  - tambak Columnar Data:           5,831,567 bytes (176.55%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                       2,182        2,799        3,393 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"leb128"},{"op":"zstd","params":{"level":3}}]
 unit_id                   159,476      145,697      219,116 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
@@ -54,10 +54,10 @@ INFO:__main__:  - Decoding and transforming records...
 INFO:__main__:  - Transformation complete in 0.79s. Found 103,469 records.
 INFO:__main__:  - Creating PyArrow Table...
 INFO:__main__:  - Running all benchmarks...
-INFO:__main__:✅ Successfully wrote Phoenix frame to: unit_events.phx
+INFO:__main__:✅ Successfully wrote tambak frame to: unit_events.phx
 
 ================================================================================
-                        --- Phoenix 4.0 unit_events ---
+                        --- tambak 4.0 unit_events ---
 ================================================================================
 
 ================================================================================
@@ -67,7 +67,7 @@ INFO:__main__:✅ Successfully wrote Phoenix frame to: unit_events.phx
   - Original MPK File:               2,499,651 bytes (100.00%)
   - Zstd on original MPK:              778,603 bytes ( 31.15%)
   - Parquet (Zstd) File:             1,044,567 bytes ( 41.79%)
-  - Phoenix Frame File (.phx):         809,852 bytes ( 32.40%)
+  - tambak Frame File (.phx):         809,852 bytes ( 32.40%)
 ================================================================================
 
 ================================================================================
@@ -76,11 +76,11 @@ INFO:__main__:✅ Successfully wrote Phoenix frame to: unit_events.phx
 ================================================================================
   - Parquet Columnar Data:           1,041,139 bytes (100.00%)
   - Zstd-per-Column Data:            1,036,406 bytes ( 99.55%)
-  - Phoenix Columnar Data:             808,905 bytes ( 77.69%)
+  - tambak Columnar Data:             808,905 bytes ( 77.69%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                      31,750       60,226      162,483 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"bitpack","params":{"bit_width":8}},{"op":"zstd","params":{"level":3}}]
 unit_id                   177,214      185,304      229,917 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]
@@ -105,10 +105,10 @@ INFO:__main__:  - Decoding and transforming records...
 INFO:__main__:  - Transformation complete in 1.47s. Found 199,975 records.
 INFO:__main__:  - Creating PyArrow Table...
 INFO:__main__:  - Running all benchmarks...
-INFO:__main__:✅ Successfully wrote Phoenix frame to: damage_log.phx
+INFO:__main__:✅ Successfully wrote tambak frame to: damage_log.phx
 
 ================================================================================
-                         --- Phoenix 4.0 damage_log ---
+                         --- tambak 4.0 damage_log ---
 ================================================================================
 
 ================================================================================
@@ -118,7 +118,7 @@ INFO:__main__:✅ Successfully wrote Phoenix frame to: damage_log.phx
   - Original MPK File:               6,531,861 bytes (100.00%)
   - Zstd on original MPK:            2,011,629 bytes ( 30.80%)
   - Parquet (Zstd) File:             2,699,725 bytes ( 41.33%)
-  - Phoenix Frame File (.phx):       2,598,485 bytes ( 39.78%)
+  - tambak Frame File (.phx):       2,598,485 bytes ( 39.78%)
 ================================================================================
 
 ================================================================================
@@ -127,11 +127,11 @@ INFO:__main__:✅ Successfully wrote Phoenix frame to: damage_log.phx
 ================================================================================
   - Parquet Columnar Data:           2,696,435 bytes (100.00%)
   - Zstd-per-Column Data:            2,652,788 bytes ( 98.38%)
-  - Phoenix Columnar Data:           2,597,615 bytes ( 96.34%)
+  - tambak Columnar Data:           2,597,615 bytes ( 96.34%)
 ================================================================================
 
 --- 🔬 PER-COLUMN DIAGNOSTICS ---
-Column                    Phoenix         Zstd     Parquet* Plan
+Column                    tambak         Zstd     Parquet* Plan
 -------------------- ------------ ------------ ------------ ----------------------------------------
 frame                      41,009       86,950      207,551 [{"op":"delta","params":{"order":1}},{"op":"zigzag"},{"op":"leb128"},{"op":"zstd","params":{"level":3}}]
 victim_team_id             75,675       93,024       81,508 [{"op":"shuffle"},{"op":"zstd","params":{"level":3}}]

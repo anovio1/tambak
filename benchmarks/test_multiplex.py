@@ -24,9 +24,9 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message
 logger = logging.getLogger(__name__)
 
 try:
-    import phoenix_cache
+    import tambak_cache
 except ImportError:
-    logger.error("Could not import 'phoenix_cache'. Make sure it is installed correctly.")
+    logger.error("Could not import 'tambak_cache'. Make sure it is installed correctly.")
     sys.exit(1)
 
 zstd_compressor = zstandard.ZstdCompressor(level=3)
@@ -92,8 +92,8 @@ def zstd_compress_no_multiplex(table, data_cols=None):
     raw_bytes = get_raw_bytes_no_multiplex(table, data_cols)
     return zstd_compressor.compress(raw_bytes)
 
-def phoenix_compress(array):
-    result = phoenix_cache.compress_analyze(array)
+def tambak_compress(array):
+    result = tambak_cache.compress_analyze(array)
     return result['artifact']
 
 
@@ -178,15 +178,15 @@ def main(aspect_name):
     logger.info(f"\n")
     print(f"Aspect {aspect_name}")
     # Full compress entire columns (baseline)
-    phoenix_total_size = 0
+    tambak_total_size = 0
     zstd_total_size = 0
     for col_name in arrow_table.column_names:
         array = arrow_table[col_name]
         if isinstance(array, pa.ChunkedArray):
             array = array.combine_chunks()
         try:
-            phoenix_result = phoenix_compress(array)
-            phoenix_total_size += len(phoenix_result)
+            tambak_result = tambak_compress(array)
+            tambak_total_size += len(tambak_result)
         except Exception:
             pass
         try:
@@ -195,13 +195,13 @@ def main(aspect_name):
         except Exception:
             pass
 
-    logger.info(f"Full Phoenix compress total size: {phoenix_total_size:,} bytes")
+    logger.info(f"Full tambak compress total size: {tambak_total_size:,} bytes")
     logger.info(f"Full Zstd compress total size: {zstd_total_size:,} bytes")
 
     # # Multiplexed compress, limiting to first 10 units and 200 rows each
-    # multiplexed_phoenix_size = simulate_multiplexed_compression(
+    # multiplexed_tambak_size = simulate_multiplexed_compression(
     #     arrow_table,
-    #     phoenix_compress,
+    #     tambak_compress,
     #     unit_id_col='unit_id',
     #     data_cols=['x', 'y', 'z', 'frame'],
     #     max_units=1000,
@@ -231,7 +231,7 @@ def main(aspect_name):
     # Log first 20 remap indices for sanity check
     logger.info(f"Remap indices (first 20): {remap_indices[:20]}")
     
-    batch_phoenix_size = 0
+    batch_tambak_size = 0
     batch_zstd_size = 0
     BATCH_SIZE = 10_000
     num_rows = reordered_table.num_rows
@@ -245,21 +245,21 @@ def main(aspect_name):
             if isinstance(arr, pa.ChunkedArray):
                 arr = arr.combine_chunks()
             try:
-                phoenix_result = phoenix_compress(arr)
-                batch_phoenix_size += len(phoenix_result)
+                tambak_result = tambak_compress(arr)
+                batch_tambak_size += len(tambak_result)
             except Exception:
-                logger.warning(f"Phoenix compression failed for column: {col_name} in batch {batch_start}-{batch_end}")
+                logger.warning(f"tambak compression failed for column: {col_name} in batch {batch_start}-{batch_end}")
             try:
                 zstd_bytes = zstd_compress(arr)
                 batch_zstd_size += len(zstd_bytes)
             except Exception:
                 logger.warning(f"Zstd compression failed for column: {col_name} in batch {batch_start}-{batch_end}")
 
-    logger.info(f"Batch-wise Reordered Phoenix compress total size: {batch_phoenix_size:,} bytes")
+    logger.info(f"Batch-wise Reordered tambak compress total size: {batch_tambak_size:,} bytes")
     logger.info(f"Batch-wise Reordered Zstd compress total size: {batch_zstd_size:,} bytes")
 
     # Compress full reordered columns at once
-    multiplexed_phoenix_size = 0
+    multiplexed_tambak_size = 0
     multiplexed_zstd_size = 0
     # for col_name in ['x', 'y', 'z', 'frame']:
     for col_name in reordered_table.column_names:
@@ -267,17 +267,17 @@ def main(aspect_name):
         if isinstance(arr, pa.ChunkedArray):
             arr = arr.combine_chunks()
         try:
-            phoenix_result = phoenix_compress(arr)
-            multiplexed_phoenix_size += len(phoenix_result)
+            tambak_result = tambak_compress(arr)
+            multiplexed_tambak_size += len(tambak_result)
         except Exception:
-            logger.warning(f"Phoenix compression failed for column: {col_name}")
+            logger.warning(f"tambak compression failed for column: {col_name}")
         try:
             zstd_bytes = zstd_compress(arr)
             multiplexed_zstd_size += len(zstd_bytes)
         except Exception:
             logger.warning(f"Zstd compression failed for column: {col_name}")
 
-    logger.info(f"Reordered Phoenix compress total size: {multiplexed_phoenix_size:,} bytes")
+    logger.info(f"Reordered tambak compress total size: {multiplexed_tambak_size:,} bytes")
     logger.info(f"Reordered Zstd compress total size: {multiplexed_zstd_size:,} bytes")
 
     try:
@@ -287,7 +287,7 @@ def main(aspect_name):
         logger.warning(f"Zstd no multiplex compression failed: {e}")
         zstd_no_multiplex_size = -1
 
-    logger.info(f"Multiplexed Phoenix compress total size (None units, 200 rows each): {multiplexed_phoenix_size:,} bytes")
+    logger.info(f"Multiplexed tambak compress total size (None units, 200 rows each): {multiplexed_tambak_size:,} bytes")
     logger.info(f"Multiplexed Zstd compress total size (None units, 200 rows each): {multiplexed_zstd_size:,} bytes")
     logger.info(f"Zstd no multiplex compress total size: {zstd_no_multiplex_size:,} bytes")
 

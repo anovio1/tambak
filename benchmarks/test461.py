@@ -8,9 +8,9 @@ import pandas as pd  # Optional, for pretty printing
 
 # --- Setup ---
 try:
-    import phoenix_cache
+    import tambak_cache
 except ImportError:
-    logging.error("Could not import phoenix_cache. Ensure it's installed or the path is correct.")
+    logging.error("Could not import tambak_cache. Ensure it's installed or the path is correct.")
     sys.exit(1)
 
 TUBUIN_PROCESSOR_PATH = "V:/Github/tubuin-processor/src" #! IMPORTANT: Configure this path
@@ -63,7 +63,7 @@ def validate_roundtrip(aspect_name: str, strategy_name: str):
         if not key:
             logger.warning(f"-> Cannot use 'partitioned' strategy: 'unit_id' column missing. Skipping.")
             return
-        config = phoenix_cache.CompressorConfig(
+        config = tambak_cache.CompressorConfig(
             time_series_strategy="partitioned",
             partition_key_column=key,
             partition_flush_rows=50_000,
@@ -74,20 +74,20 @@ def validate_roundtrip(aspect_name: str, strategy_name: str):
         if not key or not ts:
             logger.warning(f"-> Cannot use 'per_batch_relinearize' strategy: 'unit_id' or 'frame' missing. Skipping.")
             return
-        config = phoenix_cache.CompressorConfig(
+        config = tambak_cache.CompressorConfig(
             time_series_strategy="per_batch_relinearize",
             stream_id_column=key,
             timestamp_column=ts,
         )
     elif strategy_name == "none":
-        config = phoenix_cache.CompressorConfig(time_series_strategy="none")
+        config = tambak_cache.CompressorConfig(time_series_strategy="none")
     else:
         logger.error(f"Unknown strategy: {strategy_name}")
         return
 
     try:
         with open(phx_output_path, "wb") as f:
-            compressor = phoenix_cache.Compressor(f, config)
+            compressor = tambak_cache.Compressor(f, config)
             reader = pa.RecordBatchReader.from_batches(original_table.schema, original_table.to_batches())
             compressor.compress(reader)
         logger.info("-> Compression complete.")
@@ -100,7 +100,7 @@ def validate_roundtrip(aspect_name: str, strategy_name: str):
     
     try:
         with open(phx_output_path, "rb") as f:
-            decompressor = phoenix_cache.Decompressor(f)
+            decompressor = tambak_cache.Decompressor(f)
             
             # --- DECOMPRESSION LOGIC PER STRATEGY ---
             if strategy_name == "partitioned":

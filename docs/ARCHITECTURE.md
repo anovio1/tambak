@@ -1,10 +1,10 @@
-# Phoenix Cache: Rust Core Architecture
+# tambak Cache: Rust Core Architecture
 
-This document details the architectural design of the Phoenix Cache Rust core. It explains the philosophy, structure, and key patterns that enable high-performance, adaptive compression for columnar data. This is the blueprint for understanding, maintaining, and extending the library.
+This document details the architectural design of the tambak Cache Rust core. It explains the philosophy, structure, and key patterns that enable high-performance, adaptive compression for columnar data. This is the blueprint for understanding, maintaining, and extending the library.
 
 ## 1. Core Philosophy: Separation of Concerns
 
-The Phoenix Cache Rust core is built upon a strict adherence to the **Single Responsibility Principle (SRP)** and **Separation of Concerns (SOC)**. Each module and function has a single, well-defined job, minimizing dependencies and maximizing testability, maintainability, and performance.
+The tambak Cache Rust core is built upon a strict adherence to the **Single Responsibility Principle (SRP)** and **Separation of Concerns (SOC)**. Each module and function has a single, well-defined job, minimizing dependencies and maximizing testability, maintainability, and performance.
 
 Key architectural tenets:
 
@@ -16,7 +16,7 @@ Key architectural tenets:
 
 ## 2. High-Level Architecture Overview
 
-The Phoenix Cache Rust core can be visualized as a highly specialized factory floor:
+The tambak Cache Rust core can be visualized as a highly specialized factory floor:
 
 *   **The Lobby (FFI Layer):** Handles incoming raw materials (Python objects) and ships out finished products (Python objects). It's the only part that speaks "Python."
 *   **The Manager's Office (Orchestrator):** Oversees the entire production process for each chunk of material. It decides what happens when.
@@ -69,7 +69,7 @@ src/
 *   **Responsibilities:**
     *   Converts Python objects (`PyAny`, `polars.Series`) into pure Rust primitive types (`&[u8]`, `Option<&[u8]>`, `&str`).
     *   **Releases the Python GIL** (`py.allow_threads`) before calling CPU-bound Rust code.
-    *   Translates internal Rust `Result<..., PhoenixError>` into Python `PyResult<...>` (specifically, `ValueError`).
+    *   Translates internal Rust `Result<..., tambakError>` into Python `PyResult<...>` (specifically, `ValueError`).
     *   Converts final Rust results (e.g., `Vec<u8>`, `Option<Vec<u8>>`) back into Python objects.
 
 ### B. The Pipeline Orchestrator (`pipeline/orchestrator.rs`)
@@ -93,8 +93,8 @@ src/
     *   Calls `pipeline::executor::execute_compress_pipeline(data_slice, dtype_str, pipeline_json)` to get `compressed_data`.
     *   Constructs `CompressedArtifact` (`num_valid_rows`, `compressed_nullmap`, `compressed_data`).
     *   Serializes `CompressedArtifact` to `Vec<u8>`.
-5.  `orchestrator.rs` returns `Result<Vec<u8>, PhoenixError>`.
-6.  `ffi/python.rs` receives `Vec<u8>` and converts `PhoenixError` to `PyError`.
+5.  `orchestrator.rs` returns `Result<Vec<u8>, tambakError>`.
+6.  `ffi/python.rs` receives `Vec<u8>` and converts `tambakError` to `PyError`.
 
 #### Data Flow (Decompression `decompress_py` in `ffi/python.rs`):
 
@@ -104,7 +104,7 @@ src/
     *   Deserializes `artifact_bytes` into `CompressedArtifact`.
     *   Decompresses `compressed_nullmap` using `RLE + Zstd` to get `decompressed_nullmap`.
     *   Calls `pipeline::executor::execute_decompress_pipeline(compressed_data, original_type, pipeline_json, num_valid_rows)` to get `decompressed_data`.
-    *   Returns `Result<(Vec<u8>, Option<Vec<u8>>), PhoenixError>`.
+    *   Returns `Result<(Vec<u8>, Option<Vec<u8>>), tambakError>`.
 4.  `ffi/python.rs` receives `(Vec<u8>, Option<Vec<u8>>)` (raw data, optional validity).
 5.  `ffi/python.rs` calls `utils::reconstruct_series(...)` to convert these raw parts back to a `polars.Series`.
 6.  `ffi/python.rs` calls `utils::series_to_py(...)` to convert the Rust `Series` to a Python object and returns `PyResult<PyObject>`.
@@ -114,7 +114,7 @@ src/
 *   **Role:** The "brain" of the adaptive compression. Analyzes data to decide the best kernel sequence.
 *   **Responsibilities:**
     *   `analyze_data<T>(data: &[T])`: Performs a **single-pass, zero-allocation** statistical analysis (e.g., constant values, delta sparsity, bit-width requirements) on a *typed slice of valid data*.
-    *   `build_pipeline_from_profile(profile: &DataProfile) -> Result<String, PhoenixError>`: Translates the statistical `DataProfile` into a JSON array of pipeline operations based on predefined heuristics.
+    *   `build_pipeline_from_profile(profile: &DataProfile) -> Result<String, tambakError>`: Translates the statistical `DataProfile` into a JSON array of pipeline operations based on predefined heuristics.
 *   **Key Design:** It is **pure Rust**, operating only on `&[T]` slices and returning `String` (JSON). It has no knowledge of FFI or nulls.
 
 ### D. The Pipeline Executor (`pipeline/executor.rs`)
@@ -131,8 +131,8 @@ src/
 *   **Role:** The atomic, stateless compression and decompression algorithms.
 *   **Responsibilities:** Each `kernel_name.rs` file implements `encode<T>` and `decode<T>` functions.
 *   **Contract:**
-    *   `pub fn encode<T>(input_slice: &[T], output_buf: &mut Vec<u8>, ...) -> Result<(), PhoenixError>`
-    *   `pub fn decode<T>(input_bytes: &[u8], output_buf: &mut Vec<u8>, ...) -> Result<(), PhoenixError>`
+    *   `pub fn encode<T>(input_slice: &[T], output_buf: &mut Vec<u8>, ...) -> Result<(), tambakError>`
+    *   `pub fn decode<T>(input_bytes: &[u8], output_buf: &mut Vec<u8>, ...) -> Result<(), tambakError>`
     *   They are **pure Rust**, generic over `T`, and operate on raw bytes/typed slices, writing to the provided buffer.
     *   They are **panic-free**, propagating all errors via `Result`.
     *   They typically wrap highly optimized, in-place internal helper functions.
@@ -141,8 +141,8 @@ src/
 
 *   **Role:** Specialized logic for managing data validity using Arrow-compatible bitmaps.
 *   **Responsibilities:**
-    *   `strip_valid_data<T>(data: &[T], validity: &Bitmap) -> Result<Vec<T>, PhoenixError>`: Extracts only the valid data from a full data slice, creating a tight vector.
-    *   `reapply_bitmap<T>(valid_data_buffer: Buffer<T::Native>, validity_bitmap: Bitmap) -> Result<PrimitiveArray<T>, PhoenixError>`: Reconstructs an Arrow array with nulls by applying a bitmap to a buffer of valid data.
+    *   `strip_valid_data<T>(data: &[T], validity: &Bitmap) -> Result<Vec<T>, tambakError>`: Extracts only the valid data from a full data slice, creating a tight vector.
+    *   `reapply_bitmap<T>(valid_data_buffer: Buffer<T::Native>, validity_bitmap: Bitmap) -> Result<PrimitiveArray<T>, tambakError>`: Reconstructs an Arrow array with nulls by applying a bitmap to a buffer of valid data.
 *   **Key Design:** It is **pure Rust**, operates on raw Arrow types, and is highly performant (e.g., zero-copy reapplication).
 
 ### G. Utilities (`utils.rs`) and Errors (`error.rs`)
@@ -150,4 +150,4 @@ src/
 *   **`utils.rs`:**
     *   **Core Utilities:** Pure Rust helpers (`safe_bytes_to_typed_slice` using `bytemuck`, `typed_slice_to_bytes`, `get_element_size`).
     *   **FFI Helpers:** Functions specifically for `ffi/python.rs` to convert between Python/Polars objects and the primitive Rust types that the core library expects (`py_to_series`, `reconstruct_series`, `series_to_py`).
-*   **`error.rs`:** Defines `PhoenixError`, a custom `thiserror`-driven enum for all library errors, ensuring consistent and traceable error propagation throughout the Rust core and clean conversion to `PyErr` at the FFI boundary.
+*   **`error.rs`:** Defines `tambakError`, a custom `thiserror`-driven enum for all library errors, ensuring consistent and traceable error propagation throughout the Rust core and clean conversion to `PyErr` at the FFI boundary.

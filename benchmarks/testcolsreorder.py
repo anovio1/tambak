@@ -1,6 +1,6 @@
 # testcolsreorder.py
 import re
-import phoenix_cache
+import tambak_cache
 
 def reorder_log_inplace(filename):
     running_aspect_pattern = re.compile(r"Running Aspect:\S+ Column:\S+")
@@ -44,5 +44,5 @@ def reorder_log_inplace(filename):
         fw.writelines(output_lines)
 
 if __name__ == "__main__":
-    filename = f"test_cols_{phoenix_cache.__version__}.txt"
+    filename = f"test_cols_{tambak_cache.__version__}.txt"
     reorder_log_inplace(filename)

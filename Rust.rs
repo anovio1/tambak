@@ -14,7 +14,7 @@
 //     *   **Layer 4 (Byte Distribution):** Optional `Byte-Shuffling` can be used to prepare data for the final compression stage.
 
 
-//! This module defines the Foreign Function Interface (FFI) for the Phoenix Cache
+//! This module defines the Foreign Function Interface (FFI) for the tambak Cache
 //! system. It exposes a complete toolbox of pure, stateless, high-performance
 //! compression and decompression kernels to the Python orchestration layer.
 
@@ -162,7 +162,7 @@ fn shuffle_bytes(bytes: Vec<u8>, original_type: &str) -> PyResult<Vec<u8>>;
 // --- Contract 2: The Module Registration ---
 
 #[pymodule]
-fn libphoenix(_py: Python, m: &PyModule) -> PyResult<()> {
+fn libtambak(_py: Python, m: &PyModule) -> PyResult<()> {
     // Delta
     m.add_function(wrap_pyfunction!(delta_encode, m)?)?;
     m.add_function(wrap_pyfunction!(delta_decode, m)?)?;

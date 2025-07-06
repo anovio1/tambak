@@ -13,10 +13,10 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message
 logger = logging.getLogger(__name__)
 
 try:
-    import phoenix_cache
+    import tambak_cache
 except ImportError:
     logger.error(
-        "Could not import 'phoenix_cache'. Make sure it is installed correctly."
+        "Could not import 'tambak_cache'. Make sure it is installed correctly."
     )
     sys.exit(1)
 
@@ -81,31 +81,31 @@ def main(aspect_name):
     # --- BENCHMARKING ---
     logger.info("  - Running all benchmarks...")
 
-    # --- Phoenix Compression (NEW & IMPROVED METHOD) ---
-    logger.info("    - Compressing with Phoenix stateful writer...")
-    phoenix_frame_size = -1
-    phoenix_compress_start = time.perf_counter()
+    # --- tambak Compression (NEW & IMPROVED METHOD) ---
+    logger.info("    - Compressing with tambak stateful writer...")
+    tambak_frame_size = -1
+    tambak_compress_start = time.perf_counter()
     try:
         # 1. Create a RecordBatchReader from the table.
         source_reader = arrow_table.to_reader()
 
         # 2. Open the output file handle in binary write mode.
         with open(PHX_OUTPUT_PATH, "wb") as f:
-            # 3. Create a Phoenix Compressor, passing it the file handle and a config.
-            config = phoenix_cache.CompressorConfig()
-            compressor = phoenix_cache.Compressor(f, config)
+            # 3. Create a tambak Compressor, passing it the file handle and a config.
+            config = tambak_cache.CompressorConfig()
+            compressor = tambak_cache.Compressor(f, config)
 
             # 4. Tell the compressor to run. This is the big moment.
             compressor.compress(source_reader)
 
-        phoenix_compress_time = time.perf_counter() - phoenix_compress_start
+        tambak_compress_time = time.perf_counter() - tambak_compress_start
         logger.info(
-            f"    - Phoenix compression successful in {phoenix_compress_time:.2f}s."
+            f"    - tambak compression successful in {tambak_compress_time:.2f}s."
         )
-        phoenix_frame_size = PHX_OUTPUT_PATH.stat().st_size
+        tambak_frame_size = PHX_OUTPUT_PATH.stat().st_size
 
     except Exception as e:
-        logger.error(f"    - Phoenix compression FAILED: {e}", exc_info=True)
+        logger.error(f"    - tambak compression FAILED: {e}", exc_info=True)
 
     # --- Zstd & Per-Column Diagnostics (UNCHANGED LOGIC FOR COMPARISON) ---
     all_column_results = {}
@@ -117,13 +117,13 @@ def main(aspect_name):
             column_array = column_array.combine_chunks()
         all_column_results[column_name] = {}
         try:
-            analysis_result = phoenix_cache.compress_analyze(column_array)
-            all_column_results[column_name]["phoenix_size"] = len(
+            analysis_result = tambak_cache.compress_analyze(column_array)
+            all_column_results[column_name]["tambak_size"] = len(
                 analysis_result["artifact"]
             )
             all_column_results[column_name]["plan"] = analysis_result["plan"]
         except Exception:
-            all_column_results[column_name]["phoenix_size"] = "N/A"
+            all_column_results[column_name]["tambak_size"] = "N/A"
             all_column_results[column_name]["plan"] = "Failed"
         try:
             column_data_bytes = b"".join(
@@ -162,10 +162,10 @@ def main(aspect_name):
         parquet_file_size = -1
 
     # 2. Columnar Data Totals
-    total_phoenix_data_size = sum(
-        v.get("phoenix_size", 0)
+    total_tambak_data_size = sum(
+        v.get("tambak_size", 0)
         for v in all_column_results.values()
-        if isinstance(v.get("phoenix_size"), int)
+        if isinstance(v.get("tambak_size"), int)
     )
     total_zstd_columnar_size = sum(
         v.get("zstd_size", 0)
@@ -189,7 +189,7 @@ def main(aspect_name):
 
     # --- FINAL REPORTING ---
     print("\n" + "=" * 80)
-    print(f"--- Phoenix {phoenix_cache.__version__} {aspect_name} ---".center(80))
+    print(f"--- tambak {tambak_cache.__version__} {aspect_name} ---".center(80))
     print("=" * 80)
 
     print("\n" + "=" * 80)
@@ -204,9 +204,9 @@ def main(aspect_name):
         print(
             f"  - Parquet (Zstd) File:       {parquet_file_size:>15,} bytes ({parquet_file_size/len(mpk_bytes)*100:6.2f}%)"
         )
-    if phoenix_frame_size != -1:
+    if tambak_frame_size != -1:
         print(
-            f"  - Phoenix Frame File (.phx): {phoenix_frame_size:>15,} bytes ({phoenix_frame_size/len(mpk_bytes)*100:6.2f}%)"
+            f"  - tambak Frame File (.phx): {tambak_frame_size:>15,} bytes ({tambak_frame_size/len(mpk_bytes)*100:6.2f}%)"
         )
     print("=" * 80)
 
@@ -222,17 +222,17 @@ def main(aspect_name):
         print(
             f"  - Zstd-per-Column Data:      {total_zstd_columnar_size:>15,} bytes ({ratio:6.2f}%)"
         )
-        ratio = total_phoenix_data_size / total_parquet_columnar_size * 100
+        ratio = total_tambak_data_size / total_parquet_columnar_size * 100
         print(
-            f"  - Phoenix Columnar Data:     {total_phoenix_data_size:>15,} bytes ({ratio:6.2f}%)"
+            f"  - tambak Columnar Data:     {total_tambak_data_size:>15,} bytes ({ratio:6.2f}%)"
         )
     print("=" * 80)
 
     print("\n--- 🔬 PER-COLUMN DIAGNOSTICS ---")
-    print(f'{"Column":<20} {"Phoenix":>12} {"Zstd":>12} {"Parquet*":>12} {"Plan"}')
+    print(f'{"Column":<20} {"tambak":>12} {"Zstd":>12} {"Parquet*":>12} {"Plan"}')
     print(f'{"-"*20} {"-"*12} {"-"*12} {"-"*12} {"-"*40}')
     for name, results in all_column_results.items():
-        p_size = results.get("phoenix_size", "N/A")
+        p_size = results.get("tambak_size", "N/A")
         z_size = results.get("zstd_size", "N/A")
         pq_size = parquet_col_sizes.get(name, "N/A")
         plan = results.get("plan", "N/A")
