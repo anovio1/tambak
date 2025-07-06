@@ -21,6 +21,100 @@ ASPECT_NAMES = [
     "unit_state_snapshots"
 ]
 
+import csv # Make sure to add this import at the top of your script
+
+def save_summary_csv(all_results, filename):
+    """
+    Saves a summary of the on-disk file size comparison to a CSV file.
+
+    Args:
+        all_results (list[dict]): A list of result dictionaries, one for each aspect.
+        filename (str): The path to the output CSV file.
+    """
+    if not all_results:
+        print("No results to save to CSV.")
+        return
+
+    # --- Dynamically determine all possible column headers ---
+    # This ensures that if a strategy is added or fails for one aspect,
+    # the CSV columns remain consistent.
+    
+    # Base headers are always present
+    headers = ["Aspect", "Original MPK (bytes)", "Original MPK (%)"]
+    
+    # Standard formats
+    standard_formats = {
+        "zstd_on_mpk_size": "Zstd on original MPK",
+        "parquet_file_size": "Parquet (Zstd) File",
+        "phoenix_frame_size": "Phoenix Stitched File (.phx)" # This is the stateless one
+    }
+    
+    # Discover all unique Phoenix strategies from the results
+    phoenix_strategies = set()
+    for result in all_results:
+        phoenix_strategies.update(result.get('phoenix_strategy_sizes', {}).keys())
+    
+    # Sort for consistent ordering
+    sorted_strategies = sorted(list(phoenix_strategies))
+
+    # Build the final header list
+    for key, name in standard_formats.items():
+        headers.extend([f"{name} (bytes)", f"{name} (%)"])
+        
+    for strategy_name in sorted_strategies:
+        label = strategy_name
+        if strategy_name == "per_batch_relinearize":
+            label = "relin"
+        headers.extend([f"Phoenix {label} File (.phx) (bytes)", f"Phoenix {label} File (.phx) (%)"])
+
+    # --- Write data to CSV ---
+    try:
+        with open(filename, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+
+            for result in all_results:
+                row = [result['aspect_name']]
+                original_size = result.get('mpk_bytes_len')
+
+                if original_size is None or original_size == 0:
+                    # If there's no original, we can't calculate percentages
+                    row.extend(['N/A'] * (len(headers) - 1))
+                    writer.writerow(row)
+                    continue
+                
+                # Original MPK
+                row.extend([original_size, "100.00"])
+
+                # Helper to add size and percentage to the row
+                def add_cells(size_key):
+                    size = result.get(size_key, -1)
+                    if size is not None and size > 0:
+                        percentage = f"{(size / original_size * 100):.2f}"
+                        row.extend([size, percentage])
+                    else:
+                        row.extend(["N/A", "N/A"])
+
+                # Add cells for standard formats
+                for key in standard_formats:
+                    add_cells(key)
+                
+                # Add cells for dynamic Phoenix strategies
+                strategy_sizes = result.get('phoenix_strategy_sizes', {})
+                for strategy_name in sorted_strategies:
+                    size = strategy_sizes.get(strategy_name, -1)
+                    if size is not None and size > 0:
+                         percentage = f"{(size / original_size * 100):.2f}"
+                         row.extend([size, percentage])
+                    else:
+                        row.extend(["N/A", "N/A"])
+
+                writer.writerow(row)
+
+        logger.info(f"✅ Successfully wrote summary CSV to: {filename}")
+
+    except IOError as e:
+        logger.error(f"Failed to write CSV file: {e}", exc_info=True)
 
 def save_and_print_report(
     aspect_name,
@@ -373,13 +467,32 @@ def main(aspect_name):
         all_column_results=all_column_results,
         parquet_col_sizes=parquet_col_sizes,
     )
+    results_for_csv = {
+        "aspect_name": aspect_name,
+        "mpk_bytes_len": len(mpk_bytes),
+        "zstd_on_mpk_size": zstd_on_mpk_size,
+        "parquet_file_size": parquet_file_size,
+        "phoenix_frame_size": phoenix_frame_size,
+        "phoenix_strategy_sizes": phoenix_strategy_sizes,
+    }
+    
+    return results_for_csv # <-- Just return the data
+    
 
 
 if __name__ == "__main__":
     filename = f"test_results_{phoenix_cache.__version__}.txt"
+    csv_summary_filename = f"test_results_summary_{phoenix_cache.__version__}.csv"
 
     # Clear file once
+    all_results_for_csv = []
     with open(filename, "w", encoding="utf-8") as f:
         pass
     for aspect in ASPECT_NAMES:
-        main(aspect)
+        result_from_main = main(aspect)
+        
+        if result_from_main:
+            all_results_for_csv.append(result_from_main)
+
+    if all_results_for_csv:
+        save_summary_csv(all_results_for_csv, csv_summary_filename)
